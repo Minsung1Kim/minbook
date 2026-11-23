@@ -57,3 +57,10 @@ All notable changes and architectural decisions are logged here.
   - NY Open Volatility Caution banner for catalysts occurring near the 9:30–10:00 AM ET retrace window (e.g. 9:45 AM Flash PMI, 10:00 AM ISM).
   - Quick filters for "All US", "Today", and "Red Only".
 - Preserved `kill-ai-slop` compliance with clean hairlines, crisp typography, and zero rainbow glow.
+
+## [2026-11-23] - Live Feed Fix & CME 10-15m Delay Transparency
+- Diagnosed root cause of stalled price updates: unauthenticated fetch to Yahoo Finance chart API was triggering HTTP 429 ("Too Many Requests") due to rapid 10s client polling, triggering silent fallback to static baseline seed.
+- Integrated `yahoo-finance2` with automated crumb and session cookie negotiation to eliminate 429 errors.
+- Added server-side 15-second TTL cache and fallback to last known valid quote.
+- Clarified CME Globex 10-15 minute exchange delay rules for free public web feeds: added transparent `DELAYED (10-15m CME)` badge and displayed exact CME exchange tick timestamp (`quote.timestamp`) alongside client poll time.
+- Verified live CME Globex price updates (`NQ=F` at 26,860.00) following 6:00 PM ET futures session reopen.

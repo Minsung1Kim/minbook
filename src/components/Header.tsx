@@ -295,6 +295,22 @@ export function Header({
             </div>
           )}
 
+          {/* Feed Latency / Staleness Badge */}
+          <span
+            className={`hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono font-medium border ${
+              dataStatus === "LIVE"
+                ? "bg-emerald-950/60 text-emerald-400 border-emerald-800"
+                : "bg-amber-950/60 text-amber-300 border-amber-800/80"
+            }`}
+            title={
+              dataStatus === "DELAYED"
+                ? "CME Globex free retail feed has a standard 10–15m exchange delay. Connect broker/Polygon in Settings for 0-second live tick streaming."
+                : "Real-time feed active."
+            }
+          >
+            {dataStatus === "DELAYED" ? "DELAYED (10-15m CME)" : "LIVE"}
+          </span>
+
           {/* Manual Refresh Button */}
           <button
             onClick={onRefresh}

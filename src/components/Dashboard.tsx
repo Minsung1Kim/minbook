@@ -146,6 +146,16 @@ export function Dashboard() {
       })
     : null;
 
+  const formattedExchangeTime = quote?.timestamp
+    ? new Date(quote.timestamp).toLocaleTimeString("en-US", {
+        timeZone: "America/New_York",
+        hour12: true,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      })
+    : null;
+
   return (
     <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
       <Header
@@ -230,15 +240,24 @@ export function Dashboard() {
                 </div>
 
                 {/* Right: Last Updated & Sync Indicator */}
-                <div className="flex items-center space-x-2.5 text-xs">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
                   <div className="flex items-center space-x-1.5 text-slate-400 text-[11px]">
                     <Clock className="w-3 h-3 text-slate-500" />
-                    <span>Updated:</span>
+                    <span>Polled:</span>
                     <strong className="text-slate-200 font-mono tabular-nums">
                       {formattedLastUpdated ? `${formattedLastUpdated} ET` : "--:--:--"}
                     </strong>
                     <span className="text-slate-500 font-mono tabular-nums">({secondsAgo}s ago)</span>
                   </div>
+
+                  {formattedExchangeTime && (
+                    <span
+                      className="hidden md:inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums bg-slate-900 text-amber-300 border border-slate-800"
+                      title="Actual CME Globex exchange timestamp. Free public web feeds have a standard 10–15m delay."
+                    >
+                      CME Tick: {formattedExchangeTime} ET ({quote.status})
+                    </span>
+                  )}
 
                   <button
                     onClick={() => fetchBrief(true)}
@@ -555,8 +574,10 @@ export function Dashboard() {
               <span className="flex items-center space-x-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <span>
-                  Feed: {brief.dataSource.providerName} ({quote.symbol}) • Price:{" "}
-                  <strong className="text-white font-mono tabular-nums">{quote.price.toFixed(2)}</strong> • Polling: {refreshIntervalSec}s
+                  Feed: {brief.dataSource.providerName} • Price:{" "}
+                  <strong className="text-white font-mono tabular-nums">{quote.price.toFixed(2)}</strong> • Exchange Tick:{" "}
+                  <span className="text-slate-300 font-mono tabular-nums">{formattedExchangeTime ? `${formattedExchangeTime} ET` : "--:--:--"}</span>{" "}
+                  ({quote.status})
                 </span>
               </span>
               <span className="text-slate-500 font-mono tabular-nums text-[11px]">

@@ -3,20 +3,16 @@ import { SeedFallbackProvider } from "./fallback";
 import { getCached, setCached, invalidateCache } from "./cache";
 import { computeSessionLevels } from "./levels";
 import { evaluateBiasAndRegime } from "./regime";
-import { computeSizingGuidance } from "./risk";
+import { generateTacticalPlaybook } from "./playbook";
 import { OpenBriefData } from "@/types/market";
 import { saveDailyBrief } from "@/lib/db";
 
 export async function getOpenBrief(options?: {
   symbol?: "NQ" | "MNQ";
-  riskDollars?: number;
-  targetDollars?: number;
   forceRefresh?: boolean;
 }): Promise<OpenBriefData> {
   const symbol = options?.symbol || "NQ";
-  const riskDollars = options?.riskDollars || 250;
-  const targetDollars = options?.targetDollars || 550;
-  const cacheKey = `brief_${symbol}_${riskDollars}_${targetDollars}`;
+  const cacheKey = `brief_${symbol}`;
 
   if (options?.forceRefresh) {
     invalidateCache(cacheKey);
@@ -78,14 +74,8 @@ export async function getOpenBrief(options?: {
   // Evaluate bias & chop risk
   const bias = evaluateBiasAndRegime(quote.price, sessionMetrics, macro.vix, hasOpenNews);
 
-  // Compute stop-loss risk & sizing guidance
-  const riskGuidance = computeSizingGuidance(
-    riskDollars,
-    targetDollars,
-    symbol,
-    sessionMetrics.atr15mIntraday,
-    sessionMetrics.atr14Daily
-  );
+  // Generate actionable tactical playbook & scenarios
+  const tacticalPlan = generateTacticalPlaybook(quote.price, sessionMetrics, bias);
 
   const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "60", 10);
   const cacheExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
@@ -99,7 +89,7 @@ export async function getOpenBrief(options?: {
     sessionMetrics,
     keyLevels,
     bias,
-    riskGuidance,
+    tacticalPlan,
     macro: {
       vix: macro.vix,
       us10y: macro.us10y,

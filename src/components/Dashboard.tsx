@@ -4,12 +4,13 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Header } from "@/components/Header";
 import { MacroRegimeStrip } from "@/components/MacroRegimeStrip";
 import { BiasCard } from "@/components/BiasCard";
-import { StopRiskCard } from "@/components/StopRiskCard";
+import { ActionPlaybookCard } from "@/components/ActionPlaybookCard";
+import { ScenarioMatrixCard } from "@/components/ScenarioMatrixCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { ChecklistCard } from "@/components/ChecklistCard";
 import { OpenBriefData } from "@/types/market";
 import { UserProfile } from "@/types/app";
-import { AlertCircle, RefreshCw, Sparkles, Terminal } from "lucide-react";
+import { AlertCircle, RefreshCw, Terminal, Zap } from "lucide-react";
 
 export function Dashboard() {
   const [brief, setBrief] = useState<OpenBriefData | null>(null);
@@ -18,9 +19,6 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedInstrument, setSelectedInstrument] = useState<"NQ" | "MNQ">("NQ");
-  const [riskDollars, setRiskDollars] = useState<number>(250);
-  const [targetDollars, setTargetDollars] = useState<number>(550);
-
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
 
@@ -33,22 +31,20 @@ export function Dashboard() {
           setProfiles(res.profiles);
           const initial = res.current || res.profiles[0];
           setCurrentProfile(initial);
-          if (initial.riskBudgetDollars) setRiskDollars(initial.riskBudgetDollars);
-          if (initial.targetBudgetDollars) setTargetDollars(initial.targetBudgetDollars);
           if (initial.defaultInstrument) setSelectedInstrument(initial.defaultInstrument);
         }
       })
       .catch((err) => console.warn("Failed to load settings:", err));
   }, []);
 
-  // Fetch market brief
+  // Fetch market brief & actionable playbook
   const fetchBrief = useCallback(async (isForceRefresh: boolean = false) => {
     if (isForceRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
-      const url = `/api/market-data?symbol=${selectedInstrument}&risk=${riskDollars}&target=${targetDollars}${
+      const url = `/api/market-data?symbol=${selectedInstrument}${
         isForceRefresh ? "&refresh=true" : ""
       }`;
       const res = await fetch(url);
@@ -66,7 +62,7 @@ export function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedInstrument, riskDollars, targetDollars]);
+  }, [selectedInstrument]);
 
   useEffect(() => {
     fetchBrief(false);
@@ -76,8 +72,6 @@ export function Dashboard() {
     const found = profiles.find((p) => p.id === profileId);
     if (found) {
       setCurrentProfile(found);
-      setRiskDollars(found.riskBudgetDollars);
-      setTargetDollars(found.targetBudgetDollars);
       setSelectedInstrument(found.defaultInstrument);
     }
   };
@@ -144,21 +138,23 @@ export function Dashboard() {
               dealerGammaTilt={brief.macro.dealerGammaTilt}
             />
 
-            {/* Row 1: Bias Card + Stop Risk Card */}
+            {/* Row 1: Bias Card + Retrace Probability & Execution Game Plan */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
               <BiasCard bias={brief.bias} metrics={brief.sessionMetrics} />
-              <StopRiskCard
-                guidance={brief.riskGuidance}
-                riskDollars={riskDollars}
-                targetDollars={targetDollars}
-                onChangeRisk={(val) => setRiskDollars(val)}
-                onChangeTarget={(val) => setTargetDollars(val)}
-                selectedInstrument={selectedInstrument}
-                onSelectInstrument={(inst) => setSelectedInstrument(inst)}
+              <ActionPlaybookCard
+                plan={brief.tacticalPlan}
+                metrics={brief.sessionMetrics}
+                currentPrice={brief.quote.price}
               />
             </div>
 
-            {/* Row 2: Key Levels Table + 9:30 AM Checklist */}
+            {/* Row 2: "What It Means If..." Conditional Action Matrix & VWAP Playbook */}
+            <ScenarioMatrixCard
+              plan={brief.tacticalPlan}
+              metrics={brief.sessionMetrics}
+            />
+
+            {/* Row 3: Key Reference Levels Table + 9:30 AM Checklist */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
               <div className="lg:col-span-2">
                 <KeyLevelsTable
@@ -175,7 +171,7 @@ export function Dashboard() {
               </div>
             </div>
 
-            {/* Honest Data Source & Disclaimer Notice */}
+            {/* Honest Data Source Notice */}
             <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs font-mono text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center space-x-2">
                 <Terminal className="w-4 h-4 text-cyan-400 shrink-0" />
@@ -192,8 +188,8 @@ export function Dashboard() {
                   ET
                 </span>
               </div>
-              <span className="text-[11px] text-slate-500">
-                1 Trade/Day Protocol • OpenPulse Decision Engine
+              <span className="text-[11px] text-cyan-400 font-semibold">
+                OpenPulse Action Engine: 1 Trade/Day NQ Retrace Discipline
               </span>
             </div>
           </>

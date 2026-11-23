@@ -6,14 +6,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const symbolParam = (searchParams.get("symbol") || "NQ").toUpperCase();
     const symbol = symbolParam.startsWith("MNQ") ? "MNQ" : "NQ";
-    const risk = parseFloat(searchParams.get("risk") || "250");
-    const target = parseFloat(searchParams.get("target") || "550");
     const refresh = searchParams.get("refresh") === "true";
 
     const brief = await getOpenBrief({
       symbol,
-      riskDollars: isNaN(risk) ? 250 : risk,
-      targetDollars: isNaN(target) ? 550 : target,
       forceRefresh: refresh
     });
 

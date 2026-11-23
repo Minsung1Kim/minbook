@@ -98,32 +98,54 @@ export interface BiasRegime {
   };
 }
 
-export interface SizingGuidance {
-  userRiskDollars: number;
-  userTargetDollars: number;
-  selectedInstrument: "NQ" | "MNQ";
-  nqPointValue: number;
-  mnqPointValue: number;
-  maxStopPointsNQ: number;
-  maxStopPointsMNQ: number;
-  stopClippingRisk: boolean;
-  stopClippingReason: string;
-  recommendedSizing: {
-    instrument: "NQ" | "MNQ";
-    contracts: number;
-    stopPoints: number;
-    targetPoints: number;
-    riskDollars: number;
-    targetDollars: number;
-    rrRatio: number;
-    summary: string;
+// ---------------- Actionable Decision & Scenario Playbook Types ----------------
+
+export type SessionArchetype =
+  | "OPEN-TEST-DRIVE (HIGH RETRACE PROBABILITY)"
+  | "OPEN-DRIVE (RUNAWAY / SHALLOW RETRACE ONLY)"
+  | "OPEN-REVERSAL / INVENTORY FLUSH"
+  | "OPEN-AUCTION / CHOP PINCH";
+
+export interface RetraceAnalysis {
+  isRetraceProbable: boolean;
+  probabilityPercent: number; // 0 to 100
+  archetype: SessionArchetype;
+  retraceType: "DEEP TO VWAP/ON-MID" | "DEEP TO VWAP/PDC" | "SHALLOW (FIRST 3-MIN PULLBACK)" | "UNLIKELY (RUNAWAY EXPANSION)" | "CHOP / TWO-WAY";
+  verdictHeadline: string;
+  explanation: string;
+  expectedPullbackDepthPts: number;
+  retraceActionAdvice: string;
+}
+
+export interface ActionScenario {
+  id: string;
+  condition: string; // e.g. "IF Price Retraces to VWAP (~21,085)"
+  conditionShort: string; // e.g. "VWAP Test"
+  whatItMeans: string; // Plain-English institutional market mechanics
+  actionableDecision: string; // e.g. "WAIT FOR 1-MIN WICK ABSORPTION & ENTER LONG"
+  entryTrigger: string; // Specific candle/price confirmation
+  invalidation: string; // Exact hard stop price / condition
+  targetObjective: string; // Target level & expected points
+  trapWarning: string; // What retail traders get wrong here
+  status: "ACTIVE" | "PENDING" | "INVALIDATED";
+}
+
+export interface TacticalExecutionPlan {
+  singleTradeDirective: string; // The #1 actionable rule for today's 1 trade
+  retraceAnalysis: RetraceAnalysis;
+  scenarios: ActionScenario[];
+  timelineGuide: {
+    observePhase: { timeWindow: "09:30 – 09:33 AM ET"; rule: string };
+    entryWindow: { timeWindow: "09:34 – 09:48 AM ET"; rule: string; zone: string };
+    managementPhase: { timeWindow: "09:48 – 10:00 AM ET"; rule: string };
   };
-  mnqAlternatives: Array<{
-    contracts: number;
-    stopPoints: number;
-    riskDollars: number;
-    comfortLevel: "TIGHT" | "RECOMMENDED" | "CONSERVATIVE";
-  }>;
+  vwapPlaybook: {
+    price: number;
+    bounceMeaning: string;
+    breakdownMeaning: string;
+    tradeVerdict: string;
+    actionIfTested: string;
+  };
 }
 
 export interface MacroIndicator {
@@ -159,7 +181,7 @@ export interface OpenBriefData {
   sessionMetrics: SessionMetrics;
   keyLevels: KeyLevel[];
   bias: BiasRegime;
-  riskGuidance: SizingGuidance;
+  tacticalPlan: TacticalExecutionPlan;
   macro: {
     vix: MacroIndicator;
     us10y: MacroIndicator;

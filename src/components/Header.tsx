@@ -205,19 +205,7 @@ export function Header({
             }`}
           >
             <Activity className="w-3.5 h-3.5 text-cyan-400" />
-            <span>9:30 AM Brief</span>
-          </Link>
-
-          <Link
-            href="/briefs"
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center space-x-1.5 ${
-              pathname.startsWith("/briefs")
-                ? "bg-slate-800 text-white border border-slate-700 shadow-sm"
-                : "text-slate-400 hover:text-white hover:bg-slate-900"
-            }`}
-          >
-            <Share2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Shared Briefs</span>
+            <span>Open Playbook</span>
           </Link>
 
           <Link
@@ -318,10 +306,7 @@ export function Header({
       {/* Mobile Nav Links */}
       <div className="lg:hidden px-4 py-2 bg-slate-900/60 border-t border-slate-800/60 flex items-center justify-around text-xs font-mono">
         <Link href="/" className={pathname === "/" ? "text-cyan-400 font-bold" : "text-slate-400"}>
-          Brief
-        </Link>
-        <Link href="/briefs" className={pathname.startsWith("/briefs") ? "text-emerald-400 font-bold" : "text-slate-400"}>
-          Shared
+          Playbook
         </Link>
         <Link href="/journal" className={pathname.startsWith("/journal") ? "text-amber-400 font-bold" : "text-slate-400"}>
           Journal

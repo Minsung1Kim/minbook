@@ -64,3 +64,35 @@ All notable changes and architectural decisions are logged here.
 - Added server-side 15-second TTL cache and fallback to last known valid quote.
 - Clarified CME Globex 10-15 minute exchange delay rules for free public web feeds: added transparent `DELAYED (10-15m CME)` badge and displayed exact CME exchange tick timestamp (`quote.timestamp`) alongside client poll time.
 - Verified live CME Globex price updates (`NQ=F` at 26,860.00) following 6:00 PM ET futures session reopen.
+
+## [2026-11-23] - OpenPulse v2.0 Comprehensive Quantitative Upgrade
+- **Latency & Execution Integrity:**
+  - Separated pre-market structural mode from live execution mode via `SessionPhase` (`PRE_MARKET_BRIEF`, `NY_OPEN_WINDOW_930_1000`, `POST_WINDOW`) and `ExecutionWindowSubPhase` (Open Noise, Prime Retrace, Late Window Decay).
+  - Implemented mandatory `DELAYED FUTURES FEED (10–15m LAG) — USE PRE-OPEN PLAN + LIVE CHART` banner during 09:30–10:00 ET when futures feed has exchange delay.
+  - Added live `QQQ` equity proxy support as real-time direction and VWAP guide.
+- **Structural Levels & Mathematical Fixes:**
+  - Extended Globex window to `[18:00, 09:30)` ET so the critical 09:15–09:30 ET pre-open sweep window is preserved.
+  - Implemented timestamp-based impulse direction for HTF Fibonacci retracement (`computeHTFFibonacci`), correctly calculating 0.382, 0.500, 0.618, and 0.705 (OTE) levels for both bullish and bearish impulses.
+  - Separated VWAP anchors: Globex VWAP (18:00), Prior Day RTH VWAP, RTH Session VWAP (09:30), with `TWAP FALLBACK` flag when volume is absent.
+  - Added Rule of 16 Implied Move bands (1-SD and Expected Straddle `~0.7979x`) to Key Levels table, along with overnight range consumed percentage.
+  - Ingested `ES=F` for Cross-Index SMT Divergence across session highs and lows.
+- **Volatility Surface & Macro Regime:**
+  - Ingested full volatility surface: `^VXN`, `^VIX`, `^VIX3M`, `^VIX9D`, `^VIX1D`, `^VVIX`.
+  - Implemented annualized Garman-Klass and Yang-Zhang realized volatility estimators and Variance Risk Premium (`VRP = VXN - RealizedVol_YZ_20d`).
+  - Added negative VRP stop-run dislocation warnings and term structure backwardation triggers (`VIX/VIX3M > 1.0`).
+  - Wired up 60-day Pearson correlation between `NQ=F` and `^TNX` (Inflation/Rate-Sensitive vs Growth-Scare).
+  - Standardized Overnight Inventory strictly to `% of Globex bars closing above PDC` (0%–100%).
+- **Volatility-Normalized Playbook & Factor Scorecard:**
+  - Replaced hardcoded point cutoffs with dynamic fractions of `ATR_15m` and `ExpectedMove_Straddle`.
+  - Removed fabricated static percentages; replaced with transparent Qualitative Likelihood Tiers backed by an inspectable 7-factor scorecard (+1 / 0 / -1).
+  - Added execution window time-decay tracking and automated News Buffer Warning for 09:45/10:00 AM catalysts.
+- **Risk Sizing Engine:**
+  - Built `RiskSizingCard.tsx` providing dynamic MNQ contract calculations, drawdown budget checks, regime multiplier scaling (1.0x, 0.5x, 0.0x), and stop-too-tight warnings.
+- **Empirical MAE/MFE Journal:**
+  - Fixed directional math for LONG and SHORT trades, including MFE Exit Efficiency (`(Actual_R / MFE_R) * 100`).
+  - Removed static fabricated stats; added a 50-trade sample calibration gate.
+  - Auto-attaches daily regime snapshots (VXN, VRP, Term Ratio, Inventory, SMT, Bias).
+- **Unit Testing:**
+  - Added `vitest` unit test suite covering Fibonacci impulse, realized volatility & VRP, directional MAE/MFE, and position sizing (13/13 tests passing).
+- **Build & Verification:**
+  - Verified clean Next.js 16 production build and live background server running on `http://localhost:3000`.

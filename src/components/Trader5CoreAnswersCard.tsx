@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
   Compass,
   Crosshair,
@@ -8,41 +8,115 @@ import {
   TrendingDown,
   ShieldAlert,
   Target,
-  Scale
+  Scale,
+  ListFilter,
+  ChevronDown,
+  ChevronUp,
+  Activity
 } from "lucide-react";
-import { Trader5Answers } from "@/types/market";
+import { Trader5Answers, FactorScoreItem, SMTDivergence, VolatilitySurface } from "@/types/market";
 
 interface Trader5CoreAnswersCardProps {
   answers: Trader5Answers;
   currentPrice: number;
+  factorScorecard?: FactorScoreItem[];
+  smtDivergence?: SMTDivergence;
+  volatilitySurface?: VolatilitySurface;
 }
 
-export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAnswersCardProps) {
+export function Trader5CoreAnswersCard({
+  answers,
+  currentPrice,
+  factorScorecard,
+  smtDivergence,
+  volatilitySurface
+}: Trader5CoreAnswersCardProps) {
+  const [showScorecard, setShowScorecard] = useState(false);
   const isBull = answers.biasDirection.includes("BULLISH");
   const isBear = answers.biasDirection.includes("BEARISH");
 
   return (
-    <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden">
+    <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden space-y-0">
       {/* Header Bar */}
       <div className="px-5 py-3.5 border-b border-slate-800 bg-slate-900/50 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center space-x-2">
-            <h2 className="text-sm font-semibold tracking-tight text-white">
-              Session Brief & Signals
-            </h2>
-            <span className="text-[11px] text-slate-400">
-              — NY Open 9:30–10:00 AM ET
+        <div className="flex items-center space-x-2.5">
+          <h2 className="text-sm font-semibold tracking-tight text-white">
+            Session Signals & Tactical Setup
+          </h2>
+          <span className="text-[11px] text-slate-400 font-mono">
+            v2.0 Quantitative Engine
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-3 text-xs">
+          {smtDivergence?.hasDivergence && (
+            <span className="px-2 py-0.5 rounded bg-cyan-950/60 border border-cyan-800 text-cyan-300 font-mono font-semibold text-[10px]">
+              {smtDivergence.divergenceType}
+            </span>
+          )}
+
+          {factorScorecard && factorScorecard.length > 0 && (
+            <button
+              onClick={() => setShowScorecard(!showScorecard)}
+              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center space-x-1.5 transition-colors text-[11px]"
+            >
+              <ListFilter className="w-3 h-3 text-cyan-400" />
+              <span>Factor Scorecard</span>
+              {showScorecard ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          )}
+
+          <div className="flex items-center space-x-1.5">
+            <span className="text-slate-400">NQ:</span>
+            <span className="font-mono tabular-nums font-semibold text-cyan-400">
+              {currentPrice.toFixed(2)}
             </span>
           </div>
         </div>
-
-        <div className="flex items-center space-x-2 text-xs">
-          <span className="text-slate-400">Current NQ:</span>
-          <span className="font-mono tabular-nums font-semibold text-cyan-400">
-            {currentPrice.toFixed(2)}
-          </span>
-        </div>
       </div>
+
+      {/* Inspectable Factor Scorecard Drawer */}
+      {showScorecard && factorScorecard && factorScorecard.length > 0 && (
+        <div className="px-5 py-4 border-b border-slate-800 bg-slate-900/70 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-200">
+              Factor Scorecard (Qualitative Verdict Breakdown)
+            </span>
+            <span className="text-[11px] text-slate-400 font-mono">
+              Net Score:{" "}
+              <strong className="text-white">
+                {factorScorecard.reduce((sum, item) => sum + item.score, 0) > 0 ? "+" : ""}
+                {factorScorecard.reduce((sum, item) => sum + item.score, 0)}
+              </strong>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {factorScorecard.map((item, idx) => (
+              <div
+                key={idx}
+                className="p-2.5 rounded bg-slate-900/90 border border-slate-800 flex items-start justify-between text-xs"
+              >
+                <div className="space-y-0.5">
+                  <span className="font-medium text-slate-300 block">{item.factor}</span>
+                  <p className="text-[11px] text-slate-400 leading-tight">{item.detail}</p>
+                </div>
+                <span
+                  className={`ml-2 shrink-0 font-mono font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                    item.score > 0
+                      ? "bg-emerald-950/60 border border-emerald-800 text-emerald-400"
+                      : item.score < 0
+                      ? "bg-rose-950/60 border border-rose-800 text-rose-400"
+                      : "bg-slate-800 border border-slate-700 text-slate-400"
+                  }`}
+                >
+                  {item.score > 0 ? "+1" : item.score < 0 ? "-1" : "0"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Main Signal Matrix */}
       <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -54,7 +128,7 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
               <span>Direction & Bias</span>
             </span>
             <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              {answers.biasConfidence}
+              {answers.biasConfidence} Confidence
             </span>
           </div>
 
@@ -107,9 +181,9 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
               <Crosshair className="w-3.5 h-3.5 text-slate-400" />
-              <span>Retrace Entry Levels</span>
+              <span>Prime Retrace Entry Levels</span>
             </span>
-            <span className="text-[11px] text-slate-500">Wait for fill</span>
+            <span className="text-[11px] text-slate-500">Wait for retrace</span>
           </div>
 
           <div className="divide-y divide-slate-800/60 border border-slate-800/80 rounded bg-slate-900/40">
@@ -203,3 +277,5 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
     </div>
   );
 }
+
+export default Trader5CoreAnswersCard;

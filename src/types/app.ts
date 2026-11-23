@@ -23,18 +23,29 @@ export interface TradeLogEntry {
   stopPrice: number;
   targetPrice: number;
   exitPrice: number;
+  worstPrice?: number; // Lowest price during trade (Long) or highest price (Short)
+  bestPrice?: number; // Highest price during trade (Long) or lowest price (Short)
   contracts: number;
   plannedRiskDollars: number;
   plannedTargetDollars: number;
   actualPnlDollars: number;
   actualPnlR: number; // e.g. +2.2R or -1.0R
-  maeR: number; // Maximum Adverse Excursion in R (worst heat drawn down, e.g. -0.35R)
-  mfeR: number; // Maximum Favorable Excursion in R (peak profit reached, e.g. +2.8R)
+  maeR: number; // Maximum Adverse Excursion in R (worst heat drawn down)
+  mfeR: number; // Maximum Favorable Excursion in R (peak profit reached)
+  exitEfficiencyPercent?: number; // (actualPnlR / mfeR) * 100 for winners
   stoppedOut: boolean;
   entryTimeET: string;
   exitTimeET: string;
   retraceLevelUsed: string;
   notes: string;
+  // Regime Snapshot at time of entry
+  vxnSnapshot?: number;
+  termRatioSnapshot?: number;
+  vvixSnapshot?: number;
+  vrpSnapshot?: number;
+  inventoryPercentSnapshot?: number;
+  smtSnapshot?: string;
+  biasVerdictSnapshot?: string;
   createdAt: string;
 }
 
@@ -51,12 +62,20 @@ export interface JournalAnalytics {
   avgMaeWinningTradesR: number;
   avgMaeLosingTradesR: number;
   avgMfeTradesR: number;
-  // Deep empirical insight: how many winning trades suffered >0.5R or >0.75R adverse heat?
+  avgExitEfficiencyPercent: number;
+  sampleSizeGate: {
+    isCalibrated: boolean;
+    targetSampleSize: number;
+    currentCount: number;
+    statusMessage: string;
+  };
+  percentile85MaeWinners?: number;
+  percentile90MaeWinners?: number;
   deepHeatDistribution: {
-    under25PctR: number; // MAE between 0 and -0.25R
-    under50PctR: number; // MAE between -0.25R and -0.5R
-    under75PctR: number; // MAE between -0.5R and -0.75R
-    severeDrawdown: number; // MAE > -0.75R
+    under25PctR: number; // MAE <= 0.25R
+    under50PctR: number; // MAE 0.25R - 0.50R
+    under75PctR: number; // MAE 0.50R - 0.75R
+    severeDrawdown: number; // MAE > 0.75R
   };
   recommendation: string;
 }

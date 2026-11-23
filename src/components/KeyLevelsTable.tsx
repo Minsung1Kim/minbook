@@ -52,6 +52,8 @@ export function KeyLevelsTable({ levels, currentPrice }: KeyLevelsTableProps) {
         return "border-slate-700 text-slate-300 bg-slate-900";
       case "INVALIDATION":
         return "border-rose-800 text-rose-400 bg-rose-950/20";
+      case "EXPECTED MOVE":
+        return "border-purple-800 text-purple-300 bg-purple-950/20";
       default:
         return "border-slate-700 text-slate-300 bg-slate-900";
     }

@@ -53,6 +53,8 @@ export function getDb(): DatabaseSync {
       stop_price REAL NOT NULL,
       target_price REAL NOT NULL,
       exit_price REAL NOT NULL,
+      worst_price REAL DEFAULT NULL,
+      best_price REAL DEFAULT NULL,
       contracts INTEGER NOT NULL DEFAULT 1,
       planned_risk_dollars REAL NOT NULL,
       planned_target_dollars REAL NOT NULL,
@@ -60,11 +62,19 @@ export function getDb(): DatabaseSync {
       actual_pnl_r REAL NOT NULL,
       mae_r REAL NOT NULL,
       mfe_r REAL NOT NULL,
+      exit_efficiency_percent REAL DEFAULT NULL,
       stopped_out INTEGER NOT NULL DEFAULT 0,
       entry_time_et TEXT NOT NULL,
       exit_time_et TEXT NOT NULL,
       retrace_level_used TEXT DEFAULT '',
       notes TEXT DEFAULT '',
+      vxn_snapshot REAL DEFAULT NULL,
+      term_ratio_snapshot REAL DEFAULT NULL,
+      vvix_snapshot REAL DEFAULT NULL,
+      vrp_snapshot REAL DEFAULT NULL,
+      inventory_percent_snapshot REAL DEFAULT NULL,
+      smt_snapshot TEXT DEFAULT '',
+      bias_verdict_snapshot TEXT DEFAULT '',
       created_at TEXT NOT NULL
     );
 
@@ -86,6 +96,24 @@ export function getDb(): DatabaseSync {
       PRIMARY KEY (trade_date, user_id)
     );
   `);
+
+  // Auto-migrate schema for v2.0
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(trades)").all() as Array<{ name: string }>;
+    const colNames = new Set(tableInfo.map((c) => c.name));
+    if (!colNames.has("worst_price")) db.exec("ALTER TABLE trades ADD COLUMN worst_price REAL DEFAULT NULL;");
+    if (!colNames.has("best_price")) db.exec("ALTER TABLE trades ADD COLUMN best_price REAL DEFAULT NULL;");
+    if (!colNames.has("exit_efficiency_percent")) db.exec("ALTER TABLE trades ADD COLUMN exit_efficiency_percent REAL DEFAULT NULL;");
+    if (!colNames.has("vxn_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN vxn_snapshot REAL DEFAULT NULL;");
+    if (!colNames.has("term_ratio_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN term_ratio_snapshot REAL DEFAULT NULL;");
+    if (!colNames.has("vvix_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN vvix_snapshot REAL DEFAULT NULL;");
+    if (!colNames.has("vrp_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN vrp_snapshot REAL DEFAULT NULL;");
+    if (!colNames.has("inventory_percent_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN inventory_percent_snapshot REAL DEFAULT NULL;");
+    if (!colNames.has("smt_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN smt_snapshot TEXT DEFAULT '';");
+    if (!colNames.has("bias_verdict_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN bias_verdict_snapshot TEXT DEFAULT '';");
+  } catch (err) {
+    console.warn("Notice: trades table migration:", err);
+  }
 
   // Seed default user profiles if empty
   const countRow = db.prepare("SELECT COUNT(*) as cnt FROM profiles").get() as { cnt: number } | undefined;
@@ -326,6 +354,8 @@ export function getTrades(userId?: string): TradeLogEntry[] {
     stopPrice: r.stop_price,
     targetPrice: r.target_price,
     exitPrice: r.exit_price,
+    worstPrice: r.worst_price ?? undefined,
+    bestPrice: r.best_price ?? undefined,
     contracts: r.contracts,
     plannedRiskDollars: r.planned_risk_dollars,
     plannedTargetDollars: r.planned_target_dollars,
@@ -333,11 +363,19 @@ export function getTrades(userId?: string): TradeLogEntry[] {
     actualPnlR: r.actual_pnl_r,
     maeR: r.mae_r,
     mfeR: r.mfe_r,
+    exitEfficiencyPercent: r.exit_efficiency_percent ?? undefined,
     stoppedOut: Boolean(r.stopped_out),
     entryTimeET: r.entry_time_et,
     exitTimeET: r.exit_time_et,
     retraceLevelUsed: r.retrace_level_used || "",
     notes: r.notes || "",
+    vxnSnapshot: r.vxn_snapshot ?? undefined,
+    termRatioSnapshot: r.term_ratio_snapshot ?? undefined,
+    vvixSnapshot: r.vvix_snapshot ?? undefined,
+    vrpSnapshot: r.vrp_snapshot ?? undefined,
+    inventoryPercentSnapshot: r.inventory_percent_snapshot ?? undefined,
+    smtSnapshot: r.smt_snapshot || "",
+    biasVerdictSnapshot: r.bias_verdict_snapshot || "",
     createdAt: r.created_at
   }));
 }
@@ -350,16 +388,22 @@ export function addTrade(trade: Omit<TradeLogEntry, "id" | "createdAt">): TradeL
   db.prepare(`
     INSERT INTO trades (
       id, user_id, trade_date, symbol, direction, entry_price, stop_price, target_price,
-      exit_price, contracts, planned_risk_dollars, planned_target_dollars, actual_pnl_dollars,
-      actual_pnl_r, mae_r, mfe_r, stopped_out, entry_time_et, exit_time_et, retrace_level_used, notes, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      exit_price, worst_price, best_price, contracts, planned_risk_dollars, planned_target_dollars, actual_pnl_dollars,
+      actual_pnl_r, mae_r, mfe_r, exit_efficiency_percent, stopped_out, entry_time_et, exit_time_et, retrace_level_used, notes,
+      vxn_snapshot, term_ratio_snapshot, vvix_snapshot, vrp_snapshot, inventory_percent_snapshot, smt_snapshot, bias_verdict_snapshot, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, trade.userId, trade.tradeDate, trade.symbol, trade.direction,
     trade.entryPrice, trade.stopPrice, trade.targetPrice, trade.exitPrice,
+    trade.worstPrice ?? null, trade.bestPrice ?? null,
     trade.contracts, trade.plannedRiskDollars, trade.plannedTargetDollars,
     trade.actualPnlDollars, trade.actualPnlR, trade.maeR, trade.mfeR,
+    trade.exitEfficiencyPercent ?? null,
     trade.stoppedOut ? 1 : 0, trade.entryTimeET, trade.exitTimeET,
-    trade.retraceLevelUsed, trade.notes, createdAt
+    trade.retraceLevelUsed, trade.notes,
+    trade.vxnSnapshot ?? null, trade.termRatioSnapshot ?? null, trade.vvixSnapshot ?? null,
+    trade.vrpSnapshot ?? null, trade.inventoryPercentSnapshot ?? null,
+    trade.smtSnapshot ?? "", trade.biasVerdictSnapshot ?? "", createdAt
   );
 
   return {
@@ -377,6 +421,16 @@ export function deleteTrade(id: string): boolean {
 
 export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   const trades = getTrades(userId);
+  const sampleSizeGate = {
+    isCalibrated: trades.length >= 50,
+    targetSampleSize: 50,
+    currentCount: trades.length,
+    statusMessage:
+      trades.length < 50
+        ? `COLLECTING SAMPLE (${trades.length} / 50 TRADES) — DO NOT TIGHTEN STOPS YET`
+        : `SAMPLE CALIBRATED (${trades.length} TRADES) — EMPIRICAL OUT-OF-SAMPLE GUIDANCE ACTIVE`
+  };
+
   if (trades.length === 0) {
     return {
       totalTrades: 0,
@@ -391,13 +445,15 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
       avgMaeWinningTradesR: 0,
       avgMaeLosingTradesR: 0,
       avgMfeTradesR: 0,
+      avgExitEfficiencyPercent: 0,
+      sampleSizeGate,
       deepHeatDistribution: {
         under25PctR: 0,
         under50PctR: 0,
         under75PctR: 0,
         severeDrawdown: 0
       },
-      recommendation: "Log your first 5-10 trades to unlock empirical MAE/MFE edge insights."
+      recommendation: "Log your first 5-10 trades to build a genuine baseline."
     };
   }
 
@@ -412,6 +468,10 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   let sumMaeWinners = 0;
   let sumMaeLosers = 0;
   let sumMfe = 0;
+  let sumExitEfficiency = 0;
+  let exitEfficiencyCount = 0;
+
+  const winnerMaes: number[] = [];
 
   const distribution = {
     under25PctR: 0,
@@ -429,8 +489,16 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
       wins++;
       grossWinsDollars += t.actualPnlDollars;
       sumMaeWinners += t.maeR;
+      winnerMaes.push(t.maeR);
 
-      // Classify MAE heat experienced on winning trades
+      if (t.exitEfficiencyPercent !== undefined && t.exitEfficiencyPercent > 0) {
+        sumExitEfficiency += t.exitEfficiencyPercent;
+        exitEfficiencyCount++;
+      } else if (t.mfeR > 0 && t.actualPnlR > 0) {
+        sumExitEfficiency += Math.min(100, (t.actualPnlR / t.mfeR) * 100);
+        exitEfficiencyCount++;
+      }
+
       if (t.maeR <= 0.25) {
         distribution.under25PctR++;
       } else if (t.maeR <= 0.50) {
@@ -455,14 +523,24 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   const avgMaeWinners = wins > 0 ? sumMaeWinners / wins : 0;
   const avgMaeLosers = losses > 0 ? sumMaeLosers / losses : 0;
   const avgMfe = sumMfe / trades.length;
+  const avgExitEfficiencyPercent = exitEfficiencyCount > 0 ? sumExitEfficiency / exitEfficiencyCount : 0;
 
-  // Generate actionable empirical recommendation
+  let percentile85MaeWinners: number | undefined;
+  let percentile90MaeWinners: number | undefined;
+
+  if (winnerMaes.length >= 20) {
+    winnerMaes.sort((a, b) => a - b);
+    percentile85MaeWinners = winnerMaes[Math.floor(winnerMaes.length * 0.85)];
+    percentile90MaeWinners = winnerMaes[Math.floor(winnerMaes.length * 0.90)];
+  }
+
   let recommendation = "";
-  if (wins > 0) {
-    const shallowWinnersPct = Math.round(((distribution.under25PctR + distribution.under50PctR) / wins) * 100);
-    recommendation = `${shallowWinnersPct}% of your winning continuation trades experienced less than 0.50R adverse excursion. If a retrace draws down past 0.65R, statistical recovery probability drops sharply. Consider tightening stops on delayed stalls.`;
+  if (trades.length < 50) {
+    recommendation = `Collecting sample (${trades.length}/50 trades). Do NOT prematurely tighten stops based on small-sample curve fitting. Honor your structural stop level.`;
+  } else if (percentile85MaeWinners !== undefined) {
+    recommendation = `Calibrated (${trades.length} trades): 85% of winning continuation retraces suffered <= ${percentile85MaeWinners.toFixed(2)}R adverse excursion. Stalls exceeding ${percentile90MaeWinners?.toFixed(2) || "0.65"}R on volume have low recovery expectancy.`;
   } else {
-    recommendation = "Keep logging daily 9:30 AM retrace trades to build a baseline.";
+    recommendation = "Maintain 1-trade discipline across your morning execution window.";
   }
 
   return {
@@ -478,6 +556,10 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     avgMaeWinningTradesR: Math.round(avgMaeWinners * 100) / 100,
     avgMaeLosingTradesR: Math.round(avgMaeLosers * 100) / 100,
     avgMfeTradesR: Math.round(avgMfe * 100) / 100,
+    avgExitEfficiencyPercent: Math.round(avgExitEfficiencyPercent * 10) / 10,
+    sampleSizeGate,
+    percentile85MaeWinners,
+    percentile90MaeWinners,
     deepHeatDistribution: distribution,
     recommendation
   };

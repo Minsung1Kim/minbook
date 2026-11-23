@@ -1,9 +1,17 @@
-import { OHLCVBar, MarketQuote, MacroIndicator, EconomicEvent } from "@/types/market";
+import { OHLCVBar, MarketQuote, MacroIndicator, EconomicEvent, VolatilitySurface, MacroRegimeState } from "@/types/market";
 
 export interface MacroDataResult {
   vix: MacroIndicator;
   us10y: MacroIndicator;
   dxy: MacroIndicator;
+  volatilitySurface?: VolatilitySurface;
+  macroRegime?: MacroRegimeState;
+  qqqProxyQuote?: MarketQuote;
+  esData?: {
+    quote: MarketQuote;
+    dailyBars: OHLCVBar[];
+    intradayBars: OHLCVBar[];
+  };
   megaCaps: Array<{
     symbol: string;
     name: string;

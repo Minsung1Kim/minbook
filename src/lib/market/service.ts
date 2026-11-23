@@ -51,7 +51,6 @@ export async function getOpenBrief(options?: {
     providerNotice = `Real market data provided via ${provider.name}. Rate-limit protected via server cache.`;
   } catch (err: any) {
     console.warn(`Primary provider ${provider.name} failed:`, err?.message || err);
-    // Graceful fallback to seed data
     quote = await fallbackProvider.getQuote(symbol);
     dailyBars = await fallbackProvider.getDailyBars(symbol, 30);
     intradayBars = await fallbackProvider.getIntradayBars(symbol, "15m");
@@ -65,8 +64,17 @@ export async function getOpenBrief(options?: {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // YYYY-MM-DD
 
-  // Compute session levels
-  const { sessionMetrics, keyLevels } = computeSessionLevels(quote.price, dailyBars, intradayBars);
+  // Implied Volatility for Rule of 16 Expected Move
+  const ivPct = macro.volatilitySurface?.vxn || macro.vix?.value || 24.0;
+
+  // Compute session levels with SMT divergence and expected move
+  const { sessionMetrics, keyLevels } = computeSessionLevels(
+    quote.price,
+    dailyBars,
+    intradayBars,
+    ivPct,
+    macro.esData
+  );
 
   // Check if red/orange folder news scheduled between 9:30 and 10:00 AM ET today
   const hasOpenNews = events.some(
@@ -75,11 +83,22 @@ export async function getOpenBrief(options?: {
       (e.date === dateStr || !e.date)
   );
 
-  // Evaluate bias & chop risk
-  const bias = evaluateBiasAndRegime(quote.price, sessionMetrics, macro.vix, hasOpenNews);
+  // Evaluate bias & chop risk with full volatility surface & macro regime
+  const bias = evaluateBiasAndRegime(
+    quote.price,
+    sessionMetrics,
+    macro.vix,
+    hasOpenNews,
+    macro.volatilitySurface,
+    macro.macroRegime
+  );
 
-  // Generate actionable tactical playbook & scenarios
-  const tacticalPlan = generateTacticalPlaybook(quote.price, sessionMetrics, bias);
+  // Generate actionable tactical playbook & scenarios with time-decay and delayed feed protection
+  const tacticalPlan = generateTacticalPlaybook(quote.price, sessionMetrics, bias, {
+    isDelayed: quote.status === "DELAYED",
+    qqqProxyQuote: macro.qqqProxyQuote,
+    economicEvents: events
+  });
 
   const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "10", 10);
   const cacheExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
@@ -98,6 +117,8 @@ export async function getOpenBrief(options?: {
       vix: macro.vix,
       us10y: macro.us10y,
       dxy: macro.dxy,
+      volatilitySurface: macro.volatilitySurface,
+      macroRegime: macro.macroRegime,
       megaCaps: macro.megaCaps,
       events,
       dealerGammaTilt: macro.dealerGammaTilt

@@ -1,30 +1,18 @@
-import { OHLCVBar, KeyLevel, SessionMetrics } from "@/types/market";
+import { OHLCVBar, KeyLevel, SessionMetrics, SMTDivergence } from "@/types/market";
+import { computeHTFFibonacci, computeExpectedMove } from "./math";
 
-interface ExtractedSessions {
-  pdh: number;
-  pdl: number;
-  pdc: number;
-  pdMid: number;
-  onh: number;
-  onl: number;
-  onMid: number;
-  londonHigh: number;
-  londonLow: number;
-  asiaHigh: number;
-  asiaLow: number;
-  sessionVwap: number;
-  htfSwingHigh: number;
-  htfSwingLow: number;
-  inventoryPercent: number; // e.g. +70% above PDC
-  overnightInventory: "BULLISH_IMBALANCE" | "BEARISH_IMBALANCE" | "BALANCED";
-  atr14Daily: number;
-  atr15mIntraday: number;
+export interface SMTInputData {
+  quote?: { price: number };
+  dailyBars?: OHLCVBar[];
+  intradayBars?: OHLCVBar[];
 }
 
 export function computeSessionLevels(
   currentPrice: number,
   dailyBars: OHLCVBar[],
-  intradayBars: OHLCVBar[]
+  intradayBars: OHLCVBar[],
+  ivPct: number = 24.0,
+  esData?: SMTInputData
 ): { sessionMetrics: SessionMetrics; keyLevels: KeyLevel[] } {
   // 1. Calculate Daily ATR(14) and Prior Day levels
   let pdh = currentPrice + 60;
@@ -54,20 +42,7 @@ export function computeSessionLevels(
 
   const pdMid = Math.round(((pdh + pdl) / 2) * 100) / 100;
 
-  // 2. Parse Intraday bars for Globex (Overnight), London, Asia, and VWAP
-  let onh = currentPrice + 35;
-  let onl = currentPrice - 40;
-  let londonHigh = currentPrice + 25;
-  let londonLow = currentPrice - 30;
-  let asiaHigh = currentPrice + 10;
-  let asiaLow = currentPrice - 20;
-
-  let vwapSumPV = 0;
-  let vwapSumV = 0;
-  let abovePdcBars = 0;
-  let totalOvernightBars = 0;
-
-  // Calculate 15-minute ATR
+  // 2. Compute 15-minute ATR
   const intradayTrs: number[] = [];
   for (let i = 1; i < intradayBars.length; i++) {
     const prevC = intradayBars[i - 1].close;
@@ -80,6 +55,32 @@ export function computeSessionLevels(
     ? Math.round((recentIntradayTrs.reduce((a, b) => a + b, 0) / recentIntradayTrs.length) * 10) / 10
     : 24.5;
 
+  // 3. Parse Intraday bars for Globex ([18:00, 09:30) ET), London ([03:00, 09:00) ET), Asia, and VWAPs
+  let onh = currentPrice + 35;
+  let onl = currentPrice - 40;
+  let londonHigh = currentPrice + 25;
+  let londonLow = currentPrice - 30;
+  let asiaHigh = currentPrice + 10;
+  let asiaLow = currentPrice - 20;
+
+  let globexVwapSumPV = 0;
+  let globexVwapSumV = 0;
+  let globexTwapSum = 0;
+  let globexBarCount = 0;
+
+  let rthVwapSumPV = 0;
+  let rthVwapSumV = 0;
+  let rthTwapSum = 0;
+  let rthBarCount = 0;
+
+  let priorRthVwapSumPV = 0;
+  let priorRthVwapSumV = 0;
+
+  let abovePdcBars = 0;
+  let totalOvernightBars = 0;
+
+  let hasRealVolume = false;
+
   if (intradayBars.length > 0) {
     const globexHighs: number[] = [];
     const globexLows: number[] = [];
@@ -88,37 +89,52 @@ export function computeSessionLevels(
     const asiaHighs: number[] = [];
     const asiaLows: number[] = [];
 
-    // Analyze bars
-    // CME Globex session begins 18:00 ET. We evaluate the most recent ~30-40 bars (last 10-15 hours)
-    const recentBars = intradayBars.slice(-40);
+    // Analyze the last ~48 bars (12 hours of 15m bars covering entire Globex session)
+    const recentBars = intradayBars.slice(-48);
 
     for (const b of recentBars) {
       const dt = new Date(b.timestamp);
-      // Format hour in ET
       const hourStr = dt.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false });
+      const minStr = dt.toLocaleString("en-US", { timeZone: "America/New_York", minute: "numeric" });
       const hourET = parseInt(hourStr, 10);
+      const minET = parseInt(minStr, 10);
 
-      // Volume-weighted price calculation
       const typPrice = (b.high + b.low + b.close) / 3;
-      const vol = b.volume > 0 ? b.volume : 100;
-      vwapSumPV += typPrice * vol;
-      vwapSumV += vol;
+      const vol = typeof b.volume === "number" && b.volume > 0 ? b.volume : 0;
+      if (vol > 10) hasRealVolume = true;
 
-      // Globex overnight encompasses roughly 18:00 to 09:30 ET
-      globexHighs.push(b.high);
-      globexLows.push(b.low);
-      totalOvernightBars++;
-      if (b.close >= pdc) {
-        abovePdcBars++;
+      // Globex window strictly [18:00, 09:30) ET
+      const isGlobex = hourET >= 18 || hourET < 9 || (hourET === 9 && minET < 30);
+      const isRTH = (hourET === 9 && minET >= 30) || (hourET >= 10 && hourET < 16);
+
+      if (isGlobex) {
+        globexHighs.push(b.high);
+        globexLows.push(b.low);
+        totalOvernightBars++;
+        if (b.close >= pdc) {
+          abovePdcBars++;
+        }
+
+        globexVwapSumPV += typPrice * vol;
+        globexVwapSumV += vol;
+        globexTwapSum += typPrice;
+        globexBarCount++;
       }
 
-      // London session: approx 03:00 - 08:30 ET
+      if (isRTH) {
+        rthVwapSumPV += typPrice * vol;
+        rthVwapSumV += vol;
+        rthTwapSum += typPrice;
+        rthBarCount++;
+      }
+
+      // London session: approx 03:00 - 09:00 ET
       if (hourET >= 3 && hourET < 9) {
         lonHighs.push(b.high);
         lonLows.push(b.low);
       }
 
-      // Asia session: approx 18:00 - 02:00 ET
+      // Asia session: approx 18:00 - 03:00 ET
       if (hourET >= 18 || hourET < 3) {
         asiaHighs.push(b.high);
         asiaLows.push(b.low);
@@ -138,27 +154,44 @@ export function computeSessionLevels(
   }
 
   const onMid = Math.round(((onh + onl) / 2) * 100) / 100;
-  const sessionVwap = vwapSumV > 0
-    ? Math.round((vwapSumPV / vwapSumV) * 100) / 100
-    : Math.round(((onh + onl + currentPrice) / 3) * 100) / 100;
 
-  // HTF 3-day swing calculation
-  const htfLookback = dailyBars.slice(-5);
-  const htfHighs = htfLookback.map((b) => b.high);
-  const htfLows = htfLookback.map((b) => b.low);
-  const htfImpulseHigh = htfHighs.length > 0 ? Math.max(...htfHighs, onh) : onh + 80;
-  const htfImpulseLow = htfLows.length > 0 ? Math.min(...htfLows, onl) : onl - 80;
+  // VWAP Anchors with volume integrity check
+  const vwapCalculationMode: SessionMetrics["vwapCalculationMode"] = hasRealVolume ? "VOLUME_WEIGHTED" : "TWAP_FALLBACK";
 
-  const htfRange = htfImpulseHigh - htfImpulseLow;
-  const htf50Retrace = Math.round((htfImpulseLow + htfRange * 0.5) * 100) / 100;
-  const htf618Retrace = Math.round((htfImpulseHigh - htfRange * 0.382) * 100) / 100; // 61.8% pullback from high
+  const globexVwap =
+    hasRealVolume && globexVwapSumV > 0
+      ? Math.round((globexVwapSumPV / globexVwapSumV) * 100) / 100
+      : globexBarCount > 0
+      ? Math.round((globexTwapSum / globexBarCount) * 100) / 100
+      : onMid;
 
-  // Overnight Inventory Imbalance
-  const inventoryRatio = totalOvernightBars > 0 ? abovePdcBars / totalOvernightBars : 0.5;
-  const inventoryPercent = Math.round((inventoryRatio - 0.5) * 200); // -100% to +100%
-  let overnightInventory: "BULLISH_IMBALANCE" | "BEARISH_IMBALANCE" | "BALANCED" = "BALANCED";
-  if (inventoryPercent >= 40) overnightInventory = "BULLISH_IMBALANCE";
-  else if (inventoryPercent <= -40) overnightInventory = "BEARISH_IMBALANCE";
+  const rthSessionVwap =
+    hasRealVolume && rthVwapSumV > 0
+      ? Math.round((rthVwapSumPV / rthVwapSumV) * 100) / 100
+      : rthBarCount > 0
+      ? Math.round((rthTwapSum / rthBarCount) * 100) / 100
+      : globexVwap;
+
+  const priorDayRthVwap = Math.round(((pdh + pdl + pdc) / 3) * 100) / 100;
+  const sessionVwap = rthBarCount > 0 ? rthSessionVwap : globexVwap;
+
+  // 4. Higher-Timeframe (HTF) Fibonacci Retracement & Impulse Direction
+  const htfFib = computeHTFFibonacci(dailyBars);
+
+  // 5. Implied Expected Move Bands (Rule of 16 + Straddle Proxy)
+  const expectedMove = computeExpectedMove(pdc, ivPct);
+  const overnightRange = Math.round((onh - onl) * 100) / 100;
+  const safeStraddle = expectedMove.expectedMoveStraddle > 0 ? expectedMove.expectedMoveStraddle : 80;
+  const overnightRangeConsumedPercent =
+    Math.round((overnightRange / (2 * safeStraddle)) * 1000) / 10;
+
+  // 6. Standardized Overnight Inventory (% of Globex bars closing above PDC)
+  const inventoryPercent =
+    totalOvernightBars > 0 ? Math.round((abovePdcBars / totalOvernightBars) * 100) : 50;
+
+  let overnightInventory: SessionMetrics["overnightInventory"] = "BALANCED";
+  if (inventoryPercent >= 70) overnightInventory = "BULLISH_IMBALANCE";
+  else if (inventoryPercent <= 30) overnightInventory = "BEARISH_IMBALANCE";
 
   // Opening location relative to Globex range
   const openingGap = Math.round((currentPrice - pdc) * 100) / 100;
@@ -167,6 +200,74 @@ export function computeSessionLevels(
   else if (currentPrice < onl) openingLocation = "BELOW_ONL";
   else if (currentPrice > onMid + 10) openingLocation = "INSIDE_UPPER_GLOBEX";
   else if (currentPrice < onMid - 10) openingLocation = "INSIDE_LOWER_GLOBEX";
+
+  // 7. Cross-Index SMT Divergence (NQ vs ES)
+  let smtDivergence: SMTDivergence | undefined;
+  if (esData && esData.intradayBars && esData.intradayBars.length > 0) {
+    const esBars = esData.intradayBars.slice(-48);
+    const esHighs = esBars.map((b) => b.high);
+    const esLows = esBars.map((b) => b.low);
+    const esOnh = esHighs.length > 0 ? Math.max(...esHighs) : 0;
+    const esOnl = esLows.length > 0 ? Math.min(...esLows) : 0;
+    const esPrice = esData.quote?.price || (esBars.length > 0 ? esBars[esBars.length - 1].close : 0);
+
+    const nqSweptHigh = currentPrice > onh;
+    const nqSweptLow = currentPrice < onl;
+    const esSweptHigh = esPrice > esOnh;
+    const esSweptLow = esPrice < esOnl;
+
+    if (nqSweptLow && !esSweptLow && esPrice > 0) {
+      smtDivergence = {
+        hasDivergence: true,
+        divergenceType: "BULLISH_SMT (NQ SWEPT LOW, ES HELD)",
+        nqHigh: onh,
+        nqLow: onl,
+        esHigh: esOnh,
+        esLow: esOnl,
+        notes: "NQ swept Globex low while ES held above its low. Classic smart-money accumulation divergence."
+      };
+    } else if (!nqSweptLow && esSweptLow) {
+      smtDivergence = {
+        hasDivergence: true,
+        divergenceType: "BULLISH_SMT (ES SWEPT LOW, NQ HELD)",
+        nqHigh: onh,
+        nqLow: onl,
+        esHigh: esOnh,
+        esLow: esOnl,
+        notes: "ES flushed below its overnight low while NQ held higher. Indicates relative tech leadership."
+      };
+    } else if (nqSweptHigh && !esSweptHigh && esPrice > 0) {
+      smtDivergence = {
+        hasDivergence: true,
+        divergenceType: "BEARISH_SMT (NQ SWEPT HIGH, ES HELD)",
+        nqHigh: onh,
+        nqLow: onl,
+        esHigh: esOnh,
+        esLow: esOnl,
+        notes: "NQ swept overnight high while ES failed to make a new high. Warning of liquidity sweep trap."
+      };
+    } else if (!nqSweptHigh && esSweptHigh) {
+      smtDivergence = {
+        hasDivergence: true,
+        divergenceType: "BEARISH_SMT (ES SWEPT HIGH, NQ HELD)",
+        nqHigh: onh,
+        nqLow: onl,
+        esHigh: esOnh,
+        esLow: esOnl,
+        notes: "ES pushed to new high while NQ lagged. Warns of selective distribution."
+      };
+    } else {
+      smtDivergence = {
+        hasDivergence: false,
+        divergenceType: "NONE (SYNCED)",
+        nqHigh: onh,
+        nqLow: onl,
+        esHigh: esOnh,
+        esLow: esOnl,
+        notes: "NQ and ES are moving in sync with no cross-index divergence."
+      };
+    }
+  }
 
   const sessionMetrics: SessionMetrics = {
     pdh: Math.round(pdh * 100) / 100,
@@ -181,21 +282,53 @@ export function computeSessionLevels(
     asiaHigh: Math.round(asiaHigh * 100) / 100,
     asiaLow: Math.round(asiaLow * 100) / 100,
     sessionVwap,
-    htf50Retrace,
-    htf618Retrace,
-    htfImpulseHigh: Math.round(htfImpulseHigh * 100) / 100,
-    htfImpulseLow: Math.round(htfImpulseLow * 100) / 100,
+    globexVwap,
+    priorDayRthVwap,
+    rthSessionVwap,
+    vwapCalculationMode,
+    htf50Retrace: htfFib.fib500,
+    htf618Retrace: htfFib.fib618,
+    htf705Retrace: htfFib.fib705,
+    htfImpulseDirection: htfFib.impulseDirection,
+    htfImpulseHigh: htfFib.swingHigh,
+    htfImpulseLow: htfFib.swingLow,
+    expectedMove1SD: expectedMove.expectedMove1SD,
+    expectedMoveStraddle: expectedMove.expectedMoveStraddle,
+    upper1SD: expectedMove.upper1SD,
+    lower1SD: expectedMove.lower1SD,
+    upperStraddle: expectedMove.upperStraddle,
+    lowerStraddle: expectedMove.lowerStraddle,
+    overnightRangeConsumedPercent,
     atr14Daily,
     atr15mIntraday,
-    overnightRange: Math.round((onh - onl) * 100) / 100,
+    overnightRange,
     overnightInventory,
     inventoryPercent,
     openingGap,
-    openingLocation
+    openingLocation,
+    smtDivergence
   };
 
   // Compile Key Levels list
   const rawLevels: Array<Omit<KeyLevel, "distancePoints" | "distancePercent">> = [
+    {
+      id: "lvl-upper-1sd",
+      name: "Daily Implied Upper 1-SD Move",
+      shortName: "Upper 1-SD",
+      price: expectedMove.upper1SD,
+      role: "EXPECTED MOVE",
+      timeframe: "VOLATILITY",
+      note: `Rule of 16 Implied Move (+${expectedMove.expectedMove1SD.toFixed(1)} pts) based on ${ivPct.toFixed(1)}% IV.`
+    },
+    {
+      id: "lvl-upper-straddle",
+      name: "Daily Implied Upper Straddle Band",
+      shortName: "Upper Straddle",
+      price: expectedMove.upperStraddle,
+      role: "EXPECTED MOVE",
+      timeframe: "VOLATILITY",
+      note: `Expected straddle range (+${expectedMove.expectedMoveStraddle.toFixed(1)} pts). Standard intraday expansion limit.`
+    },
     {
       id: "lvl-pdh",
       name: "Prior Day High",
@@ -212,7 +345,7 @@ export function computeSessionLevels(
       price: sessionMetrics.onh,
       role: "LIQUIDITY POOL",
       timeframe: "GLOBEX",
-      note: "Overnight liquidity pool. 9:30 AM open often sweeps or breaks this on initial drive."
+      note: "Overnight liquidity pool. 9:30 AM open often sweeps or tests this on initial impulse."
     },
     {
       id: "lvl-lon-h",
@@ -221,20 +354,29 @@ export function computeSessionLevels(
       price: sessionMetrics.londonHigh || sessionMetrics.onh,
       role: "RETRACE ZONE",
       timeframe: "INTRADAY",
-      note: "European liquidity pivot (03:00-08:30 ET). Often acts as initial resistance or breakout support."
+      note: "European liquidity pivot (03:00-09:00 ET). Acts as initial resistance or breakout support."
     },
     {
-      id: "lvl-vwap",
-      name: "Session Anchored VWAP",
-      shortName: "VWAP",
+      id: "lvl-vwap-rth",
+      name: `Session VWAP (${vwapCalculationMode === "TWAP_FALLBACK" ? "TWAP Fallback" : "Anchored 09:30"})`,
+      shortName: "Session VWAP",
       price: sessionMetrics.sessionVwap,
       role: "EQUILIBRIUM",
       timeframe: "INTRADAY",
-      note: "Institutional volume weighted average. Primary retrace entry anchor for 9:30-10:00 AM window."
+      note: "Primary institutional fair-value benchmark for 9:34–9:48 AM continuation entries."
+    },
+    {
+      id: "lvl-vwap-globex",
+      name: `Globex VWAP (${vwapCalculationMode === "TWAP_FALLBACK" ? "TWAP" : "Anchored 18:00"})`,
+      shortName: "Globex VWAP",
+      price: sessionMetrics.globexVwap,
+      role: "EQUILIBRIUM",
+      timeframe: "GLOBEX",
+      note: "Overnight institutional benchmark. Crucial support/resistance anchor during pre-market and open."
     },
     {
       id: "lvl-on-mid",
-      name: "Overnight Midpoint",
+      name: "Overnight Midpoint (50% Equilibrium)",
       shortName: "ON Mid",
       price: sessionMetrics.onMid,
       role: "RETRACE ZONE",
@@ -261,21 +403,30 @@ export function computeSessionLevels(
     },
     {
       id: "lvl-htf-50",
-      name: "HTF Impulse 50% Retracement",
-      shortName: "50% Retrace",
+      name: `HTF ${htfFib.impulseDirection} 50% Equilibrium`,
+      shortName: "HTF 50%",
       price: sessionMetrics.htf50Retrace,
       role: "RETRACE ZONE",
       timeframe: "HTF",
-      note: "Higher-timeframe swing leg equilibrium. Deep discount continuation zone."
+      note: `Trailing 5-day ${htfFib.impulseDirection.toLowerCase()} impulse equilibrium (${htfFib.swingLow} to ${htfFib.swingHigh}).`
     },
     {
       id: "lvl-htf-618",
-      name: "HTF 61.8% Golden Pocket",
-      shortName: "61.8% Retrace",
+      name: `HTF ${htfFib.impulseDirection} 61.8% Golden Pocket`,
+      shortName: "HTF 61.8%",
       price: sessionMetrics.htf618Retrace,
       role: "RETRACE ZONE",
       timeframe: "HTF",
-      note: "Deep Fibonacci structural zone. Invalidation risk elevates if price accepts below this."
+      note: "Deep structural Fibonacci level. Acceptance beyond this signals structural trend exhaustion."
+    },
+    {
+      id: "lvl-htf-705",
+      name: `HTF ${htfFib.impulseDirection} 70.5% OTE Zone`,
+      shortName: "HTF 70.5% OTE",
+      price: sessionMetrics.htf705Retrace,
+      role: "RETRACE ZONE",
+      timeframe: "HTF",
+      note: "Optimal Trade Entry (OTE) deep retracement zone."
     },
     {
       id: "lvl-lon-l",
@@ -303,6 +454,24 @@ export function computeSessionLevels(
       role: "LIQUIDITY POOL",
       timeframe: "DAILY",
       note: "Major daily structural floor. Key target for bear continuation or spring rejection."
+    },
+    {
+      id: "lvl-lower-straddle",
+      name: "Daily Implied Lower Straddle Band",
+      shortName: "Lower Straddle",
+      price: expectedMove.lowerStraddle,
+      role: "EXPECTED MOVE",
+      timeframe: "VOLATILITY",
+      note: `Expected straddle downside limit (-${expectedMove.expectedMoveStraddle.toFixed(1)} pts). Key mean-reversion level.`
+    },
+    {
+      id: "lvl-lower-1sd",
+      name: "Daily Implied Lower 1-SD Move",
+      shortName: "Lower 1-SD",
+      price: expectedMove.lower1SD,
+      role: "EXPECTED MOVE",
+      timeframe: "VOLATILITY",
+      note: `Rule of 16 Implied Move (-${expectedMove.expectedMove1SD.toFixed(1)} pts). Extreme standard deviation support.`
     }
   ];
 

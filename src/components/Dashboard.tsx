@@ -6,6 +6,7 @@ import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { ChecklistCard } from "@/components/ChecklistCard";
 import { EconomicNewsCard } from "@/components/EconomicNewsCard";
+import { RiskSizingCard } from "@/components/RiskSizingCard";
 import { OpenBriefData } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import {
@@ -19,7 +20,10 @@ import {
   ChevronUp,
   RefreshCw,
   Clock,
-  AlertCircle
+  AlertCircle,
+  AlertTriangle,
+  Activity,
+  ShieldCheck
 } from "lucide-react";
 
 export function Dashboard() {
@@ -42,7 +46,7 @@ export function Dashboard() {
   const previousPriceRef = useRef<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
 
-  // Collapsible section states (clean at first glance)
+  // Collapsible section states
   const [expandedSection, setExpandedSection] = useState<"vwap" | "retrace" | "levels" | "checklist" | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string>("sc-vwap-test");
 
@@ -76,7 +80,6 @@ export function Dashboard() {
 
       const newData = json.data as OpenBriefData;
 
-      // Price flash animation (color transition only, no scale bounce)
       if (previousPriceRef.current !== null && newData.quote.price !== previousPriceRef.current) {
         if (newData.quote.price > previousPriceRef.current) {
           setPriceFlash("up");
@@ -100,41 +103,43 @@ export function Dashboard() {
     }
   }, [selectedInstrument, refreshIntervalSec]);
 
-  // Initial load
+  // Initial fetch
   useEffect(() => {
-    fetchBrief(false);
+    fetchBrief();
   }, [fetchBrief]);
 
-  // Dynamic secondsAgo ticker and auto-refresh countdown
+  // Auto-refresh timer loop
   useEffect(() => {
-    const timer = setInterval(() => {
-      const diffSec = Math.max(0, Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000));
-      setSecondsAgo(diffSec);
+    if (!isAutoRefreshOn) return;
 
-      if (isAutoRefreshOn) {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            fetchBrief(false);
-            return refreshIntervalSec;
-          }
-          return prev - 1;
-        });
-      }
+    const timer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000);
+      setSecondsAgo(elapsed);
+
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          fetchBrief();
+          return refreshIntervalSec;
+        }
+        return prev - 1;
+      });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isAutoRefreshOn, refreshIntervalSec, fetchBrief]);
+  }, [isAutoRefreshOn, fetchBrief, refreshIntervalSec]);
 
-  const toggleSection = (sec: "vwap" | "retrace" | "levels" | "checklist") => {
-    setExpandedSection((prev) => (prev === sec ? null : sec));
+  const toggleSection = (section: "vwap" | "retrace" | "levels" | "checklist") => {
+    setExpandedSection(expandedSection === section ? null : section);
   };
 
   const quote = brief?.quote;
   const metrics = brief?.sessionMetrics;
   const plan = brief?.tacticalPlan;
+  const volSurface = brief?.macro.volatilitySurface;
+  const macroRegime = brief?.macro.macroRegime;
 
   const activeScenario = plan?.scenarios.find((s) => s.id === activeScenarioId) || plan?.scenarios[0];
-  const distToVwap = metrics && quote ? Number((quote.price - metrics.sessionVwap).toFixed(1)) : 0;
+  const distToVwap = metrics && quote ? Math.round((quote.price - metrics.sessionVwap) * 10) / 10 : 0;
 
   const formattedLastUpdated = brief?.generatedAt
     ? new Date(brief.generatedAt).toLocaleTimeString("en-US", {
@@ -183,7 +188,7 @@ export function Dashboard() {
         {loading && !brief && (
           <div className="p-12 rounded-lg bg-[#0f1624] border border-slate-800 text-center space-y-3">
             <RefreshCw className="w-5 h-5 text-cyan-400 animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">Loading session market data...</p>
+            <p className="text-xs text-slate-400">Loading OpenPulse v2.0 quantitative data feed...</p>
           </div>
         )}
 
@@ -205,13 +210,59 @@ export function Dashboard() {
 
         {brief && quote && metrics && plan && (
           <>
+            {/* Prominent Delayed Feed Banner During 9:30–10:00 AM ET */}
+            {plan.isDelayedFeedWarningActive && (
+              <div className="p-3.5 rounded-lg bg-amber-950/30 border border-amber-800/80 text-amber-200 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="font-semibold tracking-wide uppercase text-[11px]">
+                    {plan.delayedFeedBannerText}
+                  </span>
+                </div>
+                <span className="text-[11px] text-amber-300/80 font-mono">
+                  CME Group mandates 10–15m delay on free web quotes. Rely on pre-computed levels & your live broker chart.
+                </span>
+              </div>
+            )}
+
+            {/* News Buffer Warning if Catalyst is at 9:45 or 10:00 AM */}
+            {plan.newsBufferWarning && (
+              <div className="p-3 rounded-lg bg-rose-950/30 border border-rose-900/80 text-rose-300 text-xs flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="font-medium">{plan.newsBufferWarning}</span>
+              </div>
+            )}
+
+            {/* Live QQQ Proxy Banner if Available */}
+            {plan.qqqLiveProxy && (
+              <div className="px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-2.5">
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 text-[10px] font-mono font-bold">
+                    LIVE QQQ PROXY
+                  </span>
+                  <span className="font-mono tabular-nums font-semibold text-white">
+                    ${plan.qqqLiveProxy.price.toFixed(2)}
+                  </span>
+                  <span
+                    className={`font-mono tabular-nums text-[11px] font-medium ${
+                      plan.qqqLiveProxy.change >= 0 ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
+                    {plan.qqqLiveProxy.change >= 0 ? "+" : ""}{plan.qqqLiveProxy.change.toFixed(2)} ({plan.qqqLiveProxy.changePercent >= 0 ? "+" : ""}{plan.qqqLiveProxy.changePercent.toFixed(2)}%)
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Real-time equity direction reference for 9:30–10:00 AM ET window
+                </span>
+              </div>
+            )}
+
             {/* 1. HERO DIRECTIVE CARD */}
             <div className="p-5 rounded-lg bg-[#0f1624] border border-slate-800 space-y-4">
               {/* Ticker & Real-Time Sync Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
                 <div className="flex items-center space-x-4">
                   <div className="flex items-baseline space-x-2.5">
-                    {/* Live Price with Flash Animation */}
                     <span
                       className={`text-2xl sm:text-3xl font-mono tabular-nums font-bold tracking-tight transition-colors duration-150 ${
                         priceFlash === "up"
@@ -253,7 +304,7 @@ export function Dashboard() {
                   {formattedExchangeTime && (
                     <span
                       className="hidden md:inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums bg-slate-900 text-amber-300 border border-slate-800"
-                      title="Actual CME Globex exchange timestamp. Free public web feeds have a standard 10–15m delay."
+                      title="Actual CME Globex exchange timestamp."
                     >
                       CME Tick: {formattedExchangeTime} ET ({quote.status})
                     </span>
@@ -268,8 +319,8 @@ export function Dashboard() {
                     <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-cyan-400" : ""}`} />
                   </button>
 
-                  <span className="px-2 py-0.5 rounded text-[11px] font-mono tabular-nums font-medium bg-slate-900 text-cyan-300 border border-slate-800">
-                    {plan.retraceAnalysis.probabilityPercent}% RETRACE PROBABILITY
+                  <span className="px-2 py-0.5 rounded text-[11px] font-mono tabular-nums font-semibold bg-slate-900 text-cyan-300 border border-slate-800">
+                    {plan.retraceAnalysis.likelihoodTier} RETRACE PROBABILITY
                   </span>
                 </div>
               </div>
@@ -287,7 +338,7 @@ export function Dashboard() {
               {/* Live Distance Reference Columns */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 text-xs">
                 <div className="p-2.5 rounded bg-slate-900/40 border border-slate-800/80">
-                  <span className="text-[11px] text-slate-400 block">Session VWAP</span>
+                  <span className="text-[11px] text-slate-400 block">Session VWAP ({metrics.vwapCalculationMode === "TWAP_FALLBACK" ? "TWAP" : "VWAP"})</span>
                   <span className="text-sm font-mono tabular-nums font-bold text-white mt-0.5 block">{metrics.sessionVwap.toFixed(1)}</span>
                   <span className={`text-[11px] font-mono tabular-nums font-medium ${distToVwap >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                     {distToVwap >= 0 ? `${distToVwap} pts below` : `${Math.abs(distToVwap)} pts above`}
@@ -301,9 +352,9 @@ export function Dashboard() {
                 </div>
 
                 <div className="p-2.5 rounded bg-slate-900/40 border border-slate-800/80">
-                  <span className="text-[11px] text-slate-400 block">Prior Day Close (PDC)</span>
-                  <span className="text-sm font-mono tabular-nums font-bold text-white mt-0.5 block">{metrics.pdc.toFixed(1)}</span>
-                  <span className="text-[11px] text-slate-500">Inventory baseline</span>
+                  <span className="text-[11px] text-slate-400 block">Expected Straddle Move</span>
+                  <span className="text-sm font-mono tabular-nums font-bold text-white mt-0.5 block">±{metrics.expectedMoveStraddle.toFixed(1)} pts</span>
+                  <span className="text-[11px] text-slate-500 font-mono">{metrics.overnightRangeConsumedPercent.toFixed(0)}% consumed ON</span>
                 </div>
 
                 <div className="p-2.5 rounded bg-slate-900/40 border border-slate-800/80">
@@ -312,21 +363,70 @@ export function Dashboard() {
                   <span className="text-[11px] font-mono tabular-nums text-slate-500">15m ATR: {metrics.atr15mIntraday} pts</span>
                 </div>
               </div>
+
+              {/* Volatility Surface Strip */}
+              {volSurface && (
+                <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-slate-400">Vol Surface:</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-slate-300">
+                      VXN: {volSurface.vxn.toFixed(1)}%
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-slate-300">
+                      YZ 20d RV: {volSurface.realizedVolYZ20d.toFixed(1)}%
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded font-mono font-semibold ${
+                        volSurface.isNegativeVrp
+                          ? "bg-rose-950/60 border border-rose-800 text-rose-300"
+                          : "bg-emerald-950/60 border border-emerald-800 text-emerald-300"
+                      }`}
+                    >
+                      VRP: {volSurface.vrp > 0 ? "+" : ""}{volSurface.vrp.toFixed(1)}%
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-slate-300">
+                      VIX/3M: {volSurface.termRatio.toFixed(2)} ({volSurface.termStructureRegime})
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-slate-300">
+                      VVIX: {volSurface.vvix.toFixed(1)}
+                    </span>
+                  </div>
+
+                  {macroRegime && (
+                    <span className="text-slate-400 font-mono text-[10px]">
+                      {macroRegime.macroCorrelationRegime} (r = {macroRegime.stockBondCorrelation60d.toFixed(2)})
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* 2. THE 5 CORE TRADER QUESTIONS */}
+            {/* 2. THE 5 CORE TRADER QUESTIONS & FACTOR SCORECARD */}
             <Trader5CoreAnswersCard
               answers={plan.trader5Answers}
               currentPrice={quote.price}
+              factorScorecard={plan.retraceAnalysis.factorScorecard}
+              smtDivergence={metrics.smtDivergence}
+              volatilitySurface={volSurface}
             />
 
-            {/* 3. US ECONOMIC CALENDAR (Red & Orange Folders) */}
+            {/* 3. DYNAMIC CONTRACT & STOP SIZER */}
+            <RiskSizingCard
+              atr15m={metrics.atr15mIntraday}
+              regimeRiskMultiplier={brief.bias.regimeRiskMultiplier}
+              defaultInstrument={selectedInstrument}
+              defaultBaseRisk={currentProfile?.riskBudgetDollars || 250}
+              defaultTargetRR={2.2}
+              suggestedStopPts={Math.round(metrics.atr15mIntraday * 0.85)}
+            />
+
+            {/* 4. US ECONOMIC CALENDAR (Red & Orange Folders) */}
             <EconomicNewsCard
               events={brief.macro.events}
               tradeDate={brief.tradeDate}
             />
 
-            {/* 4. EXPANDABLE DRILLDOWN TILES */}
+            {/* 5. EXPANDABLE DRILLDOWN TILES */}
             <div className="space-y-3">
               {/* TILE 1: "WHAT IF VWAP HITS?" (Collapsible) */}
               <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden">
@@ -353,50 +453,80 @@ export function Dashboard() {
 
                   <div className="flex items-center space-x-2 text-xs text-slate-400">
                     <span className="hidden sm:inline text-xs">
-                      {expandedSection === "vwap" ? "Hide triggers" : "View triggers"}
+                      {expandedSection === "vwap" ? "Collapse rules" : "View rules"}
                     </span>
                     {expandedSection === "vwap" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </div>
                 </button>
 
-                {/* Expanded Details for VWAP */}
                 {expandedSection === "vwap" && (
-                  <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-900/30 space-y-4">
-                    {/* Scenario Switcher */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                      {plan.scenarios.map((sc) => (
-                        <button
-                          key={sc.id}
-                          onClick={() => setActiveScenarioId(sc.id)}
-                          className={`p-2.5 rounded border text-left transition-colors ${
-                            activeScenarioId === sc.id
-                              ? "bg-slate-800 border-cyan-500/80 text-white font-medium"
-                              : "bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          <div className="text-[11px] truncate">{sc.conditionShort}</div>
-                        </button>
-                      ))}
+                  <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-900/30 space-y-4 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="p-3.5 rounded bg-slate-900/80 border border-emerald-900/40 space-y-1.5">
+                        <div className="flex items-center space-x-1.5 text-emerald-400 font-semibold text-xs">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>IF BOUNCED & DEFENDED (Absorption)</span>
+                        </div>
+                        <p className="text-slate-300 leading-relaxed font-sans">
+                          {plan.vwapPlaybook.bounceMeaning}
+                        </p>
+                      </div>
+
+                      <div className="p-3.5 rounded bg-slate-900/80 border border-rose-900/40 space-y-1.5">
+                        <div className="flex items-center space-x-1.5 text-rose-400 font-semibold text-xs">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>IF SLICED & ACCEPTED BELOW (Breakdown)</span>
+                        </div>
+                        <p className="text-slate-300 leading-relaxed font-sans">
+                          {plan.vwapPlaybook.breakdownMeaning}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded bg-slate-900 border border-slate-800 space-y-1">
+                      <span className="text-white font-medium block">
+                        Action Required When Price Touches {metrics.sessionVwap.toFixed(1)}:
+                      </span>
+                      <p className="text-slate-300 leading-relaxed">
+                        {plan.vwapPlaybook.actionIfTested}
+                      </p>
+                    </div>
+
+                    {/* Interactive Scenario Buttons */}
+                    <div className="space-y-2 pt-1">
+                      <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">
+                        Select Conditional Scenario:
+                      </span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {plan.scenarios.map((sc) => (
+                          <button
+                            key={sc.id}
+                            onClick={() => setActiveScenarioId(sc.id)}
+                            className={`p-2.5 rounded text-left border transition-colors ${
+                              activeScenarioId === sc.id
+                                ? "bg-slate-800 border-cyan-500 text-white"
+                                : "bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800/60"
+                            }`}
+                          >
+                            <span className="font-semibold block text-xs">{sc.conditionShort}</span>
+                            <span className="text-[11px] text-slate-400 truncate block mt-0.5">
+                              {sc.targetObjective.split(":")[0]}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
                     {activeScenario && (
-                      <div className="p-4 rounded bg-slate-900/60 border border-slate-800 space-y-3 text-xs">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                          <span className="font-semibold text-white text-sm">
-                            {activeScenario.condition}
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 border border-slate-700 text-xs font-mono self-start sm:self-auto">
-                            {activeScenario.actionableDecision}
-                          </span>
+                      <div className="p-4 rounded-lg bg-slate-900/90 border border-slate-800 space-y-3">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <span className="text-xs font-semibold text-white">{activeScenario.condition}</span>
+                          <span className="text-[11px] font-mono text-cyan-400">{activeScenario.status}</span>
                         </div>
 
-                        <div>
-                          <span className="text-[11px] text-slate-400 font-medium block">
-                            Institutional Context:
-                          </span>
-                          <p className="text-slate-200 mt-1 leading-relaxed">
-                            {activeScenario.whatItMeans}
-                          </p>
+                        <div className="space-y-1">
+                          <span className="text-slate-400 font-medium block text-[11px]">WHAT IT MEANS (INSTITUTIONAL):</span>
+                          <p className="text-slate-200 leading-relaxed">{activeScenario.whatItMeans}</p>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -433,8 +563,8 @@ export function Dashboard() {
                         <span className="text-sm font-semibold text-white">
                           Is a Retrace Probable Today?
                         </span>
-                        <span className="text-[11px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-slate-900 text-slate-300 border border-slate-800">
-                          {plan.retraceAnalysis.probabilityPercent}% PROBABILITY
+                        <span className="text-[11px] font-mono tabular-nums px-1.5 py-0.2 rounded bg-slate-900 text-cyan-300 border border-slate-800">
+                          {plan.retraceAnalysis.likelihoodTier} LIKELIHOOD
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5 truncate max-w-xl">
@@ -451,7 +581,6 @@ export function Dashboard() {
                   </div>
                 </button>
 
-                {/* Expanded Details for Retrace */}
                 {expandedSection === "retrace" && (
                   <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-900/30 space-y-3 text-xs">
                     <div className="p-3.5 rounded bg-slate-900/60 border border-slate-800 space-y-2">
@@ -520,7 +649,6 @@ export function Dashboard() {
                   </div>
                 </button>
 
-                {/* Expanded Full Table */}
                 {expandedSection === "levels" && (
                   <div className="border-t border-slate-800">
                     <KeyLevelsTable
@@ -557,7 +685,6 @@ export function Dashboard() {
                   </div>
                 </button>
 
-                {/* Expanded Checklist */}
                 {expandedSection === "checklist" && (
                   <div className="border-t border-slate-800 p-4">
                     <ChecklistCard
@@ -590,3 +717,5 @@ export function Dashboard() {
     </div>
   );
 }
+
+export default Dashboard;

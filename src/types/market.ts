@@ -1,5 +1,59 @@
 export type DataStatus = "LIVE" | "DELAYED" | "DERIVED" | "MANUAL INPUT" | "SAMPLE";
 
+export type SessionPhase = "PRE_MARKET_BRIEF" | "NY_OPEN_WINDOW_930_1000" | "POST_WINDOW";
+
+export type ExecutionWindowSubPhase =
+  | "PRE_BELL"
+  | "OPEN_NOISE_SWEEP_WATCH"
+  | "PRIME_RETRACE_WINDOW"
+  | "LATE_WINDOW_DECAY_CAUTION"
+  | "WINDOW_CLOSED";
+
+export interface SMTDivergence {
+  hasDivergence: boolean;
+  divergenceType:
+    | "BULLISH_SMT (NQ SWEPT LOW, ES HELD)"
+    | "BEARISH_SMT (NQ SWEPT HIGH, ES HELD)"
+    | "BULLISH_SMT (ES SWEPT LOW, NQ HELD)"
+    | "BEARISH_SMT (ES SWEPT HIGH, NQ HELD)"
+    | "NONE (SYNCED)";
+  nqHigh: number;
+  nqLow: number;
+  esHigh: number;
+  esLow: number;
+  notes: string;
+}
+
+export interface VolatilitySurface {
+  vxn: number; // Nasdaq 30d IV
+  vix: number; // SPX 30d IV
+  vix3m: number; // 3-month IV
+  vix9d: number; // 9-day IV
+  vix1d: number; // 1-day IV (or fallback)
+  vvix: number; // Vol of VIX
+  termRatio: number; // vix / vix3m
+  termStructureRegime: "CONTANGO (NORMAL)" | "ELEVATED" | "BACKWARDATION (STRESS)";
+  shortTermShockRatio: number; // vix9d / vix
+  isShortTermShock: boolean; // > 1.15
+  vvixRegime: "NORMAL (<100)" | "CAUTION (100-110)" | "HIGH TAIL / WHIPSAW RISK (>=110)";
+  realizedVolYZ20d: number; // Yang-Zhang 20d annualized RV
+  realizedVolYZ10d: number; // Yang-Zhang 10d annualized RV
+  realizedVolGK: number; // Garman-Klass annualized RV
+  vrp: number; // Variance Risk Premium = vxn - realizedVolYZ20d
+  isNegativeVrp: boolean; // RV > IV (stop-run dislocation warning)
+}
+
+export interface MacroRegimeState {
+  stockBondCorrelation60d: number; // Pearson r between NQ and TNX
+  macroCorrelationRegime: "INFLATION / RATE-SENSITIVE" | "GROWTH-SCARE" | "DECOUPLED / NEUTRAL";
+  tnxPrice: number;
+  tnxBpsChange: number;
+  dxyPrice: number;
+  dxyPercentChange: number;
+  macroHeadwindScore: number; // -2 to +2 impact on NQ
+  macroSummary: string;
+}
+
 export interface OHLCVBar {
   timestamp: string; // ISO string
   open: number;
@@ -32,6 +86,7 @@ export type LevelRole =
   | "EQUILIBRIUM"
   | "MAGNET"
   | "INVALIDATION"
+  | "EXPECTED MOVE"
   | "TARGET";
 
 export interface KeyLevel {
@@ -42,7 +97,7 @@ export interface KeyLevel {
   role: LevelRole;
   distancePoints: number;
   distancePercent: number;
-  timeframe: "DAILY" | "GLOBEX" | "INTRADAY" | "HTF";
+  timeframe: "DAILY" | "GLOBEX" | "INTRADAY" | "HTF" | "VOLATILITY";
   note: string;
 }
 
@@ -59,15 +114,28 @@ export interface SessionMetrics {
   asiaHigh?: number;
   asiaLow?: number;
   sessionVwap: number;
+  globexVwap: number;
+  priorDayRthVwap: number;
+  rthSessionVwap: number;
+  vwapCalculationMode: "VOLUME_WEIGHTED" | "TWAP_FALLBACK";
   htf50Retrace: number;
   htf618Retrace: number;
+  htf705Retrace: number;
+  htfImpulseDirection: "BULLISH" | "BEARISH";
   htfImpulseHigh: number;
   htfImpulseLow: number;
+  expectedMove1SD: number;
+  expectedMoveStraddle: number;
+  upper1SD: number;
+  lower1SD: number;
+  upperStraddle: number;
+  lowerStraddle: number;
+  overnightRangeConsumedPercent: number;
   atr14Daily: number;
   atr15mIntraday: number;
   overnightRange: number;
   overnightInventory: "BULLISH_IMBALANCE" | "BEARISH_IMBALANCE" | "BALANCED";
-  inventoryPercent: number; // e.g. +72% above PDC
+  inventoryPercent: number; // 0% to 100% of Globex bars closing above PDC
   openingGap: number;
   openingLocation:
     | "ABOVE_ONH"
@@ -75,6 +143,7 @@ export interface SessionMetrics {
     | "AROUND_EQUILIBRIUM"
     | "INSIDE_LOWER_GLOBEX"
     | "BELOW_ONL";
+  smtDivergence?: SMTDivergence;
 }
 
 export type BiasVerdict =
@@ -83,14 +152,24 @@ export type BiasVerdict =
   | "CAUTION / CHOP RISK"
   | "STAND ASIDE / HIGH VOL";
 
+export interface FactorScoreItem {
+  factor: string;
+  score: number; // -1, 0, or +1
+  impact: "BULLISH" | "BEARISH" | "NEUTRAL";
+  detail: string;
+}
+
 export interface BiasRegime {
   verdict: BiasVerdict;
   confidence: "HIGH" | "MODERATE" | "LOW";
   htfTrend: "BULLISH" | "BEARISH" | "NEUTRAL / RANGING";
   chopRisk: "LOW" | "ELEVATED" | "SEVERE";
+  regimeRiskMultiplier: 1.0 | 0.5 | 0.0;
   summary: string;
   drivers: string[];
   risks: string[];
+  volatilitySurface?: VolatilitySurface;
+  macroRegime?: MacroRegimeState;
   idealRetraceZone: {
     startPrice: number;
     endPrice: number;
@@ -108,7 +187,9 @@ export type SessionArchetype =
 
 export interface RetraceAnalysis {
   isRetraceProbable: boolean;
-  probabilityPercent: number; // 0 to 100
+  probabilityPercent?: number; // Optional legacy percentage
+  likelihoodTier: "HIGH" | "MODERATE" | "LOW";
+  factorScorecard: FactorScoreItem[];
   archetype: SessionArchetype;
   retraceType: "DEEP TO VWAP/ON-MID" | "DEEP TO VWAP/PDC" | "SHALLOW (FIRST 3-MIN PULLBACK)" | "UNLIKELY (RUNAWAY EXPANSION)" | "CHOP / TWO-WAY";
   verdictHeadline: string;
@@ -168,6 +249,12 @@ export interface TacticalExecutionPlan {
   trader5Answers: Trader5Answers;
   retraceAnalysis: RetraceAnalysis;
   scenarios: ActionScenario[];
+  sessionPhase: SessionPhase;
+  executionSubPhase: ExecutionWindowSubPhase;
+  isDelayedFeedWarningActive: boolean;
+  delayedFeedBannerText: string;
+  newsBufferWarning?: string;
+  qqqLiveProxy?: MarketQuote;
   timelineGuide: {
     observePhase: { timeWindow: "09:30 – 09:33 AM ET"; rule: string };
     entryWindow: { timeWindow: "09:34 – 09:48 AM ET"; rule: string; zone: string };
@@ -225,6 +312,8 @@ export interface OpenBriefData {
     vix: MacroIndicator;
     us10y: MacroIndicator;
     dxy: MacroIndicator;
+    volatilitySurface?: VolatilitySurface;
+    macroRegime?: MacroRegimeState;
     megaCaps: Array<{
       symbol: string;
       name: string;

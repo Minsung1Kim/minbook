@@ -121,6 +121,34 @@ export class SeedFallbackProvider implements MarketDataProvider {
         regime: "NEUTRAL",
         note: "DXY at 104.34"
       },
+      volatilitySurface: {
+        vxn: 25.4,
+        vix: 21.8,
+        vix3m: 23.1,
+        vix9d: 21.2,
+        vix1d: 20.8,
+        vvix: 98.5,
+        termRatio: 0.94,
+        termStructureRegime: "CONTANGO (NORMAL)",
+        shortTermShockRatio: 0.97,
+        isShortTermShock: false,
+        vvixRegime: "NORMAL (<100)",
+        realizedVolYZ20d: 22.4,
+        realizedVolYZ10d: 21.8,
+        realizedVolGK: 23.1,
+        vrp: 3.0,
+        isNegativeVrp: false
+      },
+      macroRegime: {
+        stockBondCorrelation60d: -0.34,
+        macroCorrelationRegime: "INFLATION / RATE-SENSITIVE",
+        tnxPrice: 4.918,
+        tnxBpsChange: 0.6,
+        dxyPrice: 104.34,
+        dxyPercentChange: 0.11,
+        macroHeadwindScore: 0,
+        macroSummary: "60d NQ-10Y correlation is -0.34 (INFLATION / RATE-SENSITIVE). Yields stable."
+      },
       megaCaps: [
         { symbol: "AAPL", name: "Apple", price: 349.08, changePercent: 0.92 },
         { symbol: "NVDA", name: "NVIDIA", price: 165.05, changePercent: 1.48 },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTrades, addTrade, deleteTrade, computeJournalAnalytics } from "@/lib/db";
-import { TradeLogEntry } from "@/types/app";
+import { computeDirectionalMaeMfe } from "@/lib/market/math";
 
 export async function GET(request: NextRequest) {
   try {
@@ -36,17 +36,24 @@ export async function POST(request: NextRequest) {
       stopPrice,
       targetPrice,
       exitPrice,
+      worstPrice,
+      bestPrice,
       contracts = 1,
       plannedRiskDollars,
       plannedTargetDollars,
       actualPnlDollars,
-      maeR,
-      mfeR,
       stoppedOut = false,
       entryTimeET,
       exitTimeET,
       retraceLevelUsed = "",
-      notes = ""
+      notes = "",
+      vxnSnapshot,
+      termRatioSnapshot,
+      vvixSnapshot,
+      vrpSnapshot,
+      inventoryPercentSnapshot,
+      smtSnapshot = "",
+      biasVerdictSnapshot = ""
     } = body;
 
     if (!tradeDate || !direction || entryPrice === undefined || stopPrice === undefined || exitPrice === undefined) {
@@ -56,34 +63,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const risk = plannedRiskDollars || Math.abs(entryPrice - stopPrice) * (symbol === "MNQ" ? 2 : 20) * contracts;
-    const actualPnl = actualPnlDollars !== undefined
-      ? actualPnlDollars
-      : (direction === "LONG" ? exitPrice - entryPrice : entryPrice - exitPrice) * (symbol === "MNQ" ? 2 : 20) * contracts;
+    const entry = Number(entryPrice);
+    const stop = Number(stopPrice);
+    const exit = Number(exitPrice);
+    const worst = worstPrice !== undefined && worstPrice !== "" ? Number(worstPrice) : undefined;
+    const best = bestPrice !== undefined && bestPrice !== "" ? Number(bestPrice) : undefined;
 
-    const actualR = risk > 0 ? Math.round((actualPnl / risk) * 100) / 100 : 0;
+    const pointValue = symbol === "MNQ" ? 2 : 20;
+    const plannedRiskPts = Math.abs(entry - stop);
+    const risk = plannedRiskDollars || plannedRiskPts * pointValue * Number(contracts);
+
+    // Directional MAE / MFE computation
+    const { maeR, mfeR, actualPnlR, exitEfficiencyPercent } = computeDirectionalMaeMfe(
+      direction,
+      entry,
+      stop,
+      exit,
+      worst,
+      best
+    );
+
+    const actualPts = direction === "LONG" ? exit - entry : entry - exit;
+    const calculatedPnl = actualPnlDollars !== undefined ? Number(actualPnlDollars) : actualPts * pointValue * Number(contracts);
 
     const newTrade = addTrade({
       userId,
       tradeDate,
       symbol,
       direction,
-      entryPrice: Number(entryPrice),
-      stopPrice: Number(stopPrice),
-      targetPrice: Number(targetPrice || entryPrice),
-      exitPrice: Number(exitPrice),
+      entryPrice: entry,
+      stopPrice: stop,
+      targetPrice: Number(targetPrice || entry),
+      exitPrice: exit,
+      worstPrice: worst,
+      bestPrice: best,
       contracts: Number(contracts),
       plannedRiskDollars: Number(risk),
       plannedTargetDollars: Number(plannedTargetDollars || risk * 2.2),
-      actualPnlDollars: Number(actualPnl),
-      actualPnlR: actualR,
-      maeR: Number(maeR !== undefined ? maeR : (stoppedOut ? 1.0 : 0.3)),
-      mfeR: Number(mfeR !== undefined ? mfeR : Math.max(0, actualR)),
+      actualPnlDollars: calculatedPnl,
+      actualPnlR,
+      maeR: Number(body.maeR !== undefined && body.maeR !== "" ? body.maeR : (stoppedOut ? 1.0 : maeR)),
+      mfeR: Number(body.mfeR !== undefined && body.mfeR !== "" ? body.mfeR : Math.max(mfeR, actualPnlR > 0 ? actualPnlR : 0)),
+      exitEfficiencyPercent,
       stoppedOut: Boolean(stoppedOut),
       entryTimeET: entryTimeET || "09:35:00",
       exitTimeET: exitTimeET || "09:50:00",
       retraceLevelUsed,
-      notes
+      notes,
+      vxnSnapshot: vxnSnapshot ? Number(vxnSnapshot) : undefined,
+      termRatioSnapshot: termRatioSnapshot ? Number(termRatioSnapshot) : undefined,
+      vvixSnapshot: vvixSnapshot ? Number(vvixSnapshot) : undefined,
+      vrpSnapshot: vrpSnapshot ? Number(vrpSnapshot) : undefined,
+      inventoryPercentSnapshot: inventoryPercentSnapshot ? Number(inventoryPercentSnapshot) : undefined,
+      smtSnapshot,
+      biasVerdictSnapshot
     });
 
     const analytics = computeJournalAnalytics(userId);
@@ -106,12 +139,22 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
+    const userId = searchParams.get("userId") || undefined;
+
     if (!id) {
-      return NextResponse.json({ success: false, error: "Trade ID required" }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "Missing trade ID parameter" },
+        { status: 400 }
+      );
     }
 
     const deleted = deleteTrade(id);
-    return NextResponse.json({ success: true, deleted });
+    const analytics = computeJournalAnalytics(userId);
+
+    return NextResponse.json({
+      success: deleted,
+      analytics
+    });
   } catch (error: any) {
     console.error("API /api/journal DELETE error:", error);
     return NextResponse.json(

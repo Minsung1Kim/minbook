@@ -77,7 +77,7 @@ export async function getOpenBrief(options?: {
   // Generate actionable tactical playbook & scenarios
   const tacticalPlan = generateTacticalPlaybook(quote.price, sessionMetrics, bias);
 
-  const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "60", 10);
+  const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "10", 10);
   const cacheExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
   const briefData: OpenBriefData = {

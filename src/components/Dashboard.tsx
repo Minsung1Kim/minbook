@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Header } from "@/components/Header";
 import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { ChecklistCard } from "@/components/ChecklistCard";
-import { OpenBriefData, ActionScenario } from "@/types/market";
+import { OpenBriefData } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import {
   Zap,
@@ -15,19 +15,14 @@ import {
   Crosshair,
   Layers,
   CheckCircle2,
-  AlertTriangle,
   ChevronDown,
   ChevronUp,
-  Flame,
-  Clock,
   Sparkles,
-  HelpCircle,
-  XCircle,
-  Target,
-  ShieldAlert,
-  ArrowRight,
-  Terminal,
-  Activity
+  RefreshCw,
+  Clock,
+  Play,
+  Pause,
+  AlertCircle
 } from "lucide-react";
 
 export function Dashboard() {
@@ -40,7 +35,16 @@ export function Dashboard() {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
 
-  // Collapsible section states (defaults to streamlined collapsed state for clean first glance)
+  // Dynamic live auto-refresh state
+  const [isAutoRefreshOn, setIsAutoRefreshOn] = useState<boolean>(true);
+  const [refreshIntervalSec, setRefreshIntervalSec] = useState<number>(10); // 10s default
+  const [countdown, setCountdown] = useState<number>(10);
+  const [secondsAgo, setSecondsAgo] = useState<number>(0);
+  const lastFetchedTimeRef = useRef<number>(Date.now());
+  const previousPriceRef = useRef<number | null>(null);
+  const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
+
+  // Collapsible section states (clean at first glance)
   const [expandedSection, setExpandedSection] = useState<"vwap" | "retrace" | "levels" | "checklist" | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string>("sc-vwap-test");
 
@@ -60,21 +64,36 @@ export function Dashboard() {
   }, []);
 
   // Fetch market brief & actionable playbook
-  const fetchBrief = useCallback(async (isForceRefresh: boolean = false) => {
-    if (isForceRefresh) setRefreshing(true);
-    else setLoading(true);
+  const fetchBrief = useCallback(async (isManual: boolean = false) => {
+    if (isManual) setRefreshing(true);
     setError(null);
 
     try {
-      const url = `/api/market-data?symbol=${selectedInstrument}${isForceRefresh ? "&refresh=true" : ""}`;
+      const url = `/api/market-data?symbol=${selectedInstrument}&refresh=true`;
       const res = await fetch(url);
       const json = await res.json();
 
       if (!res.ok || !json.success) {
-        throw new Error(json.error || "Failed to fetch market brief");
+        throw new Error(json.error || "Failed to fetch market data");
       }
 
-      setBrief(json.data);
+      const newData = json.data as OpenBriefData;
+
+      // Price flash animation
+      if (previousPriceRef.current !== null && newData.quote.price !== previousPriceRef.current) {
+        if (newData.quote.price > previousPriceRef.current) {
+          setPriceFlash("up");
+        } else {
+          setPriceFlash("down");
+        }
+        setTimeout(() => setPriceFlash(null), 1200);
+      }
+      previousPriceRef.current = newData.quote.price;
+
+      setBrief(newData);
+      lastFetchedTimeRef.current = Date.now();
+      setSecondsAgo(0);
+      setCountdown(refreshIntervalSec);
     } catch (err: any) {
       console.error("fetchBrief error:", err);
       setError(err?.message || "Failed to load real market data");
@@ -82,11 +101,34 @@ export function Dashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedInstrument]);
+  }, [selectedInstrument, refreshIntervalSec]);
 
+  // Initial load
   useEffect(() => {
     fetchBrief(false);
   }, [fetchBrief]);
+
+  // Dynamic secondsAgo ticker and auto-refresh countdown
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // Update seconds ago
+      const diffSec = Math.max(0, Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000));
+      setSecondsAgo(diffSec);
+
+      // Countdown for auto-refresh
+      if (isAutoRefreshOn) {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            fetchBrief(false);
+            return refreshIntervalSec;
+          }
+          return prev - 1;
+        });
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isAutoRefreshOn, refreshIntervalSec, fetchBrief]);
 
   const toggleSection = (section: "vwap" | "retrace" | "levels" | "checklist") => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -95,16 +137,28 @@ export function Dashboard() {
   const quote = brief?.quote;
   const metrics = brief?.sessionMetrics;
   const plan = brief?.tacticalPlan;
-  const bias = brief?.bias;
   const distToVwap = metrics && quote ? Math.round((quote.price - metrics.sessionVwap) * 10) / 10 : 0;
-
   const activeScenario = plan?.scenarios.find((s) => s.id === activeScenarioId) || plan?.scenarios[0];
+
+  const formattedLastUpdated = quote?.timestamp
+    ? new Date(quote.timestamp).toLocaleTimeString("en-US", {
+        timeZone: "America/New_York",
+        hour12: true,
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      })
+    : null;
 
   return (
     <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
-      {/* Top Header */}
+      {/* Top Header with live auto-refresh clock & last updated counter */}
       <Header
-        lastUpdated={brief?.dataSource.lastUpdated}
+        lastUpdated={quote?.timestamp}
+        secondsAgo={secondsAgo}
+        autoRefreshCountdown={countdown}
+        isAutoRefreshOn={isAutoRefreshOn}
+        onToggleAutoRefresh={() => setIsAutoRefreshOn(!isAutoRefreshOn)}
         dataStatus={brief?.dataSource.quoteStatus}
         providerName={brief?.dataSource.providerName}
         isRefreshing={refreshing}
@@ -122,12 +176,11 @@ export function Dashboard() {
         }}
       />
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-5">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
         {/* Loading skeleton */}
         {loading && !brief && (
           <div className="space-y-4 animate-pulse">
             <div className="h-32 bg-slate-900 rounded-xl border border-slate-800" />
-            <div className="h-24 bg-slate-900 rounded-xl border border-slate-800" />
             <div className="h-24 bg-slate-900 rounded-xl border border-slate-800" />
             <div className="h-24 bg-slate-900 rounded-xl border border-slate-800" />
           </div>
@@ -137,7 +190,7 @@ export function Dashboard() {
         {error && (
           <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-200 flex items-center justify-between">
             <div className="text-xs font-mono">
-              <strong>Error loading live data:</strong> {error}
+              <strong>Live sync notice:</strong> {error}
             </div>
             <button
               onClick={() => fetchBrief(true)}
@@ -148,42 +201,73 @@ export function Dashboard() {
           </div>
         )}
 
-        {brief && quote && metrics && plan && bias && (
+        {brief && quote && metrics && plan && (
           <>
-            {/* 1. HERO DIRECTIVE CARD (At a glance: Clean, Uncluttered, Actionable) */}
+            {/* 1. HERO DIRECTIVE CARD (Dynamic, Auto-Refreshing, Last-Updated Timestamp) */}
             <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 shadow-2xl space-y-4">
-              {/* Ticker & Status Header */}
+              {/* Ticker & Real-Time Sync Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
                 <div className="flex items-center space-x-3">
-                  <div className="flex items-baseline space-x-2">
-                    <span className="text-2xl sm:text-3xl font-mono font-bold text-white tracking-tight">
+                  <div className="flex items-baseline space-x-2.5">
+                    {/* Live Price with Flash Animation */}
+                    <span
+                      className={`text-2xl sm:text-3xl font-mono font-bold tracking-tight transition-colors duration-300 ${
+                        priceFlash === "up"
+                          ? "text-emerald-400 scale-105"
+                          : priceFlash === "down"
+                          ? "text-rose-400 scale-105"
+                          : "text-white"
+                      }`}
+                    >
                       {quote.displaySymbol} {quote.price.toFixed(2)}
                     </span>
+
                     <span
-                      className={`text-xs font-mono font-bold ${
+                      className={`text-xs font-mono font-bold flex items-center ${
                         quote.change >= 0 ? "text-emerald-400" : "text-rose-400"
                       }`}
                     >
+                      {quote.change >= 0 ? <TrendingUp className="w-3 h-3 mr-0.5 inline" /> : <TrendingDown className="w-3 h-3 mr-0.5 inline" />}
                       {quote.change >= 0 ? "+" : ""}{quote.change.toFixed(2)} ({quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%)
                     </span>
                   </div>
 
                   <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                    VIX: {brief.macro.vix.value.toFixed(1)} ({brief.macro.vix.regime})
+                    VIX: {brief.macro.vix.value.toFixed(1)}
                   </span>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <span className="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800 flex items-center space-x-1.5">
-                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                    <span>{plan.retraceAnalysis.probabilityPercent}% RETRACE CHANCE</span>
+                {/* Right: Real-time Last Updated & Sync Pill */}
+                <div className="flex items-center space-x-2 text-xs font-mono">
+                  {/* Dynamic Last Updated Badge */}
+                  <div className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 flex items-center space-x-1.5 text-slate-300">
+                    <Clock className="w-3 h-3 text-cyan-400" />
+                    <span className="text-[11px] text-slate-400">Last Updated:</span>
+                    <strong className="text-white text-[11px]">
+                      {formattedLastUpdated ? `${formattedLastUpdated} ET` : "--:--:--"}
+                    </strong>
+                    <span className="text-cyan-300 text-[10px]">({secondsAgo}s ago)</span>
+                  </div>
+
+                  {/* Manual Quick Refresh */}
+                  <button
+                    onClick={() => fetchBrief(true)}
+                    disabled={refreshing}
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 transition-colors"
+                    title="Refresh market data now"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-cyan-400" : ""}`} />
+                  </button>
+
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                    {plan.retraceAnalysis.probabilityPercent}% RETRACE PROBABILITY
                   </span>
                 </div>
               </div>
 
               {/* The #1 Single Action Directive */}
-              <div className="space-y-1.5">
-                <span className="text-[11px] font-mono uppercase tracking-wider text-cyan-400 font-bold block flex items-center space-x-1.5">
+              <div className="space-y-1.5 font-mono">
+                <span className="text-[11px] uppercase tracking-wider text-cyan-400 font-bold block flex items-center space-x-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Today's 1-Trade Game Plan (9:30–10:00 AM ET):</span>
                 </span>
@@ -192,12 +276,14 @@ export function Dashboard() {
                 </p>
               </div>
 
-              {/* Retrace Zone & Quick Facts */}
+              {/* Dynamic Live Distance Matrix */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs font-mono">
                 <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80">
                   <span className="text-[10px] text-slate-400 block">Session VWAP</span>
                   <span className="text-sm font-bold text-white mt-0.5 block">{metrics.sessionVwap.toFixed(1)}</span>
-                  <span className="text-[10px] text-slate-400">{distToVwap >= 0 ? `${distToVwap} pts below` : `${Math.abs(distToVwap)} pts above`}</span>
+                  <span className={`text-[10px] font-semibold ${distToVwap >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {distToVwap >= 0 ? `${distToVwap} pts below` : `${Math.abs(distToVwap)} pts above`}
+                  </span>
                 </div>
 
                 <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80">
@@ -220,7 +306,7 @@ export function Dashboard() {
               </div>
             </div>
 
-            {/* 2. THE 5 CORE TRADER QUESTIONS (Instant clarity: Bias, Stop Hunts, Retrace Levels, Liquidity Draws, R:R Strategy) */}
+            {/* 2. THE 5 CORE TRADER QUESTIONS (Always upfront: Bias, Stop Hunts, Retrace Levels, Liquidity Draws, R:R Strategy) */}
             <Trader5CoreAnswersCard
               answers={plan.trader5Answers}
               currentPrice={quote.price}
@@ -248,14 +334,14 @@ export function Dashboard() {
                         </span>
                       </div>
                       <p className="text-xs text-slate-400 font-sans mt-0.5 truncate max-w-xl">
-                        Absorption = institutional continuation entry | Clean close below = retrace failed (stand aside)
+                        Absorption wick = continuation entry | Clean close below = retrace failed (stand aside)
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center space-x-2 text-xs text-cyan-400">
                     <span className="hidden sm:inline text-[11px] font-sans">
-                      {expandedSection === "vwap" ? "Hide details" : "Click to view triggers"}
+                      {expandedSection === "vwap" ? "Hide triggers" : "Click to view triggers"}
                     </span>
                     {expandedSection === "vwap" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </div>
@@ -349,7 +435,7 @@ export function Dashboard() {
 
                   <div className="flex items-center space-x-2 text-xs text-emerald-400">
                     <span className="hidden sm:inline text-[11px] font-sans">
-                      {expandedSection === "retrace" ? "Hide details" : "Click to view analysis"}
+                      {expandedSection === "retrace" ? "Hide analysis" : "Click to view analysis"}
                     </span>
                     {expandedSection === "retrace" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </div>
@@ -478,16 +564,16 @@ export function Dashboard() {
             </div>
 
             {/* Bottom Status Bar */}
-            <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800 text-xs font-mono text-slate-400 flex flex-wrap items-center justify-between gap-2">
+            <div className="p-3 rounded-xl bg-slate-900/40 border border-slate-800 text-xs font-mono text-slate-400 flex flex-wrap items-center justify-between gap-2">
               <span className="flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>
-                  <strong>Real Market Feed:</strong> {brief.dataSource.providerName} ({brief.quote.symbol}) • Price:{" "}
-                  <strong className="text-white">{quote.price.toFixed(2)}</strong>
+                  <strong>Live Stream:</strong> {brief.dataSource.providerName} ({quote.symbol}) • Price:{" "}
+                  <strong className="text-white">{quote.price.toFixed(2)}</strong> • Auto-sync every {refreshIntervalSec}s
                 </span>
               </span>
-              <span className="text-slate-500 text-[11px]">
-                Click any card above to toggle deep-dive analysis
+              <span className="text-slate-400 text-[11px]">
+                Last updated {secondsAgo}s ago • Next sync in {countdown}s
               </span>
             </div>
           </>

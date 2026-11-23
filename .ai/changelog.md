@@ -32,3 +32,9 @@ All notable changes and architectural decisions are logged here.
 - **Verification:**
   - `npm run build` compiled 10/10 routes with zero errors.
   - Verified live server responses on `/`, `/journal`, `/settings`, `/api/market-data`.
+
+## [2026-11-23] - Dynamic Auto-Refresh & Live Polling Architecture
+- Added client-side ticker & countdown timer (10s intervals) with relative "X seconds ago" indicator and absolute "Last Updated: HH:MM:SS ET" stamp.
+- Added live price flash animations (cyan/emerald for tick up, rose for tick down).
+- Lowered Yahoo Finance in-memory chart cache to 8s and service TTL to 10s for responsive live prints without triggering rate limits.
+- Validated production build with Next.js 16.4.6 and verified live dynamic updates on `http://localhost:3000`.

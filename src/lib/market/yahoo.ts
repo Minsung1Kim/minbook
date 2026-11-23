@@ -24,7 +24,8 @@ export class YahooFinanceProvider implements MarketDataProvider {
   private async fetchChartWithFallback(symbol: string, interval: string, range: string): Promise<any> {
     const cacheKey = `${symbol}_${interval}_${range}`;
     const cached = this.chartCache.get(cacheKey);
-    if (cached && Date.now() - cached.cachedAt < 30000) {
+    // 8-second internal cache for rapid live polling
+    if (cached && Date.now() - cached.cachedAt < 8000) {
       return cached.data;
     }
 

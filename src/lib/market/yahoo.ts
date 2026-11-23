@@ -1,5 +1,6 @@
 import { MarketDataProvider, MacroDataResult } from "./provider";
 import { OHLCVBar, MarketQuote, MacroIndicator, EconomicEvent } from "@/types/market";
+import { getUSEconomicEvents } from "./economicCalendar";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -263,37 +264,6 @@ export class YahooFinanceProvider implements MarketDataProvider {
   }
 
   async getEconomicEvents(): Promise<EconomicEvent[]> {
-    return [
-      {
-        id: "ev-01",
-        timeET: "08:30 AM",
-        event: "Core PCE Price Index / Jobless Claims",
-        impact: "HIGH",
-        forecast: "215K",
-        previous: "218K",
-        alert: false,
-        notes: "Pre-market release absorbed into price structure."
-      },
-      {
-        id: "ev-02",
-        timeET: "09:45 AM",
-        event: "S&P Global Manufacturing & Services PMI",
-        impact: "HIGH",
-        forecast: "54.1",
-        previous: "53.8",
-        alert: true,
-        notes: "CRITICAL 9:45 AM: Spread widening. Protect open profit."
-      },
-      {
-        id: "ev-03",
-        timeET: "10:00 AM",
-        event: "ISM Services Index / Consumer Sentiment",
-        impact: "HIGH",
-        forecast: "55.8",
-        previous: "55.2",
-        alert: true,
-        notes: "10:00 AM milestone: Flatten or move stop to breakeven before print."
-      }
-    ];
+    return getUSEconomicEvents();
   }
 }

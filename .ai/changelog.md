@@ -47,3 +47,13 @@ All notable changes and architectural decisions are logged here.
 - Removed bouncy hover jumps (`scale-105`) and radioactive pulsing glows (`box-shadow: 0 0 24px rgba(...)`); restored standard 150ms subtle color shifts.
 - Purged dead prototype components (`BiasCard.tsx`, `ActionPlaybookCard.tsx`, `MacroRegimeStrip.tsx`, `ScenarioMatrixCard.tsx`).
 - Verified zero TypeScript build errors and validated live HTTP 200 response on `http://localhost:3000`.
+
+## [2026-11-23] - US Economic Calendar (Red & Orange Folders Only)
+- Created `src/lib/market/economicCalendar.ts` providing filtered economic calendar data for US (`USD`) high-impact (Red folder) and medium-impact (Orange folder) releases.
+- Implemented `getMarketImpactExplanation()` providing concise, 1-sentence explanations for Red news explaining how beats vs. misses impact Treasury yields, dollar, and NQ/futures continuation retraces.
+- Added `EconomicNewsCard.tsx` directly to the main dashboard with:
+  - Red / Orange folder visual tags and release time in Eastern Time (`font-mono tabular-nums`).
+  - Forecast, Previous, and Actual figures.
+  - NY Open Volatility Caution banner for catalysts occurring near the 9:30–10:00 AM ET retrace window (e.g. 9:45 AM Flash PMI, 10:00 AM ISM).
+  - Quick filters for "All US", "Today", and "Red Only".
+- Preserved `kill-ai-slop` compliance with clean hairlines, crisp typography, and zero rainbow glow.

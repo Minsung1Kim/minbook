@@ -68,8 +68,12 @@ export async function getOpenBrief(options?: {
   // Compute session levels
   const { sessionMetrics, keyLevels } = computeSessionLevels(quote.price, dailyBars, intradayBars);
 
-  // Check if red-folder news scheduled between 9:30 and 10:00 AM ET
-  const hasOpenNews = events.some((e) => e.alert && (e.timeET.includes("09:45") || e.timeET.includes("10:00")));
+  // Check if red/orange folder news scheduled between 9:30 and 10:00 AM ET today
+  const hasOpenNews = events.some(
+    (e) =>
+      (e.isNearOpenWindow || (e.alert && (e.timeET.includes("09:45") || e.timeET.includes("10:00")))) &&
+      (e.date === dateStr || !e.date)
+  );
 
   // Evaluate bias & chop risk
   const bias = evaluateBiasAndRegime(quote.price, sessionMetrics, macro.vix, hasOpenNews);

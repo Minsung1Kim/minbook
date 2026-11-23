@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { ChecklistCard } from "@/components/ChecklistCard";
+import { EconomicNewsCard } from "@/components/EconomicNewsCard";
 import { OpenBriefData } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import {
@@ -300,7 +301,13 @@ export function Dashboard() {
               currentPrice={quote.price}
             />
 
-            {/* 3. EXPANDABLE DRILLDOWN TILES */}
+            {/* 3. US ECONOMIC CALENDAR (Red & Orange Folders) */}
+            <EconomicNewsCard
+              events={brief.macro.events}
+              tradeDate={brief.tradeDate}
+            />
+
+            {/* 4. EXPANDABLE DRILLDOWN TILES */}
             <div className="space-y-3">
               {/* TILE 1: "WHAT IF VWAP HITS?" (Collapsible) */}
               <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden">

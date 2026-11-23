@@ -1,5 +1,6 @@
 import { MarketDataProvider, MacroDataResult } from "./provider";
 import { OHLCVBar, MarketQuote, EconomicEvent } from "@/types/market";
+import { getUSEconomicEvents } from "./economicCalendar";
 
 export class SeedFallbackProvider implements MarketDataProvider {
   readonly name = "Seed / Demo Provider";
@@ -137,38 +138,6 @@ export class SeedFallbackProvider implements MarketDataProvider {
   }
 
   async getEconomicEvents(): Promise<EconomicEvent[]> {
-    return [
-      {
-        id: "ev-demo-01",
-        timeET: "08:30 AM",
-        event: "Core PCE Price Index",
-        impact: "HIGH",
-        forecast: "215K",
-        previous: "218K",
-        actual: "213K",
-        alert: false,
-        notes: "Pre-market release absorbed."
-      },
-      {
-        id: "ev-demo-02",
-        timeET: "09:45 AM",
-        event: "S&P Global Manufacturing & Services PMI",
-        impact: "HIGH",
-        forecast: "54.1",
-        previous: "53.8",
-        alert: true,
-        notes: "WATCH 9:45 AM ET: Spread widening expected. Protect open retrace profit."
-      },
-      {
-        id: "ev-demo-03",
-        timeET: "10:00 AM",
-        event: "ISM Services PMI",
-        impact: "HIGH",
-        forecast: "55.8",
-        previous: "55.2",
-        alert: true,
-        notes: "10:00 AM ET milestone: Target or trailing stop should be engaged before print."
-      }
-    ];
+    return getUSEconomicEvents();
   }
 }

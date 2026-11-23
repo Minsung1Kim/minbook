@@ -196,14 +196,19 @@ export interface MacroIndicator {
 
 export interface EconomicEvent {
   id: string;
+  date: string; // YYYY-MM-DD
   timeET: string;
   event: string;
+  country: "USD";
   impact: "HIGH" | "MEDIUM" | "LOW";
+  folderColor: "RED" | "ORANGE";
   forecast?: string;
   previous?: string;
   actual?: string;
   alert: boolean;
   notes: string;
+  marketImpact?: string; // Short & simple explanation on how it affects the market (required for red news)
+  isNearOpenWindow?: boolean; // Scheduled near 9:30–10:00 AM NY open
 }
 
 export interface OpenBriefData {

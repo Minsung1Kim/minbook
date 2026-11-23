@@ -7,3 +7,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## OpenPulse Agent Instructions
+- Full project architecture and specifications are documented in `AGENT.md`.
+- All major decisions and verification checks must be recorded in `.ai/changelog.md`.
+- High-contrast dark terminal aesthetic for NY open traders.
+- Keep data sources honest: every price and level must display source, timestamp, and staleness badge.
+

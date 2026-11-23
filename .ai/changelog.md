@@ -38,3 +38,12 @@ All notable changes and architectural decisions are logged here.
 - Added live price flash animations (cyan/emerald for tick up, rose for tick down).
 - Lowered Yahoo Finance in-memory chart cache to 8s and service TTL to 10s for responsive live prints without triggering rate limits.
 - Validated production build with Next.js 16.4.6 and verified live dynamic updates on `http://localhost:3000`.
+
+## [2026-11-23] - De-Slop Overhaul (kill-ai-slop guidelines)
+- Audited codebase with `yetone/kill-ai-slop` scanner; systematically eliminated machine-generated aesthetic tells.
+- Replaced atmospheric gradient cards and oversized fuzzy glow shadows (`shadow-2xl`) with crisp, matte terminal surfaces (`#0f1624`) and subtle hairline borders (`border-slate-800`).
+- Removed emoji spam (`⚡`, `<Sparkles />`) and hyper-inflated AI marketing copy. Replaced with concise, institutional trader terminology.
+- Stripped `font-mono` from full prose paragraphs, navigation links, and forms; restored modern sans-serif typography for UI text, reserving `font-mono tabular-nums` strictly for prices, deltas, and ticks.
+- Removed bouncy hover jumps (`scale-105`) and radioactive pulsing glows (`box-shadow: 0 0 24px rgba(...)`); restored standard 150ms subtle color shifts.
+- Purged dead prototype components (`BiasCard.tsx`, `ActionPlaybookCard.tsx`, `MacroRegimeStrip.tsx`, `ScenarioMatrixCard.tsx`).
+- Verified zero TypeScript build errors and validated live HTTP 200 response on `http://localhost:3000`.

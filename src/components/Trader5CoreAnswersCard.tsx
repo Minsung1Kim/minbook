@@ -8,12 +8,7 @@ import {
   TrendingDown,
   ShieldAlert,
   Target,
-  Magnet,
-  Scale,
-  Sparkles,
-  ArrowRight,
-  HelpCircle,
-  AlertTriangle
+  Scale
 } from "lucide-react";
 import { Trader5Answers } from "@/types/market";
 
@@ -27,114 +22,116 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
   const isBear = answers.biasDirection.includes("BEARISH");
 
   return (
-    <div className="rounded-2xl bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-cyan-800/80 shadow-2xl p-5 sm:p-6 space-y-5 font-mono">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-        <div className="flex items-center space-x-3">
-          <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-slate-400 block">
-              Pre-Market & NY Open Briefing (9:30–10:00 AM ET)
-            </span>
-            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white font-sans">
-              The 5 Core Trader Questions (Answered)
+    <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden">
+      {/* Header Bar */}
+      <div className="px-5 py-3.5 border-b border-slate-800 bg-slate-900/50 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center space-x-2">
+            <h2 className="text-sm font-semibold tracking-tight text-white">
+              Session Brief & Signals
             </h2>
+            <span className="text-[11px] text-slate-400">
+              — NY Open 9:30–10:00 AM ET
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <span className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
-            Current NQ: {currentPrice.toFixed(2)}
+        <div className="flex items-center space-x-2 text-xs">
+          <span className="text-slate-400">Current NQ:</span>
+          <span className="font-mono tabular-nums font-semibold text-cyan-400">
+            {currentPrice.toFixed(2)}
           </span>
         </div>
       </div>
 
-      {/* Grid of the 5 Answers */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* ANSWER 1: Direction & Bias */}
-        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+      {/* Main Signal Matrix */}
+      <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* SIGNAL 1: Direction & Bias */}
+        <div className="space-y-2 border-b md:border-b-0 md:border-r border-slate-800/80 pb-5 md:pb-0 md:pr-5">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-              <Compass className="w-3.5 h-3.5 text-cyan-400" />
-              <span>1. Direction & Bias:</span>
+            <span className="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
+              <Compass className="w-3.5 h-3.5 text-slate-400" />
+              <span>Direction & Bias</span>
             </span>
-            <span
-              className={`text-xs px-2 py-0.5 rounded font-bold ${
-                isBull
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                  : isBear
-                  ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
-                  : "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-              }`}
-            >
-              {answers.biasConfidence} CONFIDENCE
+            <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+              {answers.biasConfidence}
             </span>
           </div>
 
-          <div className="text-base sm:text-lg font-bold text-white tracking-tight flex items-center space-x-2">
+          <div className="flex items-center space-x-2 pt-0.5">
             {isBull ? (
-              <TrendingUp className="w-5 h-5 text-emerald-400" />
+              <span className="inline-flex items-center text-sm font-semibold text-emerald-400 space-x-1">
+                <TrendingUp className="w-4 h-4" />
+                <span>{answers.biasDirection}</span>
+              </span>
             ) : isBear ? (
-              <TrendingDown className="w-5 h-5 text-rose-400" />
-            ) : null}
-            <span>{answers.biasDirection}</span>
+              <span className="inline-flex items-center text-sm font-semibold text-rose-400 space-x-1">
+                <TrendingDown className="w-4 h-4" />
+                <span>{answers.biasDirection}</span>
+              </span>
+            ) : (
+              <span className="text-sm font-semibold text-slate-200">
+                {answers.biasDirection}
+              </span>
+            )}
           </div>
 
-          <p className="text-xs text-slate-300 font-sans leading-relaxed">
+          <p className="text-xs text-slate-300 leading-relaxed font-sans">
             {answers.biasReason}
           </p>
         </div>
 
-        {/* ANSWER 2: Will Stops Be Hunted Before Shooting Up? */}
-        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+        {/* SIGNAL 2: Stop Hunt Likelihood */}
+        <div className="space-y-2 pb-5 md:pb-0">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-              <span>2. Will Stops Be Hunted First?</span>
+            <span className="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
+              <ShieldAlert className="w-3.5 h-3.5 text-slate-400" />
+              <span>Stop Hunt Likelihood</span>
             </span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-bold">
+            <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
               {answers.stopHuntProbability}
             </span>
           </div>
 
-          <div className="text-sm font-bold text-amber-300 font-sans">
-            Hunting: {answers.stopHuntDetails.sideBeingHunted}
+          <div className="text-xs font-medium text-amber-300/90 pt-0.5">
+            Liquidity target: {answers.stopHuntDetails.sideBeingHunted}
           </div>
 
-          <p className="text-xs text-slate-300 font-sans leading-relaxed">
+          <p className="text-xs text-slate-300 leading-relaxed font-sans">
             {answers.stopHuntDetails.actionableAdvice}
           </p>
         </div>
 
-        {/* ANSWER 3: Exact Levels to Retrace Into */}
-        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-          <span className="text-[11px] text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-            <Crosshair className="w-3.5 h-3.5 text-emerald-400" />
-            <span>3. What Levels Could It Retrace Into?</span>
-          </span>
+        {/* SIGNAL 3: Prime Retrace Levels */}
+        <div className="space-y-2 border-t border-slate-800/80 pt-5 md:border-r md:pr-5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
+              <Crosshair className="w-3.5 h-3.5 text-slate-400" />
+              <span>Retrace Entry Levels</span>
+            </span>
+            <span className="text-[11px] text-slate-500">Wait for fill</span>
+          </div>
 
-          <div className="space-y-2">
+          <div className="divide-y divide-slate-800/60 border border-slate-800/80 rounded bg-slate-900/40">
             {answers.retraceLevels.map((lvl, idx) => (
               <div
                 key={idx}
-                className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs"
+                className="px-3 py-2 flex items-center justify-between text-xs"
               >
                 <div>
                   <div className="flex items-center space-x-2">
-                    <span className="font-bold text-white">{lvl.name}</span>
-                    <span className="text-[10px] px-1.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">
+                    <span className="font-medium text-slate-200">{lvl.name}</span>
+                    <span className="text-[10px] px-1 rounded bg-slate-800 text-slate-400 font-mono">
                       {lvl.priority}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 font-sans mt-0.5">{lvl.note}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{lvl.note}</p>
                 </div>
                 <div className="text-right shrink-0 ml-3">
-                  <div className="text-sm font-bold text-emerald-400 font-mono">
+                  <div className="font-mono tabular-nums font-semibold text-slate-100">
                     {lvl.price.toFixed(1)}
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
+                  <div className="font-mono tabular-nums text-[10px] text-slate-500">
                     {lvl.distancePts.toFixed(1)} pts
                   </div>
                 </div>
@@ -143,32 +140,33 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
           </div>
         </div>
 
-        {/* ANSWER 4: Strongest Draws on Liquidity (Magnets) */}
-        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
-          <span className="text-[11px] text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-            <Magnet className="w-3.5 h-3.5 text-cyan-400" />
-            <span>4. Strongest Draws on Liquidity (Magnets):</span>
-          </span>
+        {/* SIGNAL 4: Draws on Liquidity (Magnets) */}
+        <div className="space-y-2 border-t border-slate-800/80 pt-5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
+              <Target className="w-3.5 h-3.5 text-slate-400" />
+              <span>Draws on Liquidity</span>
+            </span>
+            <span className="text-[11px] text-slate-500">Session targets</span>
+          </div>
 
-          <div className="space-y-2">
+          <div className="divide-y divide-slate-800/60 border border-slate-800/80 rounded bg-slate-900/40">
             {answers.drawsOnLiquidity.map((liq, idx) => (
               <div
                 key={idx}
-                className="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80 flex items-center justify-between text-xs"
+                className="px-3 py-2 flex items-center justify-between text-xs"
               >
                 <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-bold text-white">{liq.name}</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-sans block mt-0.5">
+                  <span className="font-medium text-slate-200">{liq.name}</span>
+                  <span className="text-[11px] text-slate-400 block mt-0.5">
                     {liq.strength} • {liq.type}
                   </span>
                 </div>
                 <div className="text-right shrink-0 ml-3">
-                  <div className="text-sm font-bold text-cyan-300 font-mono">
+                  <div className="font-mono tabular-nums font-semibold text-slate-100">
                     {liq.price.toFixed(1)}
                   </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
+                  <div className="font-mono tabular-nums text-[10px] text-slate-500">
                     {liq.pointsDistance >= 0 ? `+${liq.pointsDistance}` : liq.pointsDistance} pts
                   </div>
                 </div>
@@ -176,27 +174,30 @@ export function Trader5CoreAnswersCard({ answers, currentPrice }: Trader5CoreAns
             ))}
           </div>
         </div>
+      </div>
 
-        {/* ANSWER 5: Higher R:R vs Lower R:R for the Session */}
-        <div className="col-span-1 md:col-span-2 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-              <Scale className="w-3.5 h-3.5 text-amber-400" />
-              <span>5. Higher R:R vs Lower R:R for Today's Session:</span>
+      {/* SIGNAL 5: Session R:R Recommendation */}
+      <div className="px-5 py-3.5 border-t border-slate-800 bg-slate-900/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <Scale className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-xs font-medium text-slate-300">
+              Session R:R Plan:
             </span>
-            <span className="text-xs px-2.5 py-0.5 rounded font-bold bg-amber-950 text-amber-300 border border-amber-800">
-              TARGET MULTIPLE: ~{answers.rrGuidance.targetMultipleR}R
+            <span className="text-xs font-semibold text-white">
+              {answers.rrGuidance.recommendedStrategy}
             </span>
           </div>
-
-          <div className="text-sm sm:text-base font-bold text-white font-sans flex items-center space-x-2">
-            <span className="text-cyan-400">RECOMMENDATION:</span>
-            <span>{answers.rrGuidance.recommendedStrategy}</span>
-          </div>
-
-          <p className="text-xs text-slate-300 font-sans leading-relaxed">
+          <p className="text-xs text-slate-400 font-sans leading-relaxed">
             {answers.rrGuidance.rationale}
           </p>
+        </div>
+
+        <div className="shrink-0 text-left sm:text-right">
+          <div className="text-[11px] text-slate-500">Target Multiple</div>
+          <div className="text-sm font-mono tabular-nums font-bold text-slate-100">
+            ~{answers.rrGuidance.targetMultipleR}R
+          </div>
         </div>
       </div>
     </div>

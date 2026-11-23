@@ -1,6 +1,6 @@
-# OpenPulse ⚡
+# OpenPulse
 
-> **Pre-Market & NY Open Bias, Key-Levels, and Stop-Risk Briefing Web App for NQ Futures Traders**
+> **Pre-Market & NY Open Bias, Key Levels, and Stop-Risk Briefing System for NQ Futures Traders**
 
 Designed specifically for traders executing **1 trade per day on NQ / MNQ**, looking for **higher-timeframe (HTF) continuation** and entering on a **retrace between 9:30 AM and 10:00 AM ET (NY open)**, risking **$200–$300** to make **$500–$600** (~2R–3R).
 

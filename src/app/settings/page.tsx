@@ -2,128 +2,141 @@
 
 import React, { useState, useEffect } from "react";
 import { Header } from "@/components/Header";
+import { UserProfile } from "@/types/app";
 import {
   Settings,
   Shield,
-  Target,
-  User,
-  Users,
-  Database,
-  Key,
-  Check,
   Save,
-  AlertTriangle,
-  Info,
-  DollarSign
+  Check,
+  Database,
+  Users,
+  Plus
 } from "lucide-react";
-import { UserProfile } from "@/types/app";
 
-export default function SettingsPage() {
+export function SettingsPage() {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>("minsung");
-  const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
-  // Form Fields
-  const [name, setName] = useState("");
+  // Active profile form state
+  const [name, setName] = useState<string>("");
+  const [riskBudget, setRiskBudget] = useState<number>(250);
+  const [targetBudget, setTargetBudget] = useState<number>(550);
+  const [maxDailyLoss, setMaxDailyLoss] = useState<number>(600);
+  const [trailingDrawdownAlert, setTrailingDrawdownAlert] = useState<number>(1000);
   const [defaultInstrument, setDefaultInstrument] = useState<"NQ" | "MNQ">("NQ");
-  const [riskBudget, setRiskBudget] = useState(250);
-  const [targetBudget, setTargetBudget] = useState(550);
-  const [maxDailyLoss, setMaxDailyLoss] = useState(350);
-  const [trailingDrawdownAlert, setTrailingDrawdownAlert] = useState(2000);
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState<string>("");
 
-  // New Profile Modal / state
-  const [newProfileName, setNewProfileName] = useState("");
-  const [showAddFriend, setShowAddFriend] = useState(false);
+  // New Friend Profile Form
+  const [showAddFriend, setShowAddFriend] = useState<boolean>(false);
+  const [friendName, setFriendName] = useState<string>("");
+  const [friendRisk, setFriendRisk] = useState<number>(250);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch("/api/settings");
+      const json = await res.json();
+      if (json.success && json.data) {
+        setProfiles(json.data.profiles);
+        const active = json.data.profiles.find((p: UserProfile) => p.id === activeProfileId) || json.data.profiles[0];
+        if (active) {
+          setName(active.name);
+          setRiskBudget(active.riskBudgetDollars);
+          setTargetBudget(active.targetBudgetDollars);
+          setMaxDailyLoss(active.maxDailyLossDollars);
+          setTrailingDrawdownAlert(active.trailingDrawdownAlert);
+          setDefaultInstrument(active.defaultInstrument);
+          setNotes(active.notes || "");
+          setActiveProfileId(active.id);
+        }
+      }
+    } catch (err) {
+      console.error("fetchSettings error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    loadSettings();
+    fetchSettings();
   }, []);
-
-  const loadSettings = () => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success && res.profiles?.length > 0) {
-          setProfiles(res.profiles);
-          selectProfile(res.profiles[0]);
-        }
-      });
-  };
 
   const selectProfile = (p: UserProfile) => {
     setActiveProfileId(p.id);
-    setCurrentProfile(p);
     setName(p.name);
-    setDefaultInstrument(p.defaultInstrument);
     setRiskBudget(p.riskBudgetDollars);
     setTargetBudget(p.targetBudgetDollars);
     setMaxDailyLoss(p.maxDailyLossDollars);
     setTrailingDrawdownAlert(p.trailingDrawdownAlert);
+    setDefaultInstrument(p.defaultInstrument);
     setNotes(p.notes || "");
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const updated: UserProfile = {
+      id: activeProfileId,
+      name,
+      riskBudgetDollars: riskBudget,
+      targetBudgetDollars: targetBudget,
+      maxDailyLossDollars: maxDailyLoss,
+      maxDailyTrades: 1,
+      trailingDrawdownAlert,
+      defaultInstrument,
+      notes,
+      updatedAt: new Date().toISOString()
+    };
+
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: activeProfileId,
-          name,
-          defaultInstrument,
-          riskBudgetDollars: Number(riskBudget),
-          targetBudgetDollars: Number(targetBudget),
-          maxDailyTrades: 1,
-          maxDailyLossDollars: Number(maxDailyLoss),
-          trailingDrawdownAlert: Number(trailingDrawdownAlert),
-          notes
-        })
+        body: JSON.stringify({ profile: updated })
       });
-
       const json = await res.json();
       if (json.success) {
-        setSavedNotice("Profile guardrails saved successfully!");
-        setProfiles(json.profiles);
+        setSavedNotice("Profile guardrails saved");
         setTimeout(() => setSavedNotice(null), 2500);
+        fetchSettings();
       }
     } catch (err) {
-      console.error("Save error:", err);
+      console.error("handleSaveProfile error:", err);
     }
   };
 
-  const handleCreateFriendProfile = async () => {
-    if (!newProfileName.trim()) return;
-    const friendId = newProfileName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+  const handleCreateFriendProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!friendName.trim()) return;
+
+    const newId = friendName.toLowerCase().replace(/\s+/g, "_");
+    const newProfile: UserProfile = {
+      id: newId,
+      name: friendName,
+      riskBudgetDollars: friendRisk,
+      targetBudgetDollars: Math.round(friendRisk * 2.2),
+      maxDailyLossDollars: friendRisk * 2,
+      maxDailyTrades: 1,
+      trailingDrawdownAlert: 1000,
+      defaultInstrument: "NQ",
+      notes: "Friend trading profile (1 trade/day)",
+      updatedAt: new Date().toISOString()
+    };
 
     try {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: friendId,
-          name: newProfileName,
-          defaultInstrument: "MNQ",
-          riskBudgetDollars: 200,
-          targetBudgetDollars: 500,
-          maxDailyTrades: 1,
-          maxDailyLossDollars: 250,
-          trailingDrawdownAlert: 1500,
-          notes: "Friend trading profile"
-        })
+        body: JSON.stringify({ profile: newProfile })
       });
-
       const json = await res.json();
       if (json.success) {
-        setProfiles(json.profiles);
-        setNewProfileName("");
         setShowAddFriend(false);
-        selectProfile(json.profile);
+        setFriendName("");
+        fetchSettings();
       }
     } catch (err) {
-      console.error("Create profile error:", err);
+      console.error("handleCreateFriendProfile error:", err);
     }
   };
 
@@ -133,41 +146,41 @@ export default function SettingsPage() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Top Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-xl bg-slate-900/90 border border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-lg bg-[#0f1624] border border-slate-800">
           <div>
-            <div className="flex items-center space-x-2">
-              <Settings className="w-5 h-5 text-cyan-400" />
-              <h1 className="text-xl font-bold tracking-tight text-white">
+            <div className="flex items-center space-x-2.5">
+              <Settings className="w-4 h-4 text-slate-400" />
+              <h1 className="text-lg font-semibold tracking-tight text-white">
                 Trader Settings & Risk Guardrails
               </h1>
             </div>
-            <p className="text-xs text-slate-400 font-mono mt-1">
-              Configure personal and friend risk budgets, instrument sizing defaults, prop drawdown rules, and market data API keys.
+            <p className="text-xs text-slate-400 mt-1">
+              Configure personal and friend risk budgets, instrument sizing defaults, prop drawdown rules, and data feed adapters.
             </p>
           </div>
 
           {savedNotice && (
-            <div className="px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-800 text-emerald-300 font-mono text-xs flex items-center space-x-1.5 animate-pulse">
-              <Check className="w-4 h-4" />
+            <div className="px-3 py-1 rounded bg-slate-800 border border-emerald-800 text-emerald-400 text-xs flex items-center space-x-1.5">
+              <Check className="w-3.5 h-3.5" />
               <span>{savedNotice}</span>
             </div>
           )}
         </div>
 
         {/* Profile Switcher Tabs */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3 text-xs font-mono">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3 text-xs">
           <span className="text-slate-400 flex items-center space-x-1 mr-2">
-            <Users className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Select Profile:</span>
+            <Users className="w-3.5 h-3.5 text-slate-400" />
+            <span>Profile:</span>
           </span>
           {profiles.map((p) => (
             <button
               key={p.id}
               onClick={() => selectProfile(p)}
-              className={`px-3.5 py-1.5 rounded-lg font-semibold transition-colors ${
+              className={`px-3 py-1.5 rounded font-medium transition-colors ${
                 activeProfileId === p.id
-                  ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/20"
-                  : "bg-slate-900 text-slate-300 hover:text-white border border-slate-800"
+                  ? "bg-slate-800 text-white border border-slate-700"
+                  : "bg-slate-900/60 text-slate-400 hover:text-slate-200 border border-slate-800"
               }`}
             >
               {p.name}
@@ -176,32 +189,44 @@ export default function SettingsPage() {
 
           <button
             onClick={() => setShowAddFriend(!showAddFriend)}
-            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors text-xs"
+            className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors text-xs flex items-center space-x-1"
           >
-            + Add Friend Profile
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Friend Profile</span>
           </button>
         </div>
 
-        {/* Add Friend Form */}
+        {/* Add Friend Profile Inline Form */}
         {showAddFriend && (
-          <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center space-x-3 text-xs font-mono">
-            <span className="text-slate-300 font-semibold">Friend's Name:</span>
-            <input
-              type="text"
-              value={newProfileName}
-              onChange={(e) => setNewProfileName(e.target.value)}
-              placeholder="e.g. David (TopStep 100k)"
-              className="bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-white flex-1 max-w-xs"
-            />
+          <div className="p-4 rounded-lg bg-[#0f1624] border border-slate-800 flex flex-wrap items-center gap-3 text-xs">
+            <div>
+              <label className="text-slate-400 block mb-1">Friend Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Alex"
+                value={friendName}
+                onChange={(e) => setFriendName(e.target.value)}
+                className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+              />
+            </div>
+            <div>
+              <label className="text-slate-400 block mb-1">Dollar Risk Budget</label>
+              <input
+                type="number"
+                value={friendRisk}
+                onChange={(e) => setFriendRisk(Number(e.target.value))}
+                className="bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-white w-24 font-mono tabular-nums"
+              />
+            </div>
             <button
               onClick={handleCreateFriendProfile}
-              className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold"
+              className="mt-5 px-3 py-1.5 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold"
             >
               Create Profile
             </button>
             <button
               onClick={() => setShowAddFriend(false)}
-              className="px-3 py-1.5 rounded bg-slate-800 text-slate-400 hover:text-slate-200"
+              className="mt-5 px-3 py-1.5 rounded bg-slate-800 text-slate-400 hover:text-slate-200"
             >
               Cancel
             </button>
@@ -209,14 +234,14 @@ export default function SettingsPage() {
         )}
 
         {/* Main Settings Form Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start font-mono text-xs">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start text-xs">
           {/* Column 1 & 2: Risk Guardrails Form */}
           <form
             onSubmit={handleSaveProfile}
-            className="lg:col-span-2 p-6 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl space-y-5"
+            className="lg:col-span-2 p-6 rounded-lg bg-[#0f1624] border border-slate-800 space-y-5"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <span className="text-sm font-bold text-white flex items-center space-x-2">
+              <span className="text-sm font-semibold text-white flex items-center space-x-2">
                 <Shield className="w-4 h-4 text-emerald-400" />
                 <span>Risk & Sizing Budget ({name})</span>
               </span>
@@ -230,7 +255,7 @@ export default function SettingsPage() {
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-white font-bold"
+                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-white font-medium"
                   required
                 />
               </div>
@@ -240,7 +265,7 @@ export default function SettingsPage() {
                 <select
                   value={defaultInstrument}
                   onChange={(e) => setDefaultInstrument(e.target.value as "NQ" | "MNQ")}
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-white font-bold"
+                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-white font-medium"
                 >
                   <option value="NQ">NQ (E-mini Nasdaq 100 - $20/pt)</option>
                   <option value="MNQ">MNQ (Micro E-mini - $2/pt Precision)</option>
@@ -252,7 +277,7 @@ export default function SettingsPage() {
               <div>
                 <label className="text-slate-400 block mb-1 flex items-center justify-between">
                   <span>Risk Budget ($200–$300)</span>
-                  <strong className="text-rose-400 text-sm">${riskBudget}</strong>
+                  <strong className="text-rose-400 font-mono tabular-nums text-sm">${riskBudget}</strong>
                 </label>
                 <input
                   type="number"
@@ -261,10 +286,10 @@ export default function SettingsPage() {
                   step="25"
                   value={riskBudget}
                   onChange={(e) => setRiskBudget(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-white"
+                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-white font-mono tabular-nums"
                   required
                 />
-                <span className="text-[10px] text-slate-500 mt-1 block">
+                <span className="text-[11px] text-slate-500 mt-1 block">
                   Allows {(riskBudget / 20).toFixed(1)} pts on 1 NQ or {(riskBudget / 8).toFixed(1)} pts on 4 MNQ
                 </span>
               </div>
@@ -272,7 +297,7 @@ export default function SettingsPage() {
               <div>
                 <label className="text-slate-400 block mb-1 flex items-center justify-between">
                   <span>Profit Target ($500–$600)</span>
-                  <strong className="text-emerald-400 text-sm">${targetBudget}</strong>
+                  <strong className="text-emerald-400 font-mono tabular-nums text-sm">${targetBudget}</strong>
                 </label>
                 <input
                   type="number"
@@ -281,19 +306,19 @@ export default function SettingsPage() {
                   step="50"
                   value={targetBudget}
                   onChange={(e) => setTargetBudget(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-white"
+                  className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-white font-mono tabular-nums"
                   required
                 />
-                <span className="text-[10px] text-slate-500 mt-1 block">
-                  Standard R:R Ratio = {(targetBudget / riskBudget).toFixed(2)}R
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Target Multiple: {(targetBudget / riskBudget).toFixed(2)}R
                 </span>
               </div>
             </div>
 
             {/* Prop Account Guardrails */}
-            <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-3">
-              <span className="text-amber-400 font-bold text-xs uppercase tracking-wider block">
-                Prop Drawdown & Hard Stop Guardrails:
+            <div className="p-4 rounded bg-slate-900/60 border border-slate-800 space-y-3">
+              <span className="text-slate-300 font-semibold text-xs block">
+                Prop Drawdown & Hard Stop Guardrails
               </span>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -303,9 +328,9 @@ export default function SettingsPage() {
                     type="number"
                     value={maxDailyLoss}
                     onChange={(e) => setMaxDailyLoss(Number(e.target.value))}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-rose-300 font-bold"
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-rose-300 font-mono tabular-nums font-semibold"
                   />
-                  <span className="text-[10px] text-slate-500">If reached, trading halts immediately</span>
+                  <span className="text-[11px] text-slate-500">Trading halts if touched</span>
                 </div>
 
                 <div>
@@ -314,49 +339,49 @@ export default function SettingsPage() {
                     type="number"
                     value={trailingDrawdownAlert}
                     onChange={(e) => setTrailingDrawdownAlert(Number(e.target.value))}
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-cyan-300 font-bold"
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-cyan-300 font-mono tabular-nums font-semibold"
                   />
-                  <span className="text-[10px] text-slate-500">Distance to prop liquidation threshold</span>
+                  <span className="text-[11px] text-slate-500">Distance to liquidation limit</span>
                 </div>
               </div>
             </div>
 
             <div>
-              <label className="text-slate-400 block mb-1">Strategy & Profile Notes</label>
+              <label className="text-slate-400 block mb-1">Execution Notes</label>
               <textarea
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-slate-200"
-                placeholder="Personal trade rules, e.g. Do not enter before 9:34 AM. Wait for retrace to VWAP."
+                className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-slate-200"
+                placeholder="Personal rules: Do not enter before 9:34 AM. Wait for retrace to VWAP."
               />
             </div>
 
             <div className="flex justify-end pt-2">
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center space-x-2 transition-all shadow-lg shadow-cyan-500/20"
+                className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold flex items-center space-x-2 transition-colors"
               >
-                <Save className="w-4 h-4" />
-                <span>Save Profile Guardrails</span>
+                <Save className="w-3.5 h-3.5" />
+                <span>Save Guardrails</span>
               </button>
             </div>
           </form>
 
           {/* Column 3: Market Data Provider Status & API Config Info */}
-          <div className="p-6 rounded-xl bg-slate-900/90 border border-slate-800 shadow-xl space-y-4">
+          <div className="p-6 rounded-lg bg-[#0f1624] border border-slate-800 space-y-4">
             <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
-              <Database className="w-4 h-4 text-cyan-400" />
-              <h2 className="text-sm font-bold text-white tracking-tight">
-                Market Data Provider Config
+              <Database className="w-4 h-4 text-slate-400" />
+              <h2 className="text-sm font-semibold text-white tracking-tight">
+                Data Feed Architecture
               </h2>
             </div>
 
             <div className="space-y-3">
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
+              <div className="p-3 rounded bg-slate-900/60 border border-slate-800">
                 <div className="flex items-center justify-between text-xs font-semibold">
-                  <span className="text-white">Active Engine:</span>
-                  <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                  <span className="text-slate-200">Active Engine:</span>
+                  <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
                     Yahoo Finance (Free)
                   </span>
                 </div>
@@ -365,31 +390,31 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+              <div className="p-3 rounded bg-slate-900/60 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs font-semibold">
-                  <span className="text-white">Polygon.io Adapter:</span>
+                  <span className="text-slate-200">Polygon.io Adapter:</span>
                   <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800">
-                    Pluggable (.env)
+                    Pluggable
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  To enable real-time Polygon prints, add your key to <code className="text-cyan-300">.env.local</code>:
+                  To enable Polygon prints, add your key to <code className="text-cyan-300">.env.local</code>:
                 </p>
-                <div className="p-2 rounded bg-black/60 border border-slate-800 text-[10px] text-slate-300 select-all">
+                <div className="p-2 rounded bg-black/60 border border-slate-800 text-[10px] text-slate-300 select-all font-mono">
                   POLYGON_API_KEY=your_key_here<br />
                   MARKET_DATA_PROVIDER=polygon
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+              <div className="p-3 rounded bg-slate-900/60 border border-slate-800 space-y-1">
                 <span className="text-slate-300 font-semibold block text-xs">
                   Staleness Indicators:
                 </span>
-                <ul className="text-[11px] text-slate-400 space-y-1 list-disc list-inside">
-                  <li><span className="text-emerald-400 font-bold">LIVE:</span> Print under 120s old</li>
-                  <li><span className="text-amber-400 font-bold">DELAYED:</span> 15-min exchange standard</li>
-                  <li><span className="text-cyan-400 font-bold">DERIVED:</span> Synthetic level/VWAP/ATR</li>
-                  <li><span className="text-purple-400 font-bold">SAMPLE:</span> Offline fallback mode</li>
+                <ul className="text-[11px] text-slate-400 space-y-1">
+                  <li><span className="text-emerald-400 font-semibold">LIVE:</span> Print under 120s old</li>
+                  <li><span className="text-amber-400 font-semibold">DELAYED:</span> 15-min exchange standard</li>
+                  <li><span className="text-cyan-400 font-semibold">DERIVED:</span> Calculated VWAP / ATR</li>
+                  <li><span className="text-slate-400 font-semibold">SAMPLE:</span> Offline fallback mode</li>
                 </ul>
               </div>
             </div>
@@ -399,3 +424,5 @@ export default function SettingsPage() {
     </div>
   );
 }
+
+export default SettingsPage;

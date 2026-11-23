@@ -9,8 +9,8 @@ import {
   Activity,
   BookOpen,
   Settings,
-  Play,
-  Pause
+  Pause,
+  Play
 } from "lucide-react";
 import { DataStatus } from "@/types/market";
 import { UserProfile } from "@/types/app";
@@ -88,8 +88,8 @@ export function Header({
         const elapsedSecs = (totalSeconds - openStartSeconds) % 60;
         setWindowStatus({
           isActive: true,
-          label: "ACTIVE NY OPEN RETRACE WINDOW",
-          description: `${elapsedMins}m ${elapsedSecs}s into 9:30–10:00 AM window (1 Trade/Day)`
+          label: "NY OPEN RETRACE WINDOW",
+          description: `${elapsedMins}m ${elapsedSecs}s elapsed (9:30–10:00 AM ET)`
         });
       } else if (totalSeconds < openStartSeconds) {
         const remaining = openStartSeconds - totalSeconds;
@@ -98,14 +98,14 @@ export function Header({
         const remSecs = remaining % 60;
         setWindowStatus({
           isActive: false,
-          label: "PRE-MARKET BRIEFING",
-          description: `9:30 AM NY Open in ${remHours > 0 ? `${remHours}h ` : ""}${remMins}m ${remSecs}s`
+          label: "PRE-MARKET",
+          description: `NY Open in ${remHours > 0 ? `${remHours}h ` : ""}${remMins}m ${remSecs}s`
         });
       } else {
         setWindowStatus({
           isActive: false,
           label: "POST-OPEN SESSION",
-          description: "Regular trading hours active (1 Trade Rule)"
+          description: "Regular trading hours active (1 trade limit)"
         });
       }
     }
@@ -126,57 +126,61 @@ export function Header({
     : null;
 
   return (
-    <header className="border-b border-slate-800 bg-[#090d16]/95 backdrop-blur sticky top-0 z-50">
-      {/* Top Banner: NY Open Retrace Window Tracker */}
+    <header className="border-b border-slate-800 bg-[#0b0f17] sticky top-0 z-50">
+      {/* Top Session Window Banner */}
       <div
         className={`px-4 py-1.5 text-xs flex flex-wrap items-center justify-between border-b transition-colors ${
           windowStatus.isActive
-            ? "bg-emerald-950/60 border-emerald-800 text-emerald-200 animate-open-window-pulse"
-            : "bg-slate-900/40 border-slate-800/80 text-slate-400"
+            ? "bg-emerald-950/40 border-emerald-900/60 text-emerald-300"
+            : "bg-slate-900/50 border-slate-800 text-slate-400"
         }`}
       >
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2.5">
           <span
-            className={`w-2 h-2 rounded-full ${
-              windowStatus.isActive ? "bg-emerald-400 animate-ping" : "bg-cyan-400"
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              windowStatus.isActive ? "bg-emerald-400" : "bg-cyan-500"
             }`}
           />
-          <span className="font-semibold tracking-wider text-slate-200 font-mono">
-            {windowStatus.label}:
+          <span className="font-semibold text-slate-200 text-xs">
+            {windowStatus.label}
           </span>
-          <span className="text-slate-300 font-mono">{windowStatus.description}</span>
+          <span className="text-slate-400 text-[11px] font-mono tabular-nums">
+            {windowStatus.description}
+          </span>
         </div>
 
         {/* Dynamic Live Update Status Bar */}
-        <div className="flex items-center space-x-3 text-[11px] font-mono">
-          <div className="flex items-center space-x-1.5 text-slate-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-slate-400">Updated:</span>
-            <strong className="text-white">{formattedLastUpdated ? `${formattedLastUpdated} ET` : "--:--:--"}</strong>
-            <span className="text-cyan-300">({secondsAgo}s ago)</span>
+        <div className="flex items-center space-x-3 text-xs">
+          <div className="flex items-center space-x-1.5 text-slate-400 text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span>Updated:</span>
+            <span className="text-slate-200 font-mono tabular-nums font-medium">
+              {formattedLastUpdated ? `${formattedLastUpdated} ET` : "--:--:--"}
+            </span>
+            <span className="text-slate-500 font-mono tabular-nums">({secondsAgo}s ago)</span>
           </div>
 
-          <span className="text-slate-600">|</span>
+          <span className="text-slate-700">|</span>
 
-          {/* Auto Refresh Status Pill */}
+          {/* Auto Refresh Toggle */}
           <button
             onClick={onToggleAutoRefresh}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] transition-colors ${
+            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] transition-colors border ${
               isAutoRefreshOn
-                ? "bg-emerald-950/80 text-emerald-300 border border-emerald-800"
-                : "bg-slate-800 text-slate-400 border border-slate-700"
+                ? "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+                : "bg-slate-900 text-slate-500 border-slate-800 hover:text-slate-400"
             }`}
-            title="Toggle live auto-refresh timer"
+            title="Toggle automatic 10-second polling"
           >
             {isAutoRefreshOn ? (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <span>SYNC IN {autoRefreshCountdown}s</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span className="font-mono tabular-nums">SYNC: {autoRefreshCountdown}s</span>
               </>
             ) : (
               <>
                 <Pause className="w-2.5 h-2.5" />
-                <span>SYNC PAUSED</span>
+                <span>PAUSED</span>
               </>
             )}
           </button>
@@ -184,43 +188,39 @@ export function Header({
       </div>
 
       {/* Main Navigation Bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-15 flex items-center justify-between">
-        {/* Brand & ET Clock */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+        {/* Brand & Market Clock */}
         <div className="flex items-center space-x-6">
-          <Link href="/" className="flex items-center space-x-3 group">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-emerald-500 p-0.5 shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition-transform">
-              <div className="w-full h-full bg-[#090d16] rounded-[6px] flex items-center justify-center">
-                <Activity className="w-4 h-4 text-cyan-400" />
-              </div>
+          <Link href="/" className="flex items-center space-x-2.5 group">
+            <div className="w-7 h-7 rounded border border-cyan-500/40 bg-slate-900 flex items-center justify-center text-cyan-400">
+              <Activity className="w-4 h-4" />
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-base tracking-tight text-white">OpenPulse</span>
-                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium bg-cyan-950 text-cyan-400 border border-cyan-800/60">
-                  LIVE NQ
-                </span>
-              </div>
+            <div className="flex items-baseline space-x-2">
+              <span className="font-semibold text-base tracking-tight text-white">OpenPulse</span>
+              <span className="text-[10px] font-mono text-cyan-400/90 tracking-wide font-medium">
+                CME NQ
+              </span>
             </div>
           </Link>
 
           {/* Live ET Digital Clock */}
-          <div className="hidden md:flex items-center space-x-2 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800">
-            <Clock className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-[11px] text-slate-400 font-mono">ET:</span>
-            <span className="text-xs font-mono font-bold text-white tracking-wider">
+          <div className="hidden md:flex items-center space-x-2 px-2.5 py-1 rounded bg-slate-900/90 border border-slate-800">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[11px] text-slate-500">ET:</span>
+            <span className="text-xs font-mono tabular-nums font-semibold text-slate-200">
               {etTime || "--:--:-- ET"}
             </span>
           </div>
         </div>
 
         {/* Center Nav Links */}
-        <nav className="hidden sm:flex items-center space-x-1 font-mono">
+        <nav className="hidden sm:flex items-center space-x-1">
           <Link
             href="/"
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center space-x-1.5 ${
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center space-x-1.5 ${
               pathname === "/"
-                ? "bg-slate-800 text-white border border-slate-700 shadow-sm"
-                : "text-slate-400 hover:text-white hover:bg-slate-900"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
             }`}
           >
             <Activity className="w-3.5 h-3.5 text-cyan-400" />
@@ -229,22 +229,22 @@ export function Header({
 
           <Link
             href="/journal"
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center space-x-1.5 ${
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center space-x-1.5 ${
               pathname.startsWith("/journal")
-                ? "bg-slate-800 text-white border border-slate-700 shadow-sm"
-                : "text-slate-400 hover:text-white hover:bg-slate-900"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
             }`}
           >
-            <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+            <BookOpen className="w-3.5 h-3.5 text-slate-400" />
             <span>MAE / MFE Journal</span>
           </Link>
 
           <Link
             href="/settings"
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center space-x-1.5 ${
+            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center space-x-1.5 ${
               pathname.startsWith("/settings")
-                ? "bg-slate-800 text-white border border-slate-700 shadow-sm"
-                : "text-slate-400 hover:text-white hover:bg-slate-900"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
             }`}
           >
             <Settings className="w-3.5 h-3.5 text-slate-400" />
@@ -252,15 +252,15 @@ export function Header({
           </Link>
         </nav>
 
-        {/* Right Controls: Instrument, Profile, Provider Status, Refresh */}
+        {/* Right Utility Bar */}
         <div className="flex items-center space-x-2.5">
           {/* Instrument Toggle */}
-          <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs font-mono">
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded p-0.5">
             <button
               onClick={() => onSelectInstrument("NQ")}
-              className={`px-2.5 py-1 rounded-md transition-all font-bold ${
+              className={`px-2 py-0.5 rounded text-xs font-mono font-medium transition-colors ${
                 selectedInstrument === "NQ"
-                  ? "bg-cyan-500 text-slate-950 shadow-sm shadow-cyan-500/20"
+                  ? "bg-cyan-500 text-slate-950 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
@@ -268,9 +268,9 @@ export function Header({
             </button>
             <button
               onClick={() => onSelectInstrument("MNQ")}
-              className={`px-2.5 py-1 rounded-md transition-all font-bold ${
+              className={`px-2 py-0.5 rounded text-xs font-mono font-medium transition-colors ${
                 selectedInstrument === "MNQ"
-                  ? "bg-cyan-500 text-slate-950 shadow-sm shadow-cyan-500/20"
+                  ? "bg-cyan-500 text-slate-950 font-bold"
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
@@ -284,11 +284,11 @@ export function Header({
               <select
                 value={currentProfile?.id || "minsung"}
                 onChange={(e) => onSelectProfile && onSelectProfile(e.target.value)}
-                className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-md px-2 py-1 font-mono focus:outline-none focus:border-cyan-500"
+                className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded px-2 py-1 font-sans focus:outline-none focus:border-slate-700"
               >
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {p.name} (${p.riskBudgetDollars})
                   </option>
                 ))}
               </select>
@@ -299,8 +299,8 @@ export function Header({
           <button
             onClick={onRefresh}
             disabled={isRefreshing}
-            className="p-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 border border-slate-800 hover:border-slate-700 transition-colors disabled:opacity-50 flex items-center space-x-1"
-            title="Force refresh live market data immediately"
+            className="p-1.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors disabled:opacity-50"
+            title="Refresh market data now"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-cyan-400" : ""}`} />
           </button>

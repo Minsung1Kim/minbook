@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Header } from "@/components/Header";
+import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { ChecklistCard } from "@/components/ChecklistCard";
 import { OpenBriefData, ActionScenario } from "@/types/market";
@@ -219,7 +220,13 @@ export function Dashboard() {
               </div>
             </div>
 
-            {/* 2. EXPANDABLE CLICK TILES (Simple at first glance, click to open details) */}
+            {/* 2. THE 5 CORE TRADER QUESTIONS (Instant clarity: Bias, Stop Hunts, Retrace Levels, Liquidity Draws, R:R Strategy) */}
+            <Trader5CoreAnswersCard
+              answers={plan.trader5Answers}
+              currentPrice={quote.price}
+            />
+
+            {/* 3. EXPANDABLE CLICK TILES (Simple at first glance, click to open details) */}
             <div className="space-y-3 font-mono">
               {/* TILE 1: "WHAT IF VWAP HITS?" (Collapsible) */}
               <div className="rounded-xl bg-slate-900/90 border border-slate-800 shadow-md overflow-hidden transition-all">

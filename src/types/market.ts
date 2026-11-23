@@ -130,8 +130,42 @@ export interface ActionScenario {
   status: "ACTIVE" | "PENDING" | "INVALIDATED";
 }
 
+export interface Trader5Answers {
+  biasDirection: "BULLISH CONTINUATION" | "BEARISH CONTINUATION" | "CHOP / NEUTRAL";
+  biasConfidence: "HIGH" | "MODERATE" | "LOW";
+  biasReason: string;
+  stopHuntProbability: "HIGH (EXPECT OPENING SWEEP)" | "MODERATE" | "LOW (DIRECT DRIVE)";
+  stopHuntDetails: {
+    sideBeingHunted: "BUY-SIDE (ABOVE ONH)" | "SELL-SIDE (BELOW ONL/LONDON LOW)" | "BOTH (TWO-WAY WHIP)";
+    sweepLevelPrice: number;
+    sweepLevelName: string;
+    actionableAdvice: string;
+  };
+  retraceLevels: Array<{
+    name: string;
+    price: number;
+    priority: "PRIMARY (BEST R:R)" | "SECONDARY" | "DEEP VALUE";
+    distancePts: number;
+    note: string;
+  }>;
+  drawsOnLiquidity: Array<{
+    name: string;
+    price: number;
+    type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)" | "SELL-SIDE LIQUIDITY (RESTING SELL STOPS)" | "FAIR VALUE / VWAP PIN";
+    strength: "MAGNET #1 (PRIMARY TARGET)" | "MAGNET #2" | "SECONDARY";
+    pointsDistance: number;
+  }>;
+  rrGuidance: {
+    recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)" | "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)";
+    targetMultipleR: number;
+    recommendedTargetPts: number;
+    rationale: string;
+  };
+}
+
 export interface TacticalExecutionPlan {
   singleTradeDirective: string; // The #1 actionable rule for today's 1 trade
+  trader5Answers: Trader5Answers;
   retraceAnalysis: RetraceAnalysis;
   scenarios: ActionScenario[];
   timelineGuide: {

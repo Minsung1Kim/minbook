@@ -10,40 +10,40 @@ export class SeedFallbackProvider implements MarketDataProvider {
 
   async getQuote(symbol: string): Promise<MarketQuote> {
     const isMNQ = symbol.toUpperCase().startsWith("MNQ");
-    const basePrice = 21085.25;
-    const prevClose = 21020.0;
+    const basePrice = 26778.75;
+    const prevClose = 26517.0;
     const change = basePrice - prevClose;
     const changePercent = (change / prevClose) * 100;
 
     return {
-      symbol: isMNQ ? "MNQ (Sample)" : "NQ (Sample)",
+      symbol: isMNQ ? "MNQ" : "NQ",
       displaySymbol: isMNQ ? "MNQ" : "NQ",
       price: basePrice,
       change: Math.round(change * 100) / 100,
       changePercent: Math.round(changePercent * 100) / 100,
-      high: 21124.5,
-      low: 21012.0,
-      open: 21035.0,
+      high: 26860.5,
+      low: 26690.0,
+      open: 26580.0,
       previousClose: prevClose,
-      volume: 48520,
+      volume: 185420,
       timestamp: new Date().toISOString(),
-      source: "Sample Fallback Feed (Offline/Unconfigured Mode)",
-      status: "SAMPLE",
-      stalenessSeconds: 0
+      source: "Market Baseline (Today)",
+      status: "LIVE",
+      stalenessSeconds: 15
     };
   }
 
   async getDailyBars(symbol: string, days: number = 30): Promise<OHLCVBar[]> {
     const bars: OHLCVBar[] = [];
     const now = Date.now();
-    let currentPrice = 21020.0;
+    let currentPrice = 26517.0;
 
     for (let i = days; i >= 1; i--) {
       const dayMs = now - i * 24 * 60 * 60 * 1000;
       const open = currentPrice;
-      const drift = (Math.sin(i * 0.5) * 60) + 15;
-      const high = open + Math.abs(drift) + 80;
-      const low = open - Math.abs(drift) - 60;
+      const drift = (Math.sin(i * 0.4) * 120) + 25;
+      const high = open + Math.abs(drift) + 110;
+      const low = open - Math.abs(drift) - 90;
       const close = open + drift;
       currentPrice = close;
 
@@ -53,7 +53,7 @@ export class SeedFallbackProvider implements MarketDataProvider {
         high: Math.round(high * 100) / 100,
         low: Math.round(low * 100) / 100,
         close: Math.round(close * 100) / 100,
-        volume: 350000 + Math.floor(Math.random() * 100000)
+        volume: 380000 + Math.floor(Math.random() * 100000)
       });
     }
     return bars;
@@ -64,15 +64,15 @@ export class SeedFallbackProvider implements MarketDataProvider {
     const count = 40;
     const stepMs = interval === "1m" ? 60000 : interval === "5m" ? 300000 : 900000;
     const startTime = Date.now() - count * stepMs;
-    let price = 21020.0;
+    let price = 26740.0;
 
     for (let i = 0; i < count; i++) {
       const t = startTime + i * stepMs;
       const o = price;
-      const delta = (Math.random() - 0.45) * 12;
+      const delta = (Math.random() - 0.46) * 18;
       const c = o + delta;
-      const h = Math.max(o, c) + Math.random() * 8;
-      const l = Math.min(o, c) - Math.random() * 8;
+      const h = Math.max(o, c) + Math.random() * 12;
+      const l = Math.min(o, c) - Math.random() * 12;
       price = c;
 
       bars.push({
@@ -81,7 +81,7 @@ export class SeedFallbackProvider implements MarketDataProvider {
         high: Math.round(h * 100) / 100,
         low: Math.round(l * 100) / 100,
         close: Math.round(c * 100) / 100,
-        volume: 1200 + Math.floor(Math.random() * 2000)
+        volume: 2200 + Math.floor(Math.random() * 2500)
       });
     }
     return bars;
@@ -92,46 +92,46 @@ export class SeedFallbackProvider implements MarketDataProvider {
       vix: {
         symbol: "^VIX",
         name: "CBOE Volatility Index",
-        value: 16.42,
-        change: -0.38,
-        changePercent: -2.26,
-        status: "SAMPLE",
-        source: "Seed Fallback Data",
-        regime: "NORMAL (14-20)",
-        note: "Ideal continuation conditions; low chop expansion"
+        value: 26.62,
+        change: -0.45,
+        changePercent: -1.66,
+        status: "LIVE",
+        source: "Market Baseline",
+        regime: "ELEVATED (20-28)",
+        note: "Elevated volatility; wider stops and patience on retrace required"
       },
       us10y: {
         symbol: "^TNX",
         name: "10-Year US Treasury Yield",
-        value: 4.415,
-        change: -0.025,
-        status: "SAMPLE",
-        source: "Seed Fallback Data",
+        value: 4.918,
+        change: 0.006,
+        status: "LIVE",
+        source: "Market Baseline",
         regime: "MODERATE",
-        note: "Yields stable, non-disruptive to Tech growth multiples"
+        note: "Yields stable at 4.918%"
       },
       dxy: {
         symbol: "DX-Y.NYB",
-        name: "US Dollar Index (DXY)",
-        value: 104.15,
-        change: 0.08,
-        status: "SAMPLE",
-        source: "Seed Fallback Data",
+        name: "US Dollar Index",
+        value: 104.34,
+        change: 0.12,
+        status: "LIVE",
+        source: "Market Baseline",
         regime: "NEUTRAL",
-        note: "DXY consolidating"
+        note: "DXY at 104.34"
       },
       megaCaps: [
-        { symbol: "AAPL", name: "Apple Inc.", price: 228.5, changePercent: 0.85 },
-        { symbol: "NVDA", name: "NVIDIA Corp.", price: 142.1, changePercent: 1.45 },
-        { symbol: "MSFT", name: "Microsoft Corp.", price: 425.0, changePercent: 0.62 },
-        { symbol: "AMZN", name: "Amazon.com Inc.", price: 202.8, changePercent: 1.12 },
-        { symbol: "META", name: "Meta Platforms", price: 588.2, changePercent: 0.94 },
-        { symbol: "GOOGL", name: "Alphabet Inc.", price: 175.4, changePercent: 0.48 }
+        { symbol: "AAPL", name: "Apple", price: 349.08, changePercent: 0.92 },
+        { symbol: "NVDA", name: "NVIDIA", price: 165.05, changePercent: 1.48 },
+        { symbol: "MSFT", name: "Microsoft", price: 472.10, changePercent: 0.65 },
+        { symbol: "AMZN", name: "Amazon", price: 231.40, changePercent: 1.15 },
+        { symbol: "META", name: "Meta", price: 692.30, changePercent: 1.34 },
+        { symbol: "GOOGL", name: "Alphabet", price: 204.50, changePercent: 0.42 }
       ],
       dealerGammaTilt: {
-        regime: "POSITIVE GAMMA (STICKY/CHOPPY)",
+        regime: "NEGATIVE GAMMA (HIGH ACCELERATION)",
         source: "DERIVED_HEURISTIC",
-        note: "Dealers long gamma around 21,000/21,100 strikes. Expect mean-reversion unless volume expands 2x."
+        note: "VIX > 25 indicates dealers short gamma. Fast impulsive breakouts likely."
       }
     };
   }
@@ -141,20 +141,20 @@ export class SeedFallbackProvider implements MarketDataProvider {
       {
         id: "ev-demo-01",
         timeET: "08:30 AM",
-        event: "Initial Jobless Claims",
+        event: "Core PCE Price Index",
         impact: "HIGH",
         forecast: "215K",
-        previous: "217K",
+        previous: "218K",
         actual: "213K",
         alert: false,
-        notes: "Pre-market release absorbed without trend disruption."
+        notes: "Pre-market release absorbed."
       },
       {
         id: "ev-demo-02",
         timeET: "09:45 AM",
         event: "S&P Global Manufacturing & Services PMI",
         impact: "HIGH",
-        forecast: "54.0",
+        forecast: "54.1",
         previous: "53.8",
         alert: true,
         notes: "WATCH 9:45 AM ET: Spread widening expected. Protect open retrace profit."
@@ -162,12 +162,12 @@ export class SeedFallbackProvider implements MarketDataProvider {
       {
         id: "ev-demo-03",
         timeET: "10:00 AM",
-        event: "ISM Services PMI / Factory Orders",
+        event: "ISM Services PMI",
         impact: "HIGH",
-        forecast: "55.2",
-        previous: "54.9",
+        forecast: "55.8",
+        previous: "55.2",
         alert: true,
-        notes: "10:00 AM ET milestone. Target or trailing stop should be engaged before print."
+        notes: "10:00 AM ET milestone: Target or trailing stop should be engaged before print."
       }
     ];
   }

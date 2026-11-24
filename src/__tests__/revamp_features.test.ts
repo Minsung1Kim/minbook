@@ -221,11 +221,14 @@ describe("Revamped MinBook Features & Audit Integrity", () => {
       }
     };
 
-    it("produces plain-English quant facts, bounce areas, and target areas", () => {
+    it("produces plain-English quant facts, gameplan, bounce areas, and target areas", () => {
       const result = buildPlainEnglishBrief(sampleBrief);
       expect(result.direction).toBe("BULLISH");
       expect(result.scoreSummary).toContain("3 of 4");
       expect(result.quantFacts.length).toBeGreaterThanOrEqual(3);
+      expect(result.gameplan.stopHunt.badge.length).toBeGreaterThan(0);
+      expect(["AT_WICK", "EXTRA_ROOM"]).toContain(result.gameplan.stopLoss.mode);
+      expect(result.gameplan.keyTips.length).toBe(4);
       expect(result.bounceAreas.some((b) => b.price === 26270)).toBe(true);
       expect(result.targetAreas.some((t) => t.price === 26350)).toBe(true);
       expect(result.targetAreas.every((t) => t.price > sampleBrief.quote.price)).toBe(true);

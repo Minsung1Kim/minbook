@@ -405,6 +405,78 @@ export function Dashboard() {
               )}
             </div>
 
+            {/* 1B. FUTURES DAY-TRADING GAMEPLAN (Stop Hunt, Stop Loss Room & Key Reminders) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Box 1: Wait for Stop Hunt? */}
+              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                    Wait for Stop Hunt?
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                      plainBrief.gameplan.stopHunt.shouldWait
+                        ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                        : "bg-zinc-800 text-zinc-300 border-zinc-700"
+                    }`}
+                  >
+                    {plainBrief.gameplan.stopHunt.badge}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-300 leading-relaxed">
+                  {plainBrief.gameplan.stopHunt.detail}
+                </p>
+              </div>
+
+              {/* Box 2: Stop Loss Placement (At Wick vs Extra Room) */}
+              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                    Stop Loss Placement
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                      plainBrief.gameplan.stopLoss.mode === "EXTRA_ROOM"
+                        ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                        : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                    }`}
+                  >
+                    {plainBrief.gameplan.stopLoss.badge}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-300 leading-relaxed">
+                  {plainBrief.gameplan.stopLoss.detail}
+                </p>
+              </div>
+
+              {/* Box 3: Key Futures Day-Trading Reminders */}
+              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
+                <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 block">
+                  Key Futures Notes Today
+                </span>
+                <ul className="space-y-1 text-xs">
+                  {plainBrief.gameplan.keyTips.map((tip, i) => (
+                    <li key={i} className="flex items-start space-x-1.5 leading-snug">
+                      <span
+                        className={`font-mono text-[10px] font-bold shrink-0 mt-0.5 ${
+                          tip.tone === "emerald"
+                            ? "text-emerald-400"
+                            : tip.tone === "amber"
+                            ? "text-amber-400"
+                            : tip.tone === "rose"
+                            ? "text-rose-400"
+                            : "text-zinc-400"
+                        }`}
+                      >
+                        • {tip.label}:
+                      </span>
+                      <span className="text-zinc-300">{tip.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
             {/* 2. WORKSPACE: CHART (LEFT) + BOUNCE & TARGET AREAS (RIGHT) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-start">
               {/* Chart (~67% width) */}

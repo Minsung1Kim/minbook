@@ -666,3 +666,9 @@ All notable changes and architectural decisions are logged here.
 - **Audit Reliability & Automation (`vercel.json`, `src/lib/market/service.ts`, `src/app/api/cron/snapshot-and-grade/route.ts`, `src/app/performance/page.tsx`):**
   - Added `vercel.json` weekday cron (`25 14 * * 1-5`) targeting `/api/cron/snapshot-and-grade`.
   - Expanded pre-market immutable freeze window to full `PRE_MARKET_LOCK` (`08:30–09:29 ET`) + `NY_OPEN_WINDOW` (`09:30–09:59 ET`), and added explicit API error display in `/performance`.
+
+## [2026-11-24] - Futures Day-Trading Gameplan Section
+- **Added 3-Column Futures Gameplan (`src/lib/market/plainEnglishBrief.ts`, `src/components/Dashboard.tsx`):**
+  - **Wait for Stop Hunt?**: Live guidance on whether to wait for an overnight high/low liquidity sweep before entering.
+  - **Stop Loss Placement**: Recommends `AT THE WICK (+2–3 pts)` vs `GIVE EXTRA ROOM (+5–8 pts past wick)` based on VRP, term structure, GEX, and 15m ATR.
+  - **Key Futures Notes Today**: Concise reminders for timing, red-folder news proximity, take-profit style (positive vs negative gamma), and risk sizing.

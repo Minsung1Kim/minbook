@@ -24,6 +24,24 @@ export interface ActionableArea {
   sourceLevel?: KeyLevel;
 }
 
+export interface FuturesGameplan {
+  stopHunt: {
+    shouldWait: boolean;
+    badge: string;
+    detail: string;
+  };
+  stopLoss: {
+    mode: "AT_WICK" | "EXTRA_ROOM";
+    badge: string;
+    detail: string;
+  };
+  keyTips: Array<{
+    label: string;
+    value: string;
+    tone: "emerald" | "amber" | "rose" | "neutral";
+  }>;
+}
+
 export interface PlainEnglishBrief {
   direction: BiasDirectionLabel;
   verdictTitle: string;
@@ -35,6 +53,7 @@ export interface PlainEnglishBrief {
     reason: string;
     sizeMultiplier: 1.0 | 0.5 | 0.0;
   };
+  gameplan: FuturesGameplan;
   quantFacts: QuantFactItem[];
   bounceAreas: ActionableArea[];
   targetAreas: ActionableArea[];
@@ -508,12 +527,97 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
   // Sort targets by closeness (nearest reachable targets first, excluding tiny <5pt noise)
   targetPool.sort((a, b) => a.absDistancePts - b.absDistancePts);
 
+  // 7. Futures Day-Trading Gameplan (Stop Hunt, Stop Loss Placement, Key Tips)
+  const atr15 = metrics.atrOpen15m || metrics.atr15mIntraday || 25;
+  const distToOnh = Math.abs(metrics.onh - spot);
+  const distToOnl = Math.abs(spot - metrics.onl);
+  const nearOvernightExtreme = Math.min(distToOnh, distToOnl) <= Math.max(35, atr15 * 1.5);
+  const isVolatileSurface = Boolean(vol?.isNegativeVrp || (vol && vol.termRatio > 1.0) || (vol && vol.vvix >= 110));
+  const stopHuntHigh = Boolean(
+    plan.trader5Answers?.stopHuntProbability?.includes("HIGH") ||
+      layer1?.reversalVetoActive ||
+      isVolatileSurface ||
+      nearOvernightExtreme ||
+      smtHasDiv
+  );
+
+  const nearestSweepLabel =
+    distToOnh <= distToOnl
+      ? `Overnight High (${metrics.onh.toFixed(1)})`
+      : `Overnight Low (${metrics.onl.toFixed(1)})`;
+
+  const stopHunt: FuturesGameplan["stopHunt"] = stopHuntHigh
+    ? {
+        shouldWait: true,
+        badge: "YES — WAIT FOR STOP HUNT",
+        detail: smtHasDiv
+          ? `NQ/ES divergence active. Wait for price to sweep ${nearestSweepLabel} and snap back before entering.`
+          : `Price is near ${nearestSweepLabel}${isVolatileSurface ? " in elevated volatility" : ""}. Let the 9:30–9:33 AM sweep poke and reject first — don't buy/sell the first spike.`
+      }
+    : {
+        shouldWait: false,
+        badge: "WAIT FOR PULLBACK",
+        detail: `No extreme sweep trap right now, but still skip the first 3 minutes (09:30–09:33 ET) and enter on a clean pullback to VWAP or midpoint.`
+      };
+
+  const needsExtraSlRoom = Boolean(
+    isVolatileSurface || gex?.netGammaRegime === "NEGATIVE_GAMMA" || atr15 >= 32
+  );
+  const stopLoss: FuturesGameplan["stopLoss"] = needsExtraSlRoom
+    ? {
+        mode: "EXTRA_ROOM",
+        badge: "GIVE EXTRA ROOM (+5–8 pts past wick)",
+        detail: `15m swings are wide (~${atr15.toFixed(0)} pts${vol?.isNegativeVrp ? ", realized vol > implied" : ""}). Place your stop 5–8 pts beyond the swing wick so normal noise doesn't tag you.`
+      }
+    : {
+        mode: "AT_WICK",
+        badge: "AT THE WICK (+2–3 pts buffer)",
+        detail: `Volatility is normal (15m ATR ~${atr15.toFixed(0)} pts${gex?.netGammaRegime === "POSITIVE_GAMMA" ? ", +GEX dampening" : ""}). Putting your stop 2–3 pts beyond the sweep/swing wick is enough.`
+      };
+
+  const cmePhase = plan.cmePhase || brief.sessionInfo?.phase;
+  const timingTip =
+    cmePhase === "NY_OPEN_WINDOW"
+      ? "Open window live: wait for 09:34–09:48 ET pullback, avoid chasing."
+      : cmePhase === "POST_WINDOW_RECAP"
+      ? "09:30–10:00 ET prime window is closed — watch out for choppy afternoon fakeouts."
+      : "Wait 3 mins after 09:30 ET bell (09:30–09:33) before clicking.";
+
+  const newsTip = plan.newsBufferWarning
+    ? { label: "News", value: "High-impact release near open — flatten or lock breakeven before it hits.", tone: "rose" as const }
+    : { label: "News", value: "No red-folder US news inside the 09:30–10:00 ET window.", tone: "emerald" as const };
+
+  const gexTip = gex
+    ? gex.netGammaRegime === "POSITIVE_GAMMA"
+      ? { label: "Take Profit Style", value: "Positive Gamma: take profits at targets cleanly (bounces tend to fade back).", tone: "neutral" as const }
+      : { label: "Take Profit Style", value: "Negative Gamma: moves run faster; trail stops once in profit.", tone: "amber" as const }
+    : { label: "Daily Range", value: `Overnight used ${metrics.overnightRangeConsumedPercent.toFixed(0)}% of today's expected move.`, tone: "neutral" as const };
+
+  const sizeTip =
+    sizeMultiplier === 0
+      ? { label: "Risk Rule", value: "Stay flat (0x) — choppy / high-risk session.", tone: "rose" as const }
+      : sizeMultiplier === 0.5
+      ? { label: "Risk Rule", value: "Use 0.5x half size and stick to 1 clean setup.", tone: "amber" as const }
+      : { label: "Risk Rule", value: "Standard 1.0x size — 1–2 quality setups max, no revenge trading.", tone: "emerald" as const };
+
+  const gameplan: FuturesGameplan = {
+    stopHunt,
+    stopLoss,
+    keyTips: [
+      { label: "Timing", value: timingTip, tone: "neutral" },
+      newsTip,
+      gexTip,
+      sizeTip
+    ]
+  };
+
   return {
     direction,
     verdictTitle,
     verdictSubtitle,
     scoreSummary,
     riskStatus,
+    gameplan,
     quantFacts,
     bounceAreas: deduplicateAreas(bouncePool, 4).slice(0, 5),
     targetAreas: deduplicateAreas(targetPool, 4).slice(0, 5)

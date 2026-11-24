@@ -1,13 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTrades, addTrade, deleteTrade, computeJournalAnalytics } from "@/lib/db";
+import { getJournalTrades, addJournalTrade, deleteJournalTrade } from "@/lib/journal/store";
+import { computeJournalAnalytics } from "@/lib/db";
 import { computeDirectionalMaeMfe } from "@/lib/market/math";
+import { createClient } from "@/lib/supabase/server";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
+    const supabase = await createClient();
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId") || undefined;
+    let userId = searchParams.get("userId") || undefined;
 
-    const trades = getTrades(userId);
+    if (supabase) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return NextResponse.json(
+          { success: false, error: "Unauthorized: Please sign in to view the trade journal" },
+          { status: 401 }
+        );
+      }
+      userId = user.id;
+    }
+
+    const trades = await getJournalTrades(userId);
     const analytics = computeJournalAnalytics(userId);
 
     return NextResponse.json({
@@ -26,9 +45,26 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = await createClient();
+    let authenticatedUserId = "default";
+
+    if (supabase) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return NextResponse.json(
+          { success: false, error: "Unauthorized: Please sign in to log trades" },
+          { status: 401 }
+        );
+      }
+      authenticatedUserId = user.id;
+    }
+
     const body = await request.json();
     const {
-      userId = "minsung",
+      userId = authenticatedUserId,
       tradeDate,
       symbol = "NQ",
       direction,
@@ -53,7 +89,9 @@ export async function POST(request: NextRequest) {
       vrpSnapshot,
       inventoryPercentSnapshot,
       smtSnapshot = "",
-      biasVerdictSnapshot = ""
+      biasVerdictSnapshot = "",
+      sessionBarsJson,
+      screenshotData
     } = body;
 
     if (!tradeDate || !direction || entryPrice === undefined || stopPrice === undefined || exitPrice === undefined) {
@@ -86,40 +124,44 @@ export async function POST(request: NextRequest) {
     const actualPts = direction === "LONG" ? exit - entry : entry - exit;
     const calculatedPnl = actualPnlDollars !== undefined ? Number(actualPnlDollars) : actualPts * pointValue * Number(contracts);
 
-    const newTrade = addTrade({
-      userId,
-      tradeDate,
-      symbol,
-      direction,
-      entryPrice: entry,
-      stopPrice: stop,
-      targetPrice: Number(targetPrice || entry),
-      exitPrice: exit,
-      worstPrice: worst,
-      bestPrice: best,
-      contracts: Number(contracts),
-      plannedRiskDollars: Number(risk),
-      plannedTargetDollars: Number(plannedTargetDollars || risk * 2.2),
-      actualPnlDollars: calculatedPnl,
-      actualPnlR,
-      maeR: Number(body.maeR !== undefined && body.maeR !== "" ? body.maeR : (stoppedOut ? 1.0 : maeR)),
-      mfeR: Number(body.mfeR !== undefined && body.mfeR !== "" ? body.mfeR : Math.max(mfeR, actualPnlR > 0 ? actualPnlR : 0)),
-      exitEfficiencyPercent,
-      stoppedOut: Boolean(stoppedOut),
-      entryTimeET: entryTimeET || "09:35:00",
-      exitTimeET: exitTimeET || "09:50:00",
-      retraceLevelUsed,
-      notes,
-      vxnSnapshot: vxnSnapshot ? Number(vxnSnapshot) : undefined,
-      termRatioSnapshot: termRatioSnapshot ? Number(termRatioSnapshot) : undefined,
-      vvixSnapshot: vvixSnapshot ? Number(vvixSnapshot) : undefined,
-      vrpSnapshot: vrpSnapshot ? Number(vrpSnapshot) : undefined,
-      inventoryPercentSnapshot: inventoryPercentSnapshot ? Number(inventoryPercentSnapshot) : undefined,
-      smtSnapshot,
-      biasVerdictSnapshot
-    });
+    const newTrade = await addJournalTrade(
+      {
+        userId: authenticatedUserId,
+        tradeDate,
+        symbol,
+        direction,
+        entryPrice: entry,
+        stopPrice: stop,
+        targetPrice: Number(targetPrice || entry),
+        exitPrice: exit,
+        worstPrice: worst,
+        bestPrice: best,
+        contracts: Number(contracts),
+        plannedRiskDollars: Number(risk),
+        plannedTargetDollars: Number(plannedTargetDollars || risk * 2.2),
+        actualPnlDollars: calculatedPnl,
+        actualPnlR,
+        maeR: Number(body.maeR !== undefined && body.maeR !== "" ? body.maeR : (stoppedOut ? 1.0 : maeR)),
+        mfeR: Number(body.mfeR !== undefined && body.mfeR !== "" ? body.mfeR : Math.max(mfeR, actualPnlR > 0 ? actualPnlR : 0)),
+        exitEfficiencyPercent,
+        stoppedOut: Boolean(stoppedOut),
+        entryTimeET: entryTimeET || "09:35:00",
+        exitTimeET: exitTimeET || "09:50:00",
+        retraceLevelUsed,
+        notes,
+        vxnSnapshot: vxnSnapshot ? Number(vxnSnapshot) : undefined,
+        termRatioSnapshot: termRatioSnapshot ? Number(termRatioSnapshot) : undefined,
+        vvixSnapshot: vvixSnapshot ? Number(vvixSnapshot) : undefined,
+        vrpSnapshot: vrpSnapshot ? Number(vrpSnapshot) : undefined,
+        inventoryPercentSnapshot: inventoryPercentSnapshot ? Number(inventoryPercentSnapshot) : undefined,
+        smtSnapshot,
+        biasVerdictSnapshot,
+        sessionBarsJson
+      },
+      screenshotData
+    );
 
-    const analytics = computeJournalAnalytics(userId);
+    const analytics = computeJournalAnalytics(authenticatedUserId);
 
     return NextResponse.json({
       success: true,
@@ -137,9 +179,25 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const supabase = await createClient();
+    let authenticatedUserId: string | undefined = undefined;
+
+    if (supabase) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        return NextResponse.json(
+          { success: false, error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+      authenticatedUserId = user.id;
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
-    const userId = searchParams.get("userId") || undefined;
 
     if (!id) {
       return NextResponse.json(
@@ -148,8 +206,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const deleted = deleteTrade(id);
-    const analytics = computeJournalAnalytics(userId);
+    const deleted = await deleteJournalTrade(id);
+    const analytics = computeJournalAnalytics(authenticatedUserId);
 
     return NextResponse.json({
       success: deleted,

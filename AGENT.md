@@ -147,6 +147,14 @@
     - **Safe Walk-Forward Guardrail ($N \ge 30$):** Keeps live weights locked until $N \ge 30$ graded sessions. At $N \ge 30$, runs chronological 70/30 in-sample vs out-of-sample time-split walk-forward optimization with bounded weights ($[0.2, 2.4]$). Only surfaces proposed updates if out-of-sample accuracy or Brier score strictly improves on the held-out 30% test set.
   - **System Self-Audit UI (`/performance`):** Dedicated dashboard displaying overall hit rates, factor attribution leaderboard, proposed weight update diffs, model version history & rollback, and filterable pre-market archive vs actual outcome table.
   - **AI Journal Bot Cross-Linkage (`/journal`):** Cross-checks trader trade entries against MinBook's frozen calls and grades to diagnose root cause (e.g. *"MinBook called the direction right and tapped VWAP, but you entered early"* vs *"MinBook misread a negative-VRP chop day"*).
+- **Supabase Cloud Persistence & Auth Architecture (`src/lib/supabase/`, `src/lib/journal/store.ts`):**
+  - **Free-Tier Postgres & Storage:** Connected to Supabase project `qpzqftmybortbutxggmv` in `us-east-1` with reproducible migration schema at `supabase/migrations/0001_init_minbook.sql` and `0002_expand_system_predictions_roles.sql`.
+  - **Tables:** `user_settings`, `journal_trades`, `daily_predictions`, `prediction_grades`, `model_weights_history`.
+  - **Row Level Security (RLS):** Strict RLS enabled across all tables. `user_settings` and `journal_trades` isolate rows to `auth.uid() = user_id`. System prediction and audit tables allow public read with authenticated/cron updates.
+  - **Private Storage:** Private bucket `journal-screenshots` with folder-scoped RLS (`(storage.foldername(name))[1] = auth.uid()::text`). Screenshots are retrieved via short-lived signed URLs (`createSignedUrl(path, 3600)`).
+  - **Auth & SSR Protection:** Next.js 16 `src/proxy.ts` refreshes Supabase session tokens and protects `/journal`, redirecting unauthenticated visitors to `/login`. Dual client setup (`client.ts` for browser, `server.ts` for Server Components/Route Handlers).
+  - **Local Offline Fallback:** If `NEXT_PUBLIC_SUPABASE_URL` is omitted on localhost, the app automatically falls back to local SQLite without crashing.
+  - **Vercel Hobby Serverless Optimization:** Market data, calendar, and chart API routes emit `Cache-Control: public, s-maxage=60, stale-while-revalidate=120`. Client polling is throttled to 60 seconds with automated freeze on `document.hidden` and resume on tab focus.
 
 ## Testing & Verification
 - **Institutional UI/UX Visual Architecture:**

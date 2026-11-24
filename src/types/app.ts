@@ -1,7 +1,7 @@
 import { OpenBriefData } from "./market";
 
 export interface UserProfile {
-  id: string; // e.g., 'minsung', 'alex', 'jordan', 'default'
+  id: string; // e.g., 'default', 'prop-eval', 'conservative'
   name: string;
   defaultInstrument: "NQ" | "MNQ";
   riskBudgetDollars: number;
@@ -47,6 +47,8 @@ export interface TradeLogEntry {
   smtSnapshot?: string;
   biasVerdictSnapshot?: string;
   sessionBarsJson?: string;
+  screenshotPath?: string;
+  screenshotSignedUrl?: string;
   createdAt: string;
 }
 

@@ -4,14 +4,21 @@ import { getUSEconomicEvents } from "@/lib/market/economicCalendar";
 export async function GET() {
   try {
     const events = await getUSEconomicEvents();
-    return NextResponse.json({
-      success: true,
-      data: {
-        events,
-        source: "Forex Factory Delayed JSON Feed",
-        fetchedAt: new Date().toISOString()
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          events,
+          source: "Forex Factory Delayed JSON Feed",
+          fetchedAt: new Date().toISOString()
+        }
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+        }
       }
-    });
+    );
   } catch (error: any) {
     console.error("API /api/calendar error:", error);
     return NextResponse.json(

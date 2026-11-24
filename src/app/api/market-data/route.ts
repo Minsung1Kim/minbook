@@ -13,10 +13,17 @@ export async function GET(request: NextRequest) {
       forceRefresh: refresh
     });
 
-    return NextResponse.json({
-      success: true,
-      data: brief
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        data: brief
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+        }
+      }
+    );
   } catch (error: any) {
     console.error("API /api/market-data error:", error);
     return NextResponse.json(

@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const date = searchParams.get("date") || new Date().toISOString().split("T")[0];
-    const userId = searchParams.get("userId") || "minsung";
+    const userId = searchParams.get("userId") || "default";
 
     let state = getChecklist(date, userId);
     if (!state) {
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, userId = "minsung", state } = body;
+    const { date, userId = "default", state } = body;
 
     if (!date || !state) {
       return NextResponse.json({ success: false, error: "Date and state required" }, { status: 400 });

@@ -9,7 +9,7 @@ interface ChecklistCardProps {
   userId?: string;
 }
 
-export function ChecklistCard({ tradeDate, userId = "minsung" }: ChecklistCardProps) {
+export function ChecklistCard({ tradeDate, userId = "default" }: ChecklistCardProps) {
   const [state, setState] = useState<ChecklistState>({
     date: tradeDate,
     htfTrendConfirmed: false,

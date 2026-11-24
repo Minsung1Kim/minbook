@@ -444,6 +444,13 @@ All notable changes and architectural decisions are logged here.
   - `npm run build`: 14/14 routes compiled with 0 errors.
   - Verified live server on `http://localhost:3000` with HTTP 200 response.
 
+## [2026-11-24] - Comprehensive Quantitative Architecture Whitepaper & Deep Research Mandate
+- **Whitepaper Generation (`docs/MinBook_Quantitative_Architecture_and_Reasoning_Whitepaper.md` & `.pdf`):**
+  - Synthesized MinBook's entire thought process, mathematical models, market microstructure reasoning, level vitality sorting, volatility surface mechanics, dealer gamma translation, order flow footprinting, cross-index SMT divergence, 8-factor scorecard decision engine, and walk-forward self-improvement loop into an exhaustive, publication-grade quantitative research whitepaper.
+  - Rendered a multi-page PDF (`docs/MinBook_Quantitative_Architecture_and_Reasoning_Whitepaper.pdf`) using headless Chrome print-to-pdf with print CSS typography and zero code snippets.
+  - Formulated 5 targeted research directives for Gemini Deep Research (Synthetic 1m vs CME L2 order book depth, 0DTE options skew & intraday gamma elasticity, non-linear machine learning regime switching, cross-asset flow transmission with ZN/DX, and online Bayesian factor calibration).
+
+
 ## [2026-11-24] - Official Rebrand to MinBook & Public GitHub Preparation
 - **Full Rebrand (`OpenPulse` -> `MinBook` / `minbook`):**
   - Updated `package.json` with `"name": "minbook"` and updated description.
@@ -465,4 +472,26 @@ All notable changes and architectural decisions are logged here.
 - **Verification:**
   - `npm test`: 12/12 test suites and **71/71 tests passing**.
   - `npm run build`: 14/14 routes compiled cleanly in Next.js Turbopack.
+
+## [2026-11-24] - Comprehensive Security, Secrets, PII & Hardening Pass
+- **Deep Repository & Git History Audit:**
+  - Full-depth scan across all 11 commits and working tree files for secrets, private keys, API tokens, passwords, AWS/GitHub credentials.
+  - Confirmed 0 secrets, tokens, or credentials ever leaked in code or git history.
+  - Confirmed `.gitignore` comprehensively guards all `.env*` (preserving only `.env.example`), `.next/`, `node_modules/`, `data/`, `*.db`, `*.sqlite`, `*.pem`, `*.log`, and `.vercel`.
+- **Complete PII & Identity Sanitization:**
+  - Purged all hardcoded personal author names (`minsung`, `Minsung (Me)`, `Alex (Friend)`, `Jordan (Friend - Prop)`) across `types/app.ts`, `settings/page.tsx`, `api/journal/route.ts`, `api/checklist/route.ts`, `Dashboard.tsx`, `ChecklistCard.tsx`, and `lib/db/index.ts`.
+  - Replaced with standard institutional profiles: `"default"` (`Primary Trader`), `"prop-eval"` (`Prop Evaluation`), and `"conservative"` (`Conservative Account`).
+- **Defensive Security Headers Added (`next.config.ts`):**
+  - Added HTTP security headers for all routes: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-DNS-Prefetch-Control: on`, and `Permissions-Policy: camera=(), microphone=(), geolocation=()`.
+- **API Hardening & Schema Synchronization (`src/app/api/settings/route.ts`):**
+  - Added dual support in `/api/settings` for both wrapped `{ profile: data }` and flat `{ ...data }` payloads.
+  - Added dual payload response returning both `data: { profiles, current }` and flat `{ profiles, current }` for 100% schema alignment across settings page and dashboard.
+- **Environment Documentation (`.env.example`):**
+  - Added `CRON_SECRET=` documentation for securing `/api/cron/snapshot-and-grade` against unauthorized public invocation.
+- **Dependency Hygiene (`package.json`):**
+  - Moved `shadcn` CLI tooling to `devDependencies`.
+- **Verification:**
+  - `npm test`: 12/12 test suites and **71/71 tests passing**.
+  - `npx tsc --noEmit`: 0 TypeScript errors.
+  - `npm run build`: 17/17 routes compiled successfully in Next.js Turbopack.
 

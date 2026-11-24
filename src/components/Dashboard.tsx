@@ -36,10 +36,10 @@ export function Dashboard() {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
 
-  // Dynamic live auto-refresh state
+  // Dynamic live auto-refresh state (60s serverless guardrail)
   const [isAutoRefreshOn, setIsAutoRefreshOn] = useState<boolean>(true);
-  const [refreshIntervalSec] = useState<number>(10);
-  const [countdown, setCountdown] = useState<number>(10);
+  const [refreshIntervalSec] = useState<number>(60);
+  const [countdown, setCountdown] = useState<number>(60);
   const [secondsAgo, setSecondsAgo] = useState<number>(0);
   const lastFetchedTimeRef = useRef<number>(Date.now());
   const previousPriceRef = useRef<number | null>(null);
@@ -52,11 +52,12 @@ export function Dashboard() {
     fetch("/api/settings")
       .then((r) => r.json())
       .then((res) => {
-        if (res.success && res.data) {
-          setProfiles(res.data.profiles || []);
+        if (res.success) {
+          const profileList = res.data?.profiles || res.profiles || [];
+          setProfiles(profileList);
           const active =
-            (res.data.profiles || []).find((p: UserProfile) => p.id === "minsung") ||
-            res.data.profiles?.[0];
+            profileList.find((p: UserProfile) => p.id === "default") ||
+            profileList[0];
           setCurrentProfile(active || null);
         }
       })
@@ -116,6 +117,11 @@ export function Dashboard() {
     if (!isAutoRefreshOn) return;
 
     const timer = setInterval(() => {
+      // Pause polling automatically whenever document is hidden (background tab)
+      if (typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
       const elapsed = Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000);
       setSecondsAgo(elapsed);
 
@@ -128,7 +134,22 @@ export function Dashboard() {
       });
     }, 1000);
 
-    return () => clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        const elapsed = Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000);
+        if (elapsed >= refreshIntervalSec) {
+          fetchBrief();
+          setCountdown(refreshIntervalSec);
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [isAutoRefreshOn, fetchBrief, refreshIntervalSec]);
 
   const quote = brief?.quote;
@@ -471,7 +492,7 @@ export function Dashboard() {
 
                     <ChecklistCard
                       tradeDate={brief.tradeDate}
-                      userId={currentProfile?.id || "minsung"}
+                      userId={currentProfile?.id || "default"}
                     />
                   </TabsContent>
 

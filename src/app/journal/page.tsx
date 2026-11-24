@@ -246,6 +246,7 @@ export function JournalPage() {
         currentBrief?.intradayBars && currentBrief.intradayBars.length > 0
           ? JSON.stringify(currentBrief.intradayBars)
           : undefined,
+      screenshotData: screenshotData || undefined,
     };
 
     try {
@@ -778,6 +779,22 @@ export function JournalPage() {
                     />
                   </div>
                 </div>
+
+                {/* Attached Screenshot (Supabase Storage) */}
+                {selectedTrade.screenshotSignedUrl && (
+                  <div className="space-y-1.5 pt-1">
+                    <span className="font-semibold text-zinc-400 uppercase text-[10px] tracking-wider block">
+                      Execution Screenshot (Supabase Storage)
+                    </span>
+                    <div className="rounded-lg border border-zinc-800/80 overflow-hidden bg-black p-1">
+                      <img
+                        src={selectedTrade.screenshotSignedUrl}
+                        alt="Trade screenshot"
+                        className="w-full max-h-72 object-contain rounded"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* AI Journal Bot Diagnosis */}
                 {(() => {

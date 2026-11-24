@@ -15,7 +15,7 @@ import {
 
 export function SettingsPage() {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<string>("minsung");
+  const [activeProfileId, setActiveProfileId] = useState<string>("default");
   const [loading, setLoading] = useState<boolean>(true);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 

@@ -23,13 +23,20 @@ export async function GET(request: NextRequest) {
       providerName = fallback.name;
     }
 
-    return NextResponse.json({
-      success: true,
-      symbol,
-      interval,
-      provider: providerName,
-      bars
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        symbol,
+        interval,
+        provider: providerName,
+        bars
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+        }
+      }
+    );
   } catch (error: any) {
     console.error("API /api/market-data/chart error:", error);
     return NextResponse.json(

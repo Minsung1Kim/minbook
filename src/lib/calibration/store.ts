@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db/index";
+import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   DailyPrediction,
   PredictionGrade,
@@ -447,11 +448,337 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
   }
 }
 
+export class SupabaseCalibrationRepository implements ICalibrationRepository {
+  private client: SupabaseClient;
+
+  constructor(client: SupabaseClient) {
+    this.client = client;
+  }
+
+  async savePrediction(pred: DailyPrediction): Promise<DailyPrediction> {
+    const record = {
+      id: pred.id,
+      target_trade_date: pred.targetTradeDate,
+      frozen_at_et: pred.frozenAtEt,
+      model_version: pred.modelVersion,
+      spot_at_freeze: pred.spotAtFreeze,
+      bias_verdict: pred.biasVerdict,
+      confidence_tier: pred.confidenceTier,
+      archetype: pred.archetype,
+      stop_hunt_likelihood: pred.stopHuntLikelihood,
+      stop_hunt_target_level: pred.stopHuntTargetLevel ?? null,
+      primary_retrace_levels_json: pred.primaryRetraceLevels,
+      liquidity_draws_json: pred.liquidityDraws,
+      regime_inputs_json: pred.regimeInputs,
+      status: pred.status,
+      created_at: pred.createdAt || new Date().toISOString()
+    };
+
+    const { error } = await this.client
+      .from("daily_predictions")
+      .upsert(record, { onConflict: "target_trade_date" });
+
+    if (error) {
+      console.error("Supabase savePrediction error:", error);
+      throw new Error(`Failed to save prediction: ${error.message}`);
+    }
+
+    return pred;
+  }
+
+  async getPredictionByDate(targetTradeDate: string): Promise<DailyPrediction | null> {
+    const { data, error } = await this.client
+      .from("daily_predictions")
+      .select("*")
+      .eq("target_trade_date", targetTradeDate)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return this.mapPredictionRow(data);
+  }
+
+  async getAllPredictions(limit = 100): Promise<DailyPrediction[]> {
+    const { data, error } = await this.client
+      .from("daily_predictions")
+      .select("*")
+      .order("target_trade_date", { ascending: false })
+      .limit(limit);
+
+    if (error || !data) return [];
+    return data.map((r) => this.mapPredictionRow(r));
+  }
+
+  async getPendingPredictions(): Promise<DailyPrediction[]> {
+    const { data, error } = await this.client
+      .from("daily_predictions")
+      .select("*")
+      .eq("status", "PENDING_GRADE")
+      .order("target_trade_date", { ascending: true });
+
+    if (error || !data) return [];
+    return data.map((r) => this.mapPredictionRow(r));
+  }
+
+  async updatePredictionStatus(id: string, status: PredictionStatus): Promise<void> {
+    await this.client
+      .from("daily_predictions")
+      .update({ status })
+      .eq("id", id);
+  }
+
+  async saveGrade(grade: PredictionGrade): Promise<PredictionGrade> {
+    const record = {
+      id: grade.id,
+      target_trade_date: grade.targetTradeDate,
+      prediction_id: grade.predictionId,
+      open_price_930: grade.openPrice930,
+      window_high: grade.windowHigh,
+      window_low: grade.windowLow,
+      window_close_1000: grade.windowClose1000,
+      bias_correct: grade.biasCorrect,
+      favorable_excursion_pts: grade.favorableExcursionPts,
+      adverse_excursion_pts: grade.adverseExcursionPts,
+      retrace_tapped_json: grade.retraceTapped,
+      stop_hunt_occurred: grade.stopHuntOccurred,
+      liquidity_draw_hit_json: grade.liquidityDrawHit,
+      chop_warning_correct: grade.chopWarningCorrect,
+      brier_score: grade.brierScore,
+      composite_score: grade.compositeScore,
+      graded_at: grade.gradedAt || new Date().toISOString()
+    };
+
+    const { error } = await this.client
+      .from("prediction_grades")
+      .upsert(record, { onConflict: "target_trade_date" });
+
+    if (error) {
+      console.error("Supabase saveGrade error:", error);
+      throw new Error(`Failed to save grade: ${error.message}`);
+    }
+
+    return grade;
+  }
+
+  async getGradeByDate(targetTradeDate: string): Promise<PredictionGrade | null> {
+    const { data, error } = await this.client
+      .from("prediction_grades")
+      .select("*")
+      .eq("target_trade_date", targetTradeDate)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return this.mapGradeRow(data);
+  }
+
+  async getAllGrades(): Promise<PredictionGrade[]> {
+    const { data, error } = await this.client
+      .from("prediction_grades")
+      .select("*")
+      .order("target_trade_date", { ascending: false });
+
+    if (error || !data) return [];
+    return data.map((r) => this.mapGradeRow(r));
+  }
+
+  async getGradedHistory(): Promise<Array<{ prediction: DailyPrediction; grade: PredictionGrade }>> {
+    const [preds, grades] = await Promise.all([
+      this.getAllPredictions(200),
+      this.getAllGrades()
+    ]);
+
+    const gradeMap = new Map(grades.map((g) => [g.targetTradeDate, g]));
+    const result: Array<{ prediction: DailyPrediction; grade: PredictionGrade }> = [];
+
+    for (const pred of preds) {
+      const grade = gradeMap.get(pred.targetTradeDate);
+      if (grade) {
+        result.push({ prediction: pred, grade });
+      }
+    }
+
+    return result;
+  }
+
+  async getAuditHistory(limit = 50): Promise<Array<{ prediction: DailyPrediction; grade: PredictionGrade | null }>> {
+    const [preds, grades] = await Promise.all([
+      this.getAllPredictions(limit),
+      this.getAllGrades()
+    ]);
+
+    const gradeMap = new Map(grades.map((g) => [g.targetTradeDate, g]));
+    return preds.map((pred) => ({
+      prediction: pred,
+      grade: gradeMap.get(pred.targetTradeDate) || null
+    }));
+  }
+
+  async getActiveModelWeights(): Promise<ModelWeightsRecord> {
+    const { data } = await this.client
+      .from("model_weights_history")
+      .select("*")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (data) {
+      return this.mapWeightsRow(data);
+    }
+
+    return {
+      id: "weight_v1.0",
+      version: "v1.0",
+      isActive: true,
+      weights: { ...DEFAULT_MODEL_WEIGHTS },
+      sampleSizeUsed: 0,
+      outOfSampleAccuracy: 0,
+      changeSummary: "Default baseline model weights",
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  async saveModelWeights(record: Omit<ModelWeightsRecord, "id" | "createdAt">): Promise<ModelWeightsRecord> {
+    const id = `weight_${record.version}`;
+    const createdAt = new Date().toISOString();
+
+    if (record.isActive) {
+      await this.client
+        .from("model_weights_history")
+        .update({ is_active: false })
+        .neq("id", "");
+    }
+
+    const newRecord = {
+      id,
+      version: record.version,
+      is_active: record.isActive,
+      weights_json: record.weights,
+      sample_size_used: record.sampleSizeUsed,
+      out_of_sample_accuracy: record.outOfSampleAccuracy,
+      change_summary: record.changeSummary,
+      created_at: createdAt
+    };
+
+    const { error } = await this.client
+      .from("model_weights_history")
+      .upsert(newRecord, { onConflict: "version" });
+
+    if (error) {
+      throw new Error(`Failed to save model weights: ${error.message}`);
+    }
+
+    return {
+      ...record,
+      id,
+      createdAt
+    };
+  }
+
+  async getAllModelWeightsHistory(): Promise<ModelWeightsRecord[]> {
+    const { data } = await this.client
+      .from("model_weights_history")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!data) return [];
+    return data.map((r) => this.mapWeightsRow(r));
+  }
+
+  async setActiveModelWeights(version: string): Promise<void> {
+    await this.client
+      .from("model_weights_history")
+      .update({ is_active: false })
+      .neq("id", "");
+
+    await this.client
+      .from("model_weights_history")
+      .update({ is_active: true })
+      .eq("version", version);
+  }
+
+  async seedSampleArchiveIfEmpty(): Promise<boolean> {
+    const { count } = await this.client
+      .from("daily_predictions")
+      .select("*", { count: "exact", head: true });
+
+    if (!count || count === 0) {
+      await seedSampleCalibrationArchive(this);
+      return true;
+    }
+    return false;
+  }
+
+  private mapPredictionRow(row: any): DailyPrediction {
+    return {
+      id: row.id,
+      targetTradeDate: typeof row.target_trade_date === "string" ? row.target_trade_date : new Date(row.target_trade_date).toISOString().split("T")[0],
+      frozenAtEt: row.frozen_at_et,
+      modelVersion: row.model_version,
+      spotAtFreeze: Number(row.spot_at_freeze),
+      biasVerdict: row.bias_verdict,
+      confidenceTier: row.confidence_tier,
+      archetype: row.archetype,
+      stopHuntLikelihood: row.stop_hunt_likelihood,
+      stopHuntTargetLevel: row.stop_hunt_target_level != null ? Number(row.stop_hunt_target_level) : null,
+      primaryRetraceLevels: typeof row.primary_retrace_levels_json === "string" ? JSON.parse(row.primary_retrace_levels_json) : row.primary_retrace_levels_json,
+      liquidityDraws: typeof row.liquidity_draws_json === "string" ? JSON.parse(row.liquidity_draws_json) : row.liquidity_draws_json,
+      regimeInputs: typeof row.regime_inputs_json === "string" ? JSON.parse(row.regime_inputs_json) : row.regime_inputs_json,
+      status: row.status as PredictionStatus,
+      createdAt: row.created_at
+    };
+  }
+
+  private mapGradeRow(row: any): PredictionGrade {
+    return {
+      id: row.id,
+      targetTradeDate: typeof row.target_trade_date === "string" ? row.target_trade_date : new Date(row.target_trade_date).toISOString().split("T")[0],
+      predictionId: row.prediction_id,
+      openPrice930: Number(row.open_price_930),
+      windowHigh: Number(row.window_high),
+      windowLow: Number(row.window_low),
+      windowClose1000: Number(row.window_close_1000),
+      biasCorrect: Boolean(row.bias_correct),
+      favorableExcursionPts: Number(row.favorable_excursion_pts),
+      adverseExcursionPts: Number(row.adverse_excursion_pts),
+      retraceTapped: typeof row.retrace_tapped_json === "string" ? JSON.parse(row.retrace_tapped_json) : row.retrace_tapped_json,
+      stopHuntOccurred: Boolean(row.stop_hunt_occurred),
+      liquidityDrawHit: typeof row.liquidity_draw_hit_json === "string" ? JSON.parse(row.liquidity_draw_hit_json) : row.liquidity_draw_hit_json,
+      chopWarningCorrect: Boolean(row.chop_warning_correct),
+      brierScore: Number(row.brier_score),
+      compositeScore: Number(row.composite_score),
+      gradedAt: row.graded_at
+    };
+  }
+
+  private mapWeightsRow(row: any): ModelWeightsRecord {
+    return {
+      id: row.id,
+      version: row.version,
+      isActive: Boolean(row.is_active),
+      weights: typeof row.weights_json === "string" ? JSON.parse(row.weights_json) : row.weights_json,
+      sampleSizeUsed: Number(row.sample_size_used || 0),
+      outOfSampleAccuracy: Number(row.out_of_sample_accuracy || 0),
+      changeSummary: row.change_summary || "",
+      createdAt: row.created_at
+    };
+  }
+}
+
 // Global Singleton Instance
 let repoInstance: ICalibrationRepository | null = null;
 export function getCalibrationRepository(): ICalibrationRepository {
   if (!repoInstance) {
-    repoInstance = new SqliteCalibrationRepository();
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey =
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && supabaseKey) {
+      const client = createSupabaseClient(supabaseUrl, supabaseKey);
+      repoInstance = new SupabaseCalibrationRepository(client);
+    } else {
+      repoInstance = new SqliteCalibrationRepository();
+    }
   }
   return repoInstance;
 }

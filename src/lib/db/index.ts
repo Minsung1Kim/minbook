@@ -50,7 +50,7 @@ export function getDb(): DatabaseSync {
 
     CREATE TABLE IF NOT EXISTS trades (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL DEFAULT 'minsung',
+      user_id TEXT NOT NULL DEFAULT 'default',
       trade_date TEXT NOT NULL,
       symbol TEXT NOT NULL DEFAULT 'NQ',
       direction TEXT NOT NULL,
@@ -131,9 +131,9 @@ export function getDb(): DatabaseSync {
     `);
 
     const now = new Date().toISOString();
-    insertProfile.run("minsung", "Minsung (Me)", "NQ", 250, 550, 1, 300, 2500, "1 trade/day NQ continuation specialist. Enforce $250 stop discipline.", now);
-    insertProfile.run("alex", "Alex (Friend)", "MNQ", 200, 500, 1, 200, 1500, "MNQ precision scaling. 2-4 contracts with 25pt buffer.", now);
-    insertProfile.run("jordan", "Jordan (Friend - Prop)", "NQ", 300, 600, 1, 400, 2000, "50k Prop account evaluation rule-set. Hard 1-trade rule.", now);
+    insertProfile.run("default", "Primary Trader", "NQ", 250, 550, 1, 300, 2500, "1 trade/day NQ continuation specialist. Enforce $250 stop discipline.", now);
+    insertProfile.run("prop-eval", "Prop Evaluation", "MNQ", 200, 500, 1, 200, 1500, "MNQ precision scaling. 2-4 contracts with 25pt buffer.", now);
+    insertProfile.run("conservative", "Conservative Account", "NQ", 300, 600, 1, 400, 2000, "50k Prop account evaluation rule-set. Hard 1-trade rule.", now);
   }
 
   // Seed initial trades if empty so MAE/MFE analytics are immediately useful
@@ -158,7 +158,7 @@ function seedInitialTrades(db: DatabaseSync) {
   const initialTrades = [
     {
       id: "tr-001",
-      userId: "minsung",
+      userId: "default",
       tradeDate: "2026-11-19",
       symbol: "NQ" as const,
       direction: "LONG" as const,
@@ -182,7 +182,7 @@ function seedInitialTrades(db: DatabaseSync) {
     },
     {
       id: "tr-002",
-      userId: "minsung",
+      userId: "default",
       tradeDate: "2026-11-20",
       symbol: "NQ" as const,
       direction: "SHORT" as const,
@@ -206,7 +206,7 @@ function seedInitialTrades(db: DatabaseSync) {
     },
     {
       id: "tr-003",
-      userId: "minsung",
+      userId: "default",
       tradeDate: "2026-11-21",
       symbol: "NQ" as const,
       direction: "LONG" as const,
@@ -230,7 +230,7 @@ function seedInitialTrades(db: DatabaseSync) {
     },
     {
       id: "tr-004",
-      userId: "minsung",
+      userId: "default",
       tradeDate: "2026-11-22",
       symbol: "NQ" as const,
       direction: "LONG" as const,
@@ -268,7 +268,7 @@ function seedInitialTrades(db: DatabaseSync) {
 
 export function getProfiles(): UserProfile[] {
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM profiles ORDER BY id = 'minsung' DESC, name ASC").all() as any[];
+  const rows = db.prepare("SELECT * FROM profiles ORDER BY id = 'default' DESC, name ASC").all() as any[];
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -646,7 +646,7 @@ export function getRecentBriefs(limit = 10): Array<{ id: string; tradeDate: stri
 
 // ----------------- Checklist Repositories -----------------
 
-export function getChecklist(tradeDate: string, userId: string = "minsung"): ChecklistState | null {
+export function getChecklist(tradeDate: string, userId: string = "default"): ChecklistState | null {
   const db = getDb();
   const row = db.prepare("SELECT state_json FROM checklists WHERE trade_date = ? AND user_id = ?").get(tradeDate, userId) as any;
   if (!row) return null;
@@ -657,7 +657,7 @@ export function getChecklist(tradeDate: string, userId: string = "minsung"): Che
   }
 }
 
-export function saveChecklist(tradeDate: string, userId: string = "minsung", state: ChecklistState): void {
+export function saveChecklist(tradeDate: string, userId: string = "default", state: ChecklistState): void {
   const db = getDb();
   const now = new Date().toISOString();
   db.prepare(`

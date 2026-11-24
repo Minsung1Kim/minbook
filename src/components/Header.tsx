@@ -3,12 +3,13 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { RefreshCw, Activity, BookOpen, Target, Clock } from "lucide-react";
+import { RefreshCw, Activity, BookOpen, Target, Clock, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { DataStatus } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import { getCMESessionInfo, CMESessionInfo } from "@/lib/market/sessionClock";
 import { useTimezone } from "@/context/TimezoneContext";
 import { SupportedTimezone } from "@/lib/market/timezone";
+import { createClient } from "@/lib/supabase/client";
 
 interface HeaderProps {
   lastUpdated?: string;
@@ -47,6 +48,24 @@ export function Header({
   const { timezone, setTimezone, timezoneCode, config } = useTimezone();
   const [currentTime, setCurrentTime] = useState<string>("");
   const [sessionInfo, setSessionInfo] = useState<CMESessionInfo | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ email?: string } | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    if (!supabase) return;
+
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUser(data.user);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCurrentUser(session?.user || null);
+    });
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     function updateClock() {
@@ -246,6 +265,37 @@ export function Header({
               className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-zinc-200" : ""}`}
             />
           </button>
+
+          {/* Auth Controls */}
+          {currentUser ? (
+            <div className="flex items-center space-x-1.5 pl-2 border-l border-zinc-800">
+              <span
+                className="hidden xl:inline text-[11px] font-mono text-zinc-400 truncate max-w-[120px]"
+                title={currentUser.email}
+              >
+                {currentUser.email?.split("@")[0]}
+              </span>
+              <Link
+                href="/auth/signout"
+                className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center space-x-1"
+                title="Sign Out"
+              >
+                <LogOut className="w-3 h-3" />
+                <span className="hidden sm:inline">Sign Out</span>
+              </Link>
+            </div>
+          ) : (
+            <div className="flex items-center pl-2 border-l border-zinc-800">
+              <Link
+                href="/login"
+                className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center space-x-1"
+                title="Sign In"
+              >
+                <LogIn className="w-3 h-3" />
+                <span className="hidden sm:inline">Sign In</span>
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     </header>

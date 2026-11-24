@@ -12,15 +12,15 @@ import {
 export { type ICalibrationRepository };
 
 export const DEFAULT_MODEL_WEIGHTS: Record<string, number> = {
-  htfTrend: 1.0,
-  vwapAlignment: 1.0,
-  overnightInventory: 1.0,
-  openingGap: 1.0,
-  smtDivergence: 1.0,
-  volatilitySurface: 1.0,
-  macroRegime: 1.0,
-  gexRegime: 1.0
+  compositeLocation: 1.0,
+  smtBreadth: 1.0,
+  macroImpulse: 1.0,
+  openingFlow: 1.0
 };
+
+export function isLegacySyntheticSeedPrediction(targetTradeDate: string, frozenAtEt?: string): boolean {
+  return targetTradeDate < "2026-11-24" && frozenAtEt === `${targetTradeDate}T09:25:00.000Z`;
+}
 
 export class SqliteCalibrationRepository implements ICalibrationRepository {
   private db: DatabaseSync;
@@ -265,7 +265,13 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
              g.stop_hunt_occurred as g_stop_hunt_occurred,
              g.liquidity_draw_hit_json as g_liquidity_draw_hit_json,
              g.chop_warning_correct as g_chop_warning_correct,
-             g.brier_score as g_brier_score, g.composite_score as g_composite_score,
+             g.brier_score as g_brier_score, g.log_score as g_log_score,
+             g.composite_score as g_composite_score,
+             g.triple_barrier_outcome as g_triple_barrier_outcome,
+             g.realized_net_r as g_realized_net_r,
+             g.net_pnl_dollars as g_net_pnl_dollars,
+             g.fill_price as g_fill_price, g.fill_time_et as g_fill_time_et,
+             g.exit_price as g_exit_price, g.exit_time_et as g_exit_time_et,
              g.graded_at as g_graded_at
       FROM daily_predictions p
       INNER JOIN prediction_grades g ON p.target_trade_date = g.target_trade_date
@@ -290,7 +296,15 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
         liquidity_draw_hit_json: r.g_liquidity_draw_hit_json,
         chop_warning_correct: r.g_chop_warning_correct,
         brier_score: r.g_brier_score,
+        log_score: r.g_log_score,
         composite_score: r.g_composite_score,
+        triple_barrier_outcome: r.g_triple_barrier_outcome,
+        realized_net_r: r.g_realized_net_r,
+        net_pnl_dollars: r.g_net_pnl_dollars,
+        fill_price: r.g_fill_price,
+        fill_time_et: r.g_fill_time_et,
+        exit_price: r.g_exit_price,
+        exit_time_et: r.g_exit_time_et,
         graded_at: r.g_graded_at
       });
       return { prediction: pred, grade };
@@ -387,23 +401,10 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
   }
 
   // ---------------------------------------------------------------------------
-  // Seeding
+  // Seeding (Disabled to keep audit 100% real and uncontaminated)
   // ---------------------------------------------------------------------------
   async seedSampleArchiveIfEmpty(): Promise<boolean> {
-    const countPred = this.db.prepare("SELECT COUNT(*) as cnt FROM daily_predictions").get() as any;
-    const countGrades = this.db.prepare("SELECT COUNT(*) as cnt FROM prediction_grades").get() as any;
-    if (countPred && countPred.cnt >= 30 && countGrades && countGrades.cnt >= 30) {
-      return false;
-    }
-
-    // Clean any partial seed
-    if (countGrades && countGrades.cnt < 30) {
-      this.db.prepare("DELETE FROM prediction_grades").run();
-      this.db.prepare("DELETE FROM daily_predictions WHERE id LIKE 'pred_%'").run();
-    }
-
-    await seedSampleCalibrationArchive(this);
-    return true;
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -481,6 +482,13 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
   }
 
   async savePrediction(pred: DailyPrediction): Promise<DailyPrediction> {
+    const existing = await this.getPredictionByDate(pred.targetTradeDate);
+    if (existing) {
+      throw new Error(
+        `Immutable Freeze Error: Prediction already exists and is frozen for trade date ${pred.targetTradeDate}. Overwriting is forbidden to prevent hindsight bias.`
+      );
+    }
+
     const record = {
       id: pred.id,
       target_trade_date: pred.targetTradeDate,
@@ -501,7 +509,7 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
 
     const { error } = await this.client
       .from("daily_predictions")
-      .upsert(record, { onConflict: "target_trade_date" });
+      .insert(record);
 
     if (error) {
       console.error("Supabase savePrediction error:", error);
@@ -519,7 +527,11 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       .maybeSingle();
 
     if (error || !data) return null;
-    return this.mapPredictionRow(data);
+    const mapped = this.mapPredictionRow(data);
+    if (isLegacySyntheticSeedPrediction(mapped.targetTradeDate, mapped.frozenAtEt)) {
+      return null;
+    }
+    return mapped;
   }
 
   async getAllPredictions(limit = 100): Promise<DailyPrediction[]> {
@@ -530,7 +542,9 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       .limit(limit);
 
     if (error || !data) return [];
-    return data.map((r) => this.mapPredictionRow(r));
+    return data
+      .map((r) => this.mapPredictionRow(r))
+      .filter((p) => !isLegacySyntheticSeedPrediction(p.targetTradeDate, p.frozenAtEt));
   }
 
   async getPendingPredictions(): Promise<DailyPrediction[]> {
@@ -541,7 +555,9 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       .order("target_trade_date", { ascending: true });
 
     if (error || !data) return [];
-    return data.map((r) => this.mapPredictionRow(r));
+    return data
+      .map((r) => this.mapPredictionRow(r))
+      .filter((p) => !isLegacySyntheticSeedPrediction(p.targetTradeDate, p.frozenAtEt));
   }
 
   async updatePredictionStatus(id: string, status: PredictionStatus): Promise<void> {
@@ -568,7 +584,15 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       liquidity_draw_hit_json: grade.liquidityDrawHit,
       chop_warning_correct: grade.chopWarningCorrect,
       brier_score: grade.brierScore,
+      log_score: grade.logScore ?? null,
       composite_score: grade.compositeScore,
+      triple_barrier_outcome: grade.tripleBarrierOutcome ?? null,
+      realized_net_r: grade.realizedNetR ?? null,
+      net_pnl_dollars: grade.netPnlDollars ?? null,
+      fill_price: grade.fillPrice ?? null,
+      fill_time_et: grade.fillTimeET ?? null,
+      exit_price: grade.exitPrice ?? null,
+      exit_time_et: grade.exitTimeET ?? null,
       graded_at: grade.gradedAt || new Date().toISOString()
     };
 
@@ -580,6 +604,8 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       console.error("Supabase saveGrade error:", error);
       throw new Error(`Failed to save grade: ${error.message}`);
     }
+
+    await this.updatePredictionStatus(grade.predictionId, "GRADED_OPEN_WINDOW");
 
     return grade;
   }
@@ -602,7 +628,11 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       .order("target_trade_date", { ascending: false });
 
     if (error || !data) return [];
-    return data.map((r) => this.mapGradeRow(r));
+    const preds = await this.getAllPredictions(200);
+    const validDates = new Set(preds.map((p) => p.targetTradeDate));
+    return data
+      .map((r) => this.mapGradeRow(r))
+      .filter((g) => validDates.has(g.targetTradeDate));
   }
 
   async getGradedHistory(): Promise<Array<{ prediction: DailyPrediction; grade: PredictionGrade }>> {
@@ -722,14 +752,6 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
   }
 
   async seedSampleArchiveIfEmpty(): Promise<boolean> {
-    const { count } = await this.client
-      .from("daily_predictions")
-      .select("*", { count: "exact", head: true });
-
-    if (!count || count === 0) {
-      await seedSampleCalibrationArchive(this);
-      return true;
-    }
     return false;
   }
 
@@ -770,7 +792,15 @@ export class SupabaseCalibrationRepository implements ICalibrationRepository {
       liquidityDrawHit: typeof row.liquidity_draw_hit_json === "string" ? JSON.parse(row.liquidity_draw_hit_json) : row.liquidity_draw_hit_json,
       chopWarningCorrect: Boolean(row.chop_warning_correct),
       brierScore: Number(row.brier_score),
+      logScore: row.log_score != null ? Number(row.log_score) : undefined,
       compositeScore: Number(row.composite_score),
+      tripleBarrierOutcome: row.triple_barrier_outcome || undefined,
+      realizedNetR: row.realized_net_r != null ? Number(row.realized_net_r) : undefined,
+      netPnlDollars: row.net_pnl_dollars != null ? Number(row.net_pnl_dollars) : undefined,
+      fillPrice: row.fill_price != null ? Number(row.fill_price) : undefined,
+      fillTimeET: row.fill_time_et || undefined,
+      exitPrice: row.exit_price != null ? Number(row.exit_price) : undefined,
+      exitTimeET: row.exit_time_et || undefined,
       gradedAt: row.graded_at
     };
   }

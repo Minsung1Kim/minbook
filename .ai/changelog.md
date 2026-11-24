@@ -624,3 +624,25 @@ All notable changes and architectural decisions are logged here.
     - Bootstrap upper 90% confidence bound and $N \ge 150 / N_{\text{wins}} \ge 75$ gate.
   - Full test suite passed: 15 test files, 103 tests passing (0 failures).
   - Production Next.js 16 build passed with 0 errors.
+
+## [2026-11-24] - System Revamp: Plain-English Quant Bias, Bounce/Target Areas, Screenshot-Only P&L Overlay Journal & Clean Audit
+- **Plain-English Quant Bias, Bounce Areas & Target Areas (`src/lib/market/plainEnglishBrief.ts`, `src/components/Dashboard.tsx`, `src/components/KeyLevelsTable.tsx`):**
+  - Streamlined `/` to focus directly on three essentials:
+    1. **Clear Bias + Quant Facts & Math:** Plain-English verdict (`BULLISH`, `BEARISH`, `CHOP / NEUTRAL`) with honest signal count (`X of 4 Core Quant Signals`) and scannable quant proof cards (`Price vs Fair Value`, `Overnight Positioning`, `NQ vs S&P 500 (SMT)`, `Options Dealer Gamma (GEX)`, `Volatility & Expected Range`, `Bonds & Dollar Macro`, `1m Buying vs Selling Flow`).
+    2. **Areas It Could Bounce From:** Deduplicated support/pullback zones (`Session VWAP`, `Overnight 50% Midpoint`, `Yesterday's Close`, `Prior POC/VAL`, `Options Put/Call Wall`, `5-Day 50%/61.8%`) with plain-English explanations and click-to-focus chart integration.
+    3. **Areas To Target:** Ranked upside/downside liquidity magnets (`Overnight High/Low`, `Yesterday's High/Low`, `Call/Put Walls`, `Expected Daily Move Straddle/1-SD`).
+  - Purged redundant/confusing dashboard clutter (`HowToUseNotice.tsx`, `LTFTradeCardView.tsx`, `Trader5CoreAnswersCard.tsx`, `ChecklistCard.tsx`, `RiskSizingCard.tsx`, and hardcoded `82%` conviction fallbacks).
+- **Screenshot-Only P&L Journal (`src/lib/journal/pnlOverlayReader.ts`, `src/app/journal/page.tsx`, `src/app/api/journal/route.ts`, `src/app/api/journal/analyze/route.ts`, `src/lib/journal/store.ts`, `src/lib/db/index.ts`):**
+  - Removed the manual `+ Log Trade` button, multi-field trade entry form, `sessionStorage` draft forwarding, and `TradeReplayChart.tsx`.
+  - Installed `tesseract.js` and built `pnlOverlayReader.ts`: detects clustered green and red P&L overlay bounding boxes on screenshots, extracts upscaled high-contrast crops, runs OCR (`parsePnlFromText`) with color-overlay sign resolution, and optionally supports Gemini Vision (`GEMINI_API_KEY`) in `/api/journal/analyze` without fabricating fallback results.
+  - Removed `seedInitialTrades` from `src/lib/db/index.ts` and fixed `/api/journal` analytics to compute metrics directly from live returned trades (`computeJournalAnalyticsFromTrades`).
+- **Clean & True Audit Pipeline (`src/lib/calibration/store.ts`, `grader.ts`, `optimizer.ts`, `src/app/api/calibration/audit/route.ts`, `src/app/performance/page.tsx`, `supabase/migrations/0003_audit_and_screenshot_journal.sql`):**
+  - Removed synthetic archive auto-seeding (`seedSampleArchiveIfEmpty`) from `computeCalibrationSummary` and repositories; filtered out pre-launch synthetic seed rows (`isLegacySyntheticSeedPrediction`) so Audit reflects 100% real frozen predictions only.
+  - Applied Supabase migration `0003_audit_and_screenshot_journal.sql` adding Triple-Barrier/Log Score columns to `prediction_grades` and screenshot P&L overlay columns to `journal_trades`.
+  - Fixed `SupabaseCalibrationRepository.savePrediction` to enforce immutability (never upsert-overwriting) and fixed `saveGrade` to persist all fields and update `daily_predictions.status` to `GRADED_OPEN_WINDOW`.
+  - Fixed `mapScorecardToFactorKeys` to capture all 4 active Layer 2 signals (including `openingFlow`), fixed `gradePendingPredictions` to prefer 1m bars and frozen ATR with a post-10:20 ET gate, and fixed `STAND ASIDE / HIGH VOL` grading to verify two-way whipsaws and compressed chop accurately.
+- **Verification:**
+  - `npx tsc --noEmit`: 0 TypeScript errors.
+  - `npm test`: 17/17 test files and **122/122 tests passing** (including `src/__tests__/revamp_features.test.ts`).
+  - `npm run build`: all 21 routes compiled cleanly.
+  - Live Supabase verification confirmed `2026-11-24` re-graded accurately (`GRADED_OPEN_WINDOW`, `bias_correct: true`, `chop_warning_correct: true`).

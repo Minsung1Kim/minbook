@@ -21,13 +21,14 @@ export interface RegimeInputsSnapshot {
   vixTermRatio?: number;
   vvix?: number;
   vrp?: number;
+  atr15m?: number;
   gexRegime?: string;
   gammaFlipNq?: number;
   overnightInventoryPct?: number;
   smtStatus?: string;
   stockBondCorr?: number;
   newsFlag?: boolean;
-  factorScores: Record<string, number>; // e.g. { htfTrend: 1, vwapAlignment: 1, ... }
+  factorScores: Record<string, number>; // e.g. { compositeLocation: 1, smtBreadth: 1, ... }
 }
 
 export interface DailyPrediction {
@@ -118,6 +119,12 @@ export interface CalibrationAuditSummary {
   totalPredictions: number;
   gradedSessions: number;
   pendingSessions: number;
+  directionalCallsCount?: number;
+  directionalCorrectCount?: number;
+  cautionCallsCount?: number;
+  cautionCorrectCount?: number;
+  avgBrierScore?: number;
+  totalSimulatedNetR?: number;
   overallBiasAccuracy: number; // 0 to 100
   retraceTapRate: number; // 0 to 100
   stopHuntAccuracy: number; // 0 to 100

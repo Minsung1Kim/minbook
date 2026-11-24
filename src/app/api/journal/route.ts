@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getJournalTrades, addJournalTrade, deleteJournalTrade } from "@/lib/journal/store";
-import { computeJournalAnalytics } from "@/lib/db";
-import { computeDirectionalMaeMfe } from "@/lib/market/math";
+import { computeJournalAnalyticsFromTrades } from "@/lib/db";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +18,7 @@ export async function GET(request: NextRequest) {
 
       if (!user) {
         return NextResponse.json(
-          { success: false, error: "Unauthorized: Please sign in to view the trade journal" },
+          { success: false, error: "Unauthorized: Please sign in to view your screenshot journal" },
           { status: 401 }
         );
       }
@@ -27,7 +26,7 @@ export async function GET(request: NextRequest) {
     }
 
     const trades = await getJournalTrades(userId);
-    const analytics = computeJournalAnalytics(userId);
+    const analytics = computeJournalAnalyticsFromTrades(trades);
 
     return NextResponse.json({
       success: true,
@@ -55,7 +54,7 @@ export async function POST(request: NextRequest) {
 
       if (!user) {
         return NextResponse.json(
-          { success: false, error: "Unauthorized: Please sign in to log trades" },
+          { success: false, error: "Unauthorized: Please sign in to save screenshots" },
           { status: 401 }
         );
       }
@@ -64,104 +63,71 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const {
-      userId = authenticatedUserId,
       tradeDate,
       symbol = "NQ",
-      direction,
-      entryPrice,
-      stopPrice,
-      targetPrice,
-      exitPrice,
-      worstPrice,
-      bestPrice,
-      contracts = 1,
-      plannedRiskDollars,
-      plannedTargetDollars,
       actualPnlDollars,
-      stoppedOut = false,
-      entryTimeET,
-      exitTimeET,
-      retraceLevelUsed = "",
+      overlayColor,
+      rawOcrText = "",
+      ocrConfidence = "MEDIUM",
       notes = "",
-      vxnSnapshot,
-      termRatioSnapshot,
-      vvixSnapshot,
-      vrpSnapshot,
-      inventoryPercentSnapshot,
-      smtSnapshot = "",
-      biasVerdictSnapshot = "",
-      sessionBarsJson,
-      screenshotData
+      screenshotData,
+      biasVerdictSnapshot = ""
     } = body;
 
-    if (!tradeDate || !direction || entryPrice === undefined || stopPrice === undefined || exitPrice === undefined) {
+    if (!tradeDate || actualPnlDollars === undefined || actualPnlDollars === null || isNaN(Number(actualPnlDollars))) {
       return NextResponse.json(
-        { success: false, error: "Missing required trade details (tradeDate, direction, prices)" },
+        { success: false, error: "Missing required tradeDate or P&L amount." },
         { status: 400 }
       );
     }
 
-    const entry = Number(entryPrice);
-    const stop = Number(stopPrice);
-    const exit = Number(exitPrice);
-    const worst = worstPrice !== undefined && worstPrice !== "" ? Number(worstPrice) : undefined;
-    const best = bestPrice !== undefined && bestPrice !== "" ? Number(bestPrice) : undefined;
+    if (!screenshotData || typeof screenshotData !== "string" || !screenshotData.startsWith("data:image/")) {
+      return NextResponse.json(
+        { success: false, error: "A valid trade screenshot image is required." },
+        { status: 400 }
+      );
+    }
 
-    const pointValue = symbol === "MNQ" ? 2 : 20;
-    const plannedRiskPts = Math.abs(entry - stop);
-    const risk = plannedRiskDollars || plannedRiskPts * pointValue * Number(contracts);
-
-    // Directional MAE / MFE computation
-    const { maeR, mfeR, actualPnlR, exitEfficiencyPercent } = computeDirectionalMaeMfe(
-      direction,
-      entry,
-      stop,
-      exit,
-      worst,
-      best
-    );
-
-    const actualPts = direction === "LONG" ? exit - entry : entry - exit;
-    const calculatedPnl = actualPnlDollars !== undefined ? Number(actualPnlDollars) : actualPts * pointValue * Number(contracts);
+    const pnl = Math.round(Number(actualPnlDollars) * 100) / 100;
+    const resolvedOverlayColor =
+      overlayColor === "GREEN" || overlayColor === "RED"
+        ? overlayColor
+        : pnl >= 0
+        ? "GREEN"
+        : "RED";
 
     const newTrade = await addJournalTrade(
       {
         userId: authenticatedUserId,
         tradeDate,
-        symbol,
-        direction,
-        entryPrice: entry,
-        stopPrice: stop,
-        targetPrice: Number(targetPrice || entry),
-        exitPrice: exit,
-        worstPrice: worst,
-        bestPrice: best,
-        contracts: Number(contracts),
-        plannedRiskDollars: Number(risk),
-        plannedTargetDollars: Number(plannedTargetDollars || risk * 2.2),
-        actualPnlDollars: calculatedPnl,
-        actualPnlR,
-        maeR: Number(body.maeR !== undefined && body.maeR !== "" ? body.maeR : (stoppedOut ? 1.0 : maeR)),
-        mfeR: Number(body.mfeR !== undefined && body.mfeR !== "" ? body.mfeR : Math.max(mfeR, actualPnlR > 0 ? actualPnlR : 0)),
-        exitEfficiencyPercent,
-        stoppedOut: Boolean(stoppedOut),
-        entryTimeET: entryTimeET || "09:35:00",
-        exitTimeET: exitTimeET || "09:50:00",
-        retraceLevelUsed,
-        notes,
-        vxnSnapshot: vxnSnapshot ? Number(vxnSnapshot) : undefined,
-        termRatioSnapshot: termRatioSnapshot ? Number(termRatioSnapshot) : undefined,
-        vvixSnapshot: vvixSnapshot ? Number(vvixSnapshot) : undefined,
-        vrpSnapshot: vrpSnapshot ? Number(vrpSnapshot) : undefined,
-        inventoryPercentSnapshot: inventoryPercentSnapshot ? Number(inventoryPercentSnapshot) : undefined,
-        smtSnapshot,
-        biasVerdictSnapshot,
-        sessionBarsJson
+        symbol: symbol === "MNQ" ? "MNQ" : "NQ",
+        direction: "SCREENSHOT",
+        entryPrice: 0,
+        stopPrice: 0,
+        targetPrice: 0,
+        exitPrice: 0,
+        contracts: 1,
+        plannedRiskDollars: 0,
+        plannedTargetDollars: 0,
+        actualPnlDollars: pnl,
+        actualPnlR: 0,
+        maeR: 0,
+        mfeR: 0,
+        stoppedOut: pnl < 0,
+        entryTimeET: "",
+        exitTimeET: "",
+        retraceLevelUsed: resolvedOverlayColor === "GREEN" ? "Green P&L Overlay" : "Red P&L Overlay",
+        notes: notes || "",
+        overlayColor: resolvedOverlayColor,
+        rawOcrText,
+        ocrConfidence,
+        biasVerdictSnapshot
       },
       screenshotData
     );
 
-    const analytics = computeJournalAnalytics(authenticatedUserId);
+    const allTrades = await getJournalTrades(authenticatedUserId);
+    const analytics = computeJournalAnalyticsFromTrades(allTrades);
 
     return NextResponse.json({
       success: true,
@@ -171,7 +137,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("API /api/journal POST error:", error);
     return NextResponse.json(
-      { success: false, error: error?.message || "Failed to log trade" },
+      { success: false, error: error?.message || "Failed to save screenshot P&L" },
       { status: 500 }
     );
   }
@@ -201,13 +167,14 @@ export async function DELETE(request: NextRequest) {
 
     if (!id) {
       return NextResponse.json(
-        { success: false, error: "Missing trade ID parameter" },
+        { success: false, error: "Missing entry ID parameter" },
         { status: 400 }
       );
     }
 
     const deleted = await deleteJournalTrade(id);
-    const analytics = computeJournalAnalytics(authenticatedUserId);
+    const allTrades = await getJournalTrades(authenticatedUserId);
+    const analytics = computeJournalAnalyticsFromTrades(allTrades);
 
     return NextResponse.json({
       success: deleted,
@@ -216,7 +183,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error: any) {
     console.error("API /api/journal DELETE error:", error);
     return NextResponse.json(
-      { success: false, error: error?.message || "Failed to delete trade" },
+      { success: false, error: error?.message || "Failed to delete entry" },
       { status: 500 }
     );
   }

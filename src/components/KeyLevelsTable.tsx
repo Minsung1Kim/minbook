@@ -82,29 +82,29 @@ export function computeLevelVitality(level: KeyLevel, currentPrice: number): Ran
   // 5. Plain English Day Trader Directive
   let traderDirective = "";
   if (short.includes("vwap")) {
-    traderDirective = "Primary institutional fair value benchmark. Look for 9:34 AM retrace bounce or clean displacement.";
+    traderDirective = "Institutional average price today — most common spot for pullbacks to bounce or rallies to stall.";
   } else if (short === "onh") {
-    traderDirective = "Buy-Side Liquidity pool (BSL). Watch for stop sweep fakeout or breakout continuation.";
+    traderDirective = "Overnight High — resting buy stops sit above here; acts as an upside magnet or sweep-and-reject zone.";
   } else if (short === "onl") {
-    traderDirective = "Sell-Side Liquidity pool (SSL). Watch for stop sweep spring or breakdown expansion.";
+    traderDirective = "Overnight Low — resting sell stops sit below here; acts as a downside magnet or sweep-and-bounce zone.";
   } else if (short === "pdc") {
-    traderDirective = "Prior Day Settlement Close. Buyers holding above = net long inventory in control.";
+    traderDirective = "Yesterday's 4:00 PM Close — major line in the sand between buyers and sellers.";
   } else if (short === "on mid") {
-    traderDirective = "Overnight 50% Midpoint. Prime discount entry zone for continuation long setups.";
+    traderDirective = "Halfway mark of the overnight range — common pullback bounce zone.";
   } else if (short.includes("htf 50")) {
-    traderDirective = "5-day 50% Midpoint. Major multi-day pivot for trend continuation.";
+    traderDirective = "5-day 50% midpoint — major multi-day pullback zone.";
   } else if (short.includes("htf 61.8")) {
-    traderDirective = "Golden Pocket discount. Deepest viable retrace before trend structure breaks.";
+    traderDirective = "5-day 61.8% retracement — deepest common pullback zone before trend weakens.";
   } else if (short === "pdh") {
-    traderDirective = "Prior Day High. Secondary expansion target for bullish trend day runners.";
+    traderDirective = "Yesterday's High — major upside target.";
   } else if (short === "pdl") {
-    traderDirective = "Prior Day Low. Secondary expansion target for bearish trend day runners.";
+    traderDirective = "Yesterday's Low — major downside target.";
   } else if (short.includes("lon high")) {
-    traderDirective = "European session peak. Acts as opening pre-market resistance or breakout flip.";
+    traderDirective = "London session high — early morning resistance or breakout target.";
   } else if (short.includes("lon low")) {
-    traderDirective = "European session floor. Acts as opening pre-market support or liquidity trap.";
+    traderDirective = "London session low — early morning support or breakdown target.";
   } else if (level.role === "EXPECTED MOVE") {
-    traderDirective = "Daily implied volatility boundary. High probability of mean-reversion if touched.";
+    traderDirective = "Options-implied daily move boundary — moves often pause or revert near here.";
   } else {
     traderDirective = level.note;
   }

@@ -118,6 +118,10 @@ export function getDb(): DatabaseSync {
     if (!colNames.has("smt_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN smt_snapshot TEXT DEFAULT '';");
     if (!colNames.has("bias_verdict_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN bias_verdict_snapshot TEXT DEFAULT '';");
     if (!colNames.has("session_bars_json")) db.exec("ALTER TABLE trades ADD COLUMN session_bars_json TEXT DEFAULT NULL;");
+    if (!colNames.has("overlay_color")) db.exec("ALTER TABLE trades ADD COLUMN overlay_color TEXT DEFAULT NULL;");
+    if (!colNames.has("raw_ocr_text")) db.exec("ALTER TABLE trades ADD COLUMN raw_ocr_text TEXT DEFAULT NULL;");
+    if (!colNames.has("ocr_confidence")) db.exec("ALTER TABLE trades ADD COLUMN ocr_confidence TEXT DEFAULT NULL;");
+    if (!colNames.has("screenshot_data")) db.exec("ALTER TABLE trades ADD COLUMN screenshot_data TEXT DEFAULT NULL;");
   } catch (err) {
     console.warn("Notice: trades table migration:", err);
   }
@@ -136,132 +140,8 @@ export function getDb(): DatabaseSync {
     insertProfile.run("conservative", "Conservative Account", "NQ", 300, 600, 1, 400, 2000, "50k Prop account evaluation rule-set. Hard 1-trade rule.", now);
   }
 
-  // Seed initial trades if empty so MAE/MFE analytics are immediately useful
-  const tradeCount = db.prepare("SELECT COUNT(*) as cnt FROM trades").get() as { cnt: number } | undefined;
-  if (!tradeCount || tradeCount.cnt === 0) {
-    seedInitialTrades(db);
-  }
-
   dbInstance = db;
   return dbInstance;
-}
-
-function seedInitialTrades(db: DatabaseSync) {
-  const insert = db.prepare(`
-    INSERT INTO trades (
-      id, user_id, trade_date, symbol, direction, entry_price, stop_price, target_price,
-      exit_price, contracts, planned_risk_dollars, planned_target_dollars, actual_pnl_dollars,
-      actual_pnl_r, mae_r, mfe_r, stopped_out, entry_time_et, exit_time_et, retrace_level_used, notes, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const initialTrades = [
-    {
-      id: "tr-001",
-      userId: "default",
-      tradeDate: "2026-11-19",
-      symbol: "NQ" as const,
-      direction: "LONG" as const,
-      entryPrice: 20950.0,
-      stopPrice: 20937.5, // 12.5 pts = $250
-      targetPrice: 20980.0, // 30 pts = $600 = 2.4R
-      exitPrice: 20980.0,
-      contracts: 1,
-      plannedRiskDollars: 250,
-      plannedTargetDollars: 600,
-      actualPnlDollars: 600,
-      actualPnlR: 2.4,
-      maeR: 0.28, // pulled back only 0.28R before launching
-      mfeR: 2.5,
-      stoppedOut: 0,
-      entryTimeET: "09:34:10",
-      exitTimeET: "09:48:22",
-      retraceLevelUsed: "Overnight Mid + Session VWAP",
-      notes: "Waited 4 mins for first drive to fail into VWAP. Clean bounce into PDH target.",
-      createdAt: "2026-11-19T10:05:00Z"
-    },
-    {
-      id: "tr-002",
-      userId: "default",
-      tradeDate: "2026-11-20",
-      symbol: "NQ" as const,
-      direction: "SHORT" as const,
-      entryPrice: 20880.0,
-      stopPrice: 20893.0, // 13 pts = $260
-      targetPrice: 20850.0, // 30 pts = $600
-      exitPrice: 20850.0,
-      contracts: 1,
-      plannedRiskDollars: 260,
-      plannedTargetDollars: 600,
-      actualPnlDollars: 600,
-      actualPnlR: 2.31,
-      maeR: 0.35,
-      mfeR: 2.6,
-      stoppedOut: 0,
-      entryTimeET: "09:36:45",
-      exitTimeET: "09:52:10",
-      retraceLevelUsed: "PDC Rejection",
-      notes: "London low broken pre-market. Retrace to PDC held as resistance.",
-      createdAt: "2026-11-20T10:01:00Z"
-    },
-    {
-      id: "tr-003",
-      userId: "default",
-      tradeDate: "2026-11-21",
-      symbol: "NQ" as const,
-      direction: "LONG" as const,
-      entryPrice: 21020.0,
-      stopPrice: 21007.5,
-      targetPrice: 21055.0,
-      exitPrice: 21007.5,
-      contracts: 1,
-      plannedRiskDollars: 250,
-      plannedTargetDollars: 700,
-      actualPnlDollars: -250,
-      actualPnlR: -1.0,
-      maeR: 1.0,
-      mfeR: 0.45,
-      stoppedOut: 1,
-      entryTimeET: "09:32:15",
-      exitTimeET: "09:35:50",
-      retraceLevelUsed: "ONH breakout retest",
-      notes: "Chased entry too early at 9:32 AM. Faked out by opening volatility whip. Need to wait for 9:34+.",
-      createdAt: "2026-11-21T09:40:00Z"
-    },
-    {
-      id: "tr-004",
-      userId: "default",
-      tradeDate: "2026-11-22",
-      symbol: "NQ" as const,
-      direction: "LONG" as const,
-      entryPrice: 21105.0,
-      stopPrice: 21092.5,
-      targetPrice: 21135.0,
-      exitPrice: 21135.0,
-      contracts: 1,
-      plannedRiskDollars: 250,
-      plannedTargetDollars: 600,
-      actualPnlDollars: 600,
-      actualPnlR: 2.4,
-      maeR: 0.22,
-      mfeR: 2.7,
-      stoppedOut: 0,
-      entryTimeET: "09:38:00",
-      exitTimeET: "09:56:40",
-      retraceLevelUsed: "HTF 50% Equilibrium Zone",
-      notes: "Patient entry at 9:38 AM after 10-point retrace into 50% discount zone.",
-      createdAt: "2026-11-22T10:15:00Z"
-    }
-  ];
-
-  for (const t of initialTrades) {
-    insert.run(
-      t.id, t.userId, t.tradeDate, t.symbol, t.direction, t.entryPrice, t.stopPrice,
-      t.targetPrice, t.exitPrice, t.contracts, t.plannedRiskDollars, t.plannedTargetDollars,
-      t.actualPnlDollars, t.actualPnlR, t.maeR, t.mfeR, t.stoppedOut, t.entryTimeET,
-      t.exitTimeET, t.retraceLevelUsed, t.notes, t.createdAt
-    );
-  }
 }
 
 // ----------------- Profile Repositories -----------------
@@ -384,6 +264,11 @@ export function getTrades(userId?: string): TradeLogEntry[] {
     smtSnapshot: r.smt_snapshot || "",
     biasVerdictSnapshot: r.bias_verdict_snapshot || "",
     sessionBarsJson: r.session_bars_json ?? undefined,
+    overlayColor: r.overlay_color ?? undefined,
+    rawOcrText: r.raw_ocr_text ?? undefined,
+    ocrConfidence: r.ocr_confidence ?? undefined,
+    screenshotDataUrl: r.screenshot_data ?? undefined,
+    screenshotSignedUrl: r.screenshot_data ?? undefined,
     createdAt: r.created_at
   }));
 }
@@ -398,8 +283,9 @@ export function addTrade(trade: Omit<TradeLogEntry, "id" | "createdAt">): TradeL
       id, user_id, trade_date, symbol, direction, entry_price, stop_price, target_price,
       exit_price, worst_price, best_price, contracts, planned_risk_dollars, planned_target_dollars, actual_pnl_dollars,
       actual_pnl_r, mae_r, mfe_r, exit_efficiency_percent, stopped_out, entry_time_et, exit_time_et, retrace_level_used, notes,
-      vxn_snapshot, term_ratio_snapshot, vvix_snapshot, vrp_snapshot, inventory_percent_snapshot, smt_snapshot, bias_verdict_snapshot, session_bars_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      vxn_snapshot, term_ratio_snapshot, vvix_snapshot, vrp_snapshot, inventory_percent_snapshot, smt_snapshot, bias_verdict_snapshot, session_bars_json,
+      overlay_color, raw_ocr_text, ocr_confidence, screenshot_data, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, trade.userId, trade.tradeDate, trade.symbol, trade.direction,
     trade.entryPrice, trade.stopPrice, trade.targetPrice, trade.exitPrice,
@@ -411,7 +297,9 @@ export function addTrade(trade: Omit<TradeLogEntry, "id" | "createdAt">): TradeL
     trade.retraceLevelUsed, trade.notes,
     trade.vxnSnapshot ?? null, trade.termRatioSnapshot ?? null, trade.vvixSnapshot ?? null,
     trade.vrpSnapshot ?? null, trade.inventoryPercentSnapshot ?? null,
-    trade.smtSnapshot ?? "", trade.biasVerdictSnapshot ?? "", trade.sessionBarsJson ?? null, createdAt
+    trade.smtSnapshot ?? "", trade.biasVerdictSnapshot ?? "", trade.sessionBarsJson ?? null,
+    trade.overlayColor ?? null, trade.rawOcrText ?? null, trade.ocrConfidence ?? null,
+    trade.screenshotDataUrl ?? null, createdAt
   );
 
   return {
@@ -450,6 +338,10 @@ export function computeBootstrapUpperP90(data: number[], numReplications = 1000,
 
 export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   const trades = getTrades(userId);
+  return computeJournalAnalyticsFromTrades(trades);
+}
+
+export function computeJournalAnalyticsFromTrades(trades: TradeLogEntry[]): JournalAnalytics {
 
   if (trades.length === 0) {
     return {
@@ -459,6 +351,10 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
       scratches: 0,
       winRatePercent: 0,
       totalPnlDollars: 0,
+      avgWinDollars: 0,
+      avgLossDollars: 0,
+      bestDayDollars: 0,
+      worstDayDollars: 0,
       avgPnlR: 0,
       profitFactor: 0,
       expectancyR: 0,
@@ -480,7 +376,7 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
         under75PctR: 0,
         severeDrawdown: 0
       },
-      recommendation: "Log your first 5-10 trades to build a genuine baseline."
+      recommendation: "Drop a trade screenshot to start tracking your P&L."
     };
   }
 
@@ -491,6 +387,8 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   let grossLossesDollars = 0;
   let totalPnlDollars = 0;
   let sumPnlR = 0;
+  let bestDayDollars = trades[0].actualPnlDollars;
+  let worstDayDollars = trades[0].actualPnlDollars;
 
   let sumMaeWinners = 0;
   let sumMaeLosers = 0;
@@ -509,6 +407,8 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
 
   for (const t of trades) {
     totalPnlDollars += t.actualPnlDollars;
+    if (t.actualPnlDollars > bestDayDollars) bestDayDollars = t.actualPnlDollars;
+    if (t.actualPnlDollars < worstDayDollars) worstDayDollars = t.actualPnlDollars;
     sumPnlR += t.actualPnlR;
     sumMfe += t.mfeR;
 
@@ -560,6 +460,8 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   const winRate = (wins / trades.length) * 100;
   const profitFactor = grossLossesDollars > 0 ? grossWinsDollars / grossLossesDollars : grossWinsDollars > 0 ? 99 : 0;
   const avgPnlR = sumPnlR / trades.length;
+  const avgWinDollars = wins > 0 ? Math.round((grossWinsDollars / wins) * 100) / 100 : 0;
+  const avgLossDollars = losses > 0 ? Math.round((grossLossesDollars / losses) * 100) / 100 : 0;
   const avgMaeWinners = wins > 0 ? sumMaeWinners / wins : 0;
   const avgMaeLosers = losses > 0 ? sumMaeLosers / losses : 0;
   const avgMfe = sumMfe / trades.length;
@@ -579,18 +481,7 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     upper90BootstrapMaeWinners = computeBootstrapUpperP90(winnerMaes, 1000, 0.90);
   }
 
-  let recommendation = "";
-  if (!isCalibrated) {
-    recommendation = `Collecting sample (${trades.length}/150 trades, ${wins}/75 winners). Do NOT prematurely tighten stops based on small-sample curve fitting. Honor your structural stop level.`;
-  } else if (upper90BootstrapMaeWinners !== undefined) {
-    if (upper90BootstrapMaeWinners <= 0.70) {
-      recommendation = `Calibrated (${trades.length} trades, ${wins} winners): Upper 90% bootstrap bound of winners' P90 MAE is ${upper90BootstrapMaeWinners.toFixed(2)}R (Point P90: ${percentile90MaeWinners?.toFixed(2) || "0.65"}R). Stops beyond ${upper90BootstrapMaeWinners.toFixed(2)}R can be tightened safely without truncating valid continuation trades.`;
-    } else {
-      recommendation = `Calibrated (${trades.length} trades, ${wins} winners): Upper 90% bootstrap bound of winners' P90 MAE is ${upper90BootstrapMaeWinners.toFixed(2)}R (Point P90: ${percentile90MaeWinners?.toFixed(2) || "0.65"}R). Retain standard structural stop — tightening would induce premature stop-outs during normal opening noise.`;
-    }
-  } else {
-    recommendation = "Maintain 1-trade discipline across your morning execution window.";
-  }
+  const recommendation = `${wins} green / ${losses} red sessions recorded.`;
 
   return {
     totalTrades: trades.length,
@@ -598,7 +489,11 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     losses,
     scratches,
     winRatePercent: Math.round(winRate * 10) / 10,
-    totalPnlDollars: Math.round(totalPnlDollars),
+    totalPnlDollars: Math.round(totalPnlDollars * 100) / 100,
+    avgWinDollars,
+    avgLossDollars,
+    bestDayDollars: Math.round(bestDayDollars * 100) / 100,
+    worstDayDollars: Math.round(worstDayDollars * 100) / 100,
     avgPnlR: Math.round(avgPnlR * 100) / 100,
     profitFactor: Math.round(profitFactor * 100) / 100,
     expectancyR: Math.round(avgPnlR * 100) / 100,

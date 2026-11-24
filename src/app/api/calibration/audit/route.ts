@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { computeCalibrationSummary } from "@/lib/calibration/optimizer";
+import { gradePendingPredictions } from "@/lib/calibration/grader";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    try {
+      await gradePendingPredictions();
+    } catch (gradeErr) {
+      console.warn("Non-fatal auto-grade warning in /api/calibration/audit:", gradeErr);
+    }
+
     const summary = await computeCalibrationSummary();
     return NextResponse.json({
       success: true,

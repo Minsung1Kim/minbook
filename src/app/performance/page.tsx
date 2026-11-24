@@ -8,12 +8,9 @@ import {
 } from "@/types/calibration";
 import {
   RefreshCw,
-  Sliders,
-  ChevronDown,
-  ChevronUp,
   ShieldCheck,
   AlertTriangle,
-  RotateCcw,
+  Sliders,
 } from "lucide-react";
 
 export default function PerformancePage() {
@@ -54,15 +51,15 @@ export default function PerformancePage() {
       if (json.success) {
         showToast(
           json.gradedCount > 0
-            ? `Graded ${json.gradedCount} pending sessions.`
-            : "All eligible sessions already graded."
+            ? `Graded ${json.gradedCount} pending session(s).`
+            : "All settled sessions are already graded."
         );
         await fetchSummary();
       } else {
-        showToast(json.error || "Grading failed", true);
+        showToast(json.error || "Grading failed");
       }
     } catch (err: any) {
-      showToast(err?.message || "Grading request failed", true);
+      showToast(err?.message || "Grading request failed");
     } finally {
       setGrading(false);
     }
@@ -88,41 +85,16 @@ export default function PerformancePage() {
         showToast(`Activated weights ${update.toVersion}`);
         await fetchSummary();
       } else {
-        showToast(json.error || "Failed to apply weights", true);
+        showToast(json.error || "Failed to apply weights");
       }
     } catch (err: any) {
-      showToast(err?.message || "Request failed", true);
+      showToast(err?.message || "Request failed");
     } finally {
       setApplying(false);
     }
   };
 
-  const handleRollback = async (version: string) => {
-    try {
-      setApplying(true);
-      const res = await fetch("/api/calibration/weights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "rollback",
-          version,
-        }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        showToast(`Rolled back to ${version}`);
-        await fetchSummary();
-      } else {
-        showToast(json.error || "Rollback failed", true);
-      }
-    } catch (err: any) {
-      showToast(err?.message || "Rollback request failed", true);
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  const showToast = (msg: string, isError = false) => {
+  const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
@@ -135,6 +107,11 @@ export default function PerformancePage() {
     if (selectedFilter === "STOP_HUNT") return item.grade?.stopHuntOccurred === true;
     return true;
   });
+
+  const dirCount = summary?.directionalCallsCount ?? 0;
+  const dirCorrect = summary?.directionalCorrectCount ?? 0;
+  const cautionCount = summary?.cautionCallsCount ?? 0;
+  const cautionCorrect = summary?.cautionCorrectCount ?? 0;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
@@ -151,7 +128,7 @@ export default function PerformancePage() {
         <div className="px-4 py-3 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
           <div className="flex items-center space-x-3">
             <span className="font-semibold text-zinc-200 uppercase tracking-wider text-[11px]">
-              System Calibration Audit
+              Verified System Audit (Real Frozen Calls Only)
             </span>
             <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 text-[10px]">
               {summary?.activeModelVersion || "v1.0"} ACTIVE
@@ -165,81 +142,91 @@ export default function PerformancePage() {
               className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-xs transition-colors flex items-center space-x-1.5 disabled:opacity-50"
             >
               <RefreshCw className={`w-3 h-3 ${grading ? "animate-spin" : ""}`} />
-              <span>Grade Pending</span>
+              <span>Check &amp; Grade Pending</span>
             </button>
           </div>
         </div>
 
-        {/* 1. MINIMAL 4-STAT HEADER */}
+        {/* 1. 4-STAT AUDIT SUMMARY (100% Real Data) */}
         {summary && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 font-mono">
             <div className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 space-y-1">
               <span className="text-zinc-500 text-[11px] uppercase tracking-wider block">
-                Directional Bias Hit Rate
+                Directional Hit Rate
               </span>
               <div
                 className={`text-2xl font-bold tabular-nums ${
-                  summary.overallBiasAccuracy >= 60 ? "text-emerald-400" : "text-zinc-100"
+                  dirCount === 0
+                    ? "text-zinc-400"
+                    : summary.overallBiasAccuracy >= 60
+                    ? "text-emerald-400"
+                    : "text-zinc-100"
                 }`}
               >
-                {summary.overallBiasAccuracy.toFixed(1)}%
+                {dirCount > 0 ? `${summary.overallBiasAccuracy.toFixed(1)}%` : "—"}
               </div>
-              <span className="text-[10px] text-zinc-500 font-sans">
-                Target: &gt;60% continuation win rate
+              <span className="text-[11px] text-zinc-500 font-sans">
+                {dirCount > 0
+                  ? `${dirCorrect} of ${dirCount} directional calls right`
+                  : "No directional calls graded yet"}
               </span>
             </div>
 
             <div className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 space-y-1">
               <span className="text-zinc-500 text-[11px] uppercase tracking-wider block">
-                Retrace Tap Rate
+                Chop / Stand-Aside Accuracy
               </span>
               <div className="text-2xl font-bold tabular-nums text-zinc-100">
-                {summary.retraceTapRate.toFixed(1)}%
+                {cautionCount > 0
+                  ? `${((cautionCorrect / cautionCount) * 100).toFixed(1)}%`
+                  : "—"}
               </div>
-              <span className="text-[10px] text-zinc-500 font-sans">
-                Tapped VWAP / ON Mid / PDC
+              <span className="text-[11px] text-zinc-500 font-sans">
+                {cautionCount > 0
+                  ? `${cautionCorrect} of ${cautionCount} caution days avoided chop`
+                  : "No caution/stand-aside days yet"}
               </span>
             </div>
 
             <div className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 space-y-1">
               <span className="text-zinc-500 text-[11px] uppercase tracking-wider block">
-                Stop-Hunt Precision
+                Bounce Area Tap Rate
               </span>
               <div className="text-2xl font-bold tabular-nums text-zinc-100">
-                {summary.stopHuntAccuracy.toFixed(1)}%
+                {summary.gradedSessions > 0 ? `${summary.retraceTapRate.toFixed(1)}%` : "—"}
               </div>
-              <span className="text-[10px] text-zinc-500 font-sans">
-                Sweep & reverse confirmed
+              <span className="text-[11px] text-zinc-500 font-sans">
+                Tapped VWAP / ON Mid / PDC / HTF
               </span>
             </div>
 
             <div className="p-3.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 space-y-1">
               <span className="text-zinc-500 text-[11px] uppercase tracking-wider block">
-                Liquidity Magnet Rate
+                Target Area Hit Rate
               </span>
               <div className="text-2xl font-bold tabular-nums text-zinc-100">
-                {summary.liquidityDrawRate.toFixed(1)}%
+                {summary.gradedSessions > 0 ? `${summary.liquidityDrawRate.toFixed(1)}%` : "—"}
               </div>
-              <span className="text-[10px] text-zinc-500 font-sans">
-                Reached Magnet #1 or #2
+              <span className="text-[11px] text-zinc-500 font-sans">
+                Reached ONH/ONL or PDH/PDL target
               </span>
             </div>
           </div>
         )}
 
-        {/* Calibration Sample Gate Indicator */}
+        {/* Honest Sample Gate Indicator */}
         {summary && (
-          <div className="px-4 py-2.5 rounded-lg bg-zinc-900/40 border border-zinc-800/80 flex items-center justify-between text-xs font-mono">
+          <div className="px-4 py-2.5 rounded-lg bg-zinc-900/40 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
             <div className="flex items-center space-x-2">
               {summary.sampleSizeGate.isCalibrated ? (
                 <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
               ) : (
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
               )}
-              <span className="text-zinc-300">
+              <span className="text-zinc-300 font-sans">
                 {summary.sampleSizeGate.isCalibrated
-                  ? "Sample Size Calibrated (N >= 30 Sessions) • Beta-Binomial Bayesian Shrinkage active"
-                  : `Collecting Baseline Sample (${summary.sampleSizeGate.current}/${summary.sampleSizeGate.required} Sessions graded)`}
+                  ? `Calibrated (${summary.sampleSizeGate.current} real graded sessions). Signal weights adjust automatically using Bayesian shrinkage.`
+                  : `Collecting real live data (${summary.sampleSizeGate.current} of ${summary.sampleSizeGate.required} real sessions graded). Model weights stay locked at 1.0x until 30 real sessions are recorded.`}
               </span>
             </div>
             <span className="text-zinc-500 tabular-nums">
@@ -248,15 +235,37 @@ export default function PerformancePage() {
           </div>
         )}
 
-        {/* 2. CLEAN SORTABLE FACTOR ATTRIBUTION TABLE */}
+        {/* Proposed Calibration Update (only appears once N >= 30 real sessions exist) */}
+        {summary?.proposedUpdate && (
+          <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="space-y-1">
+              <div className="font-mono font-bold text-emerald-400 flex items-center space-x-1.5">
+                <Sliders className="w-3.5 h-3.5" />
+                <span>
+                  Calibrated Weights Ready ({summary.proposedUpdate.fromVersion} → {summary.proposedUpdate.toVersion})
+                </span>
+              </div>
+              <p className="text-zinc-300">{summary.proposedUpdate.summary}</p>
+            </div>
+            <button
+              onClick={() => handleApplyProposedWeights(summary.proposedUpdate!)}
+              disabled={applying}
+              className="px-3 py-1.5 rounded bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-semibold transition-colors disabled:opacity-50"
+            >
+              {applying ? "Applying..." : "Apply Weights"}
+            </button>
+          </div>
+        )}
+
+        {/* 2. QUANT SIGNAL ATTRIBUTION TABLE */}
         {summary && summary.factorAttributions && summary.factorAttributions.length > 0 && (
           <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden font-mono">
             <div className="px-4 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between text-xs">
               <span className="font-semibold text-zinc-400 uppercase tracking-wider text-[11px]">
-                Factor Attribution Leaderboard
+                Quant Signal Track Record
               </span>
               <span className="text-zinc-500 text-[11px] font-sans">
-                Lift vs baseline direction accuracy
+                Which quant factors are actually predicting moves
               </span>
             </div>
 
@@ -264,69 +273,56 @@ export default function PerformancePage() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-zinc-950/80 text-zinc-500 text-[10px] uppercase tracking-wider border-b border-zinc-800/80">
                   <tr>
-                    <th className="py-2.5 px-4">Factor</th>
+                    <th className="py-2.5 px-4">Quant Signal</th>
                     <th className="py-2.5 px-3 text-right">Win Rate</th>
-                    <th className="py-2.5 px-3 text-right">Lift</th>
-                    <th className="py-2.5 px-3 text-right">Sample</th>
-                    <th className="py-2.5 px-3 text-right">Active Weight</th>
-                    <th className="py-2.5 px-4">Regime Performance</th>
+                    <th className="py-2.5 px-3 text-right">Sessions Active</th>
+                    <th className="py-2.5 px-3 text-right">Model Weight</th>
+                    <th className="py-2.5 px-4">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/60 tabular-nums">
-                  {summary.factorAttributions.map((f, idx) => {
-                    const isPositiveLift = f.liftPercent >= 0;
-                    return (
-                      <tr key={idx} className="hover:bg-zinc-800/40 transition-colors">
-                        <td className="py-2.5 px-4 text-zinc-200 font-medium">
-                          {f.factorName}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-zinc-100 font-semibold">
-                          {f.winRate.toFixed(1)}%
-                        </td>
-                        <td
-                          className={`py-2.5 px-3 text-right font-semibold ${
-                            isPositiveLift ? "text-emerald-400" : "text-rose-400"
+                  {summary.factorAttributions.map((f, idx) => (
+                    <tr key={idx} className="hover:bg-zinc-800/40 transition-colors">
+                      <td className="py-2.5 px-4 text-zinc-200 font-medium font-sans">
+                        {f.factorName}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-zinc-100 font-semibold">
+                        {f.totalOccurrences > 0 ? `${f.winRate.toFixed(1)}%` : "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-zinc-400">
+                        {f.totalOccurrences}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-zinc-200 font-bold">
+                        {f.currentWeight.toFixed(2)}x
+                      </td>
+                      <td className="py-2.5 px-4 text-xs font-mono">
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold border ${
+                            f.status === "EDGE_ENHANCER"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : f.status === "NOISE_DETRACTOR"
+                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                              : "bg-zinc-800 text-zinc-400 border-zinc-700"
                           }`}
                         >
-                          {isPositiveLift ? "+" : ""}
-                          {f.liftPercent.toFixed(1)}%
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-zinc-400">
-                          {f.totalOccurrences}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-zinc-200 font-bold">
-                          {f.currentWeight.toFixed(2)}x
-                        </td>
-                        <td className="py-2.5 px-4 text-xs font-mono">
-                          <span
-                            className={`px-1.5 py-0.2 rounded text-[10px] font-bold border ${
-                              f.status === "EDGE_ENHANCER"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : f.status === "NOISE_DETRACTOR"
-                                ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                            }`}
-                          >
-                            {f.status}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          {f.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
-        {/* 3. COLLAPSIBLE PRE-MARKET HISTORY ROWS */}
+        {/* 3. FROZEN PRE-MARKET PREDICTIONS VS ACTUAL OUTCOMES */}
         <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden font-mono">
           <div className="px-4 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-semibold text-zinc-400 uppercase tracking-wider text-[11px]">
-              Pre-Market Freeze Archive vs Actual 09:30–10:00 Outcomes
+              Frozen Pre-Market Calls vs Actual 09:30–10:00 ET Market
             </span>
 
-            {/* Filter Pills */}
             <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-[11px]">
               {(["ALL", "CORRECT", "FAILED", "RETRACE_HIT", "STOP_HUNT"] as const).map((filter) => (
                 <button
@@ -338,7 +334,7 @@ export default function PerformancePage() {
                       : "text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  {filter}
+                  {filter.replace("_", " ")}
                 </button>
               ))}
             </div>
@@ -348,20 +344,25 @@ export default function PerformancePage() {
             <table className="w-full text-left text-xs">
               <thead className="bg-zinc-950/80 text-zinc-500 text-[10px] uppercase tracking-wider border-b border-zinc-800/80">
                 <tr>
-                  <th className="py-2.5 px-4">Trade Date</th>
-                  <th className="py-2.5 px-3">Verdict</th>
-                  <th className="py-2.5 px-3">Result</th>
-                  <th className="py-2.5 px-3 text-right">MFE / MAE</th>
-                  <th className="py-2.5 px-3">Retrace Hit</th>
-                  <th className="py-2.5 px-3">Stop Hunt</th>
+                  <th className="py-2.5 px-4">Date</th>
+                  <th className="py-2.5 px-3">Frozen Bias Call</th>
+                  <th className="py-2.5 px-3">Outcome</th>
+                  <th className="py-2.5 px-3 text-right">09:30–10:00 Range</th>
+                  <th className="py-2.5 px-3">Bounce Areas Tapped</th>
                   <th className="py-2.5 px-4 text-right">Score</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/60 tabular-nums">
-                {filteredHistory.length === 0 ? (
+                {loading ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-zinc-500">
-                      No matching graded sessions.
+                    <td colSpan={6} className="py-8 text-center text-zinc-500">
+                      Loading verified audit records...
+                    </td>
+                  </tr>
+                ) : filteredHistory.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-zinc-500 font-sans">
+                      No real sessions recorded yet. Pre-market predictions freeze automatically between 09:15 and 10:00 ET and grade after 10:20 ET.
                     </td>
                   </tr>
                 ) : (
@@ -380,8 +381,8 @@ export default function PerformancePage() {
                         >
                           <td className="py-3 px-4 text-zinc-200 font-medium">{date}</td>
                           <td className="py-3 px-3">
-                            <span className="text-zinc-300 font-semibold">
-                              {item.prediction.biasVerdict.replace("_CONTINUATION", "")}
+                            <span className="text-zinc-200 font-semibold">
+                              {item.prediction.biasVerdict}
                             </span>
                           </td>
                           <td className="py-3 px-3">
@@ -393,31 +394,19 @@ export default function PerformancePage() {
                                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                                 }`}
                               >
-                                {grade.tripleBarrierOutcome
-                                  ? `${grade.tripleBarrierOutcome}${
-                                      grade.realizedNetR !== undefined
-                                        ? ` (${grade.realizedNetR >= 0 ? "+" : ""}${grade.realizedNetR.toFixed(2)}R)`
-                                        : ""
-                                    }`
-                                  : grade.biasCorrect
-                                  ? "CORRECT"
-                                  : "FAILED"}
+                                {grade.biasCorrect ? "VERIFIED RIGHT" : "MISSED"}
+                                {grade.tripleBarrierOutcome && grade.tripleBarrierOutcome !== "NO_FILL"
+                                  ? ` · ${grade.tripleBarrierOutcome}`
+                                  : ""}
                               </span>
                             ) : (
-                              <span className="text-zinc-600 text-[10px]">PENDING</span>
+                              <span className="text-amber-400 text-[10px]">PENDING 10:20 ET</span>
                             )}
                           </td>
                           <td className="py-3 px-3 text-right text-zinc-300">
                             {grade ? (
                               <span>
-                                <span className="text-emerald-400 font-medium">
-                                  +{grade.favorableExcursionPts.toFixed(1)}
-                                </span>{" "}
-                                /{" "}
-                                <span className="text-rose-400 font-medium">
-                                  -{grade.adverseExcursionPts.toFixed(1)}
-                                </span>{" "}
-                                pts
+                                {grade.windowLow.toFixed(1)} – {grade.windowHigh.toFixed(1)}
                               </span>
                             ) : (
                               "--"
@@ -426,14 +415,7 @@ export default function PerformancePage() {
                           <td className="py-3 px-3 text-zinc-400 font-sans text-xs">
                             {grade && grade.retraceTapped.length > 0
                               ? grade.retraceTapped.join(", ")
-                              : "No tap"}
-                          </td>
-                          <td className="py-3 px-3">
-                            {grade?.stopHuntOccurred ? (
-                              <span className="text-amber-400 font-semibold">SWEPT</span>
-                            ) : (
-                              <span className="text-zinc-600">None</span>
-                            )}
+                              : "None tapped"}
                           </td>
                           <td className="py-3 px-4 text-right font-bold text-zinc-100">
                             {grade ? `${grade.compositeScore}/100` : "--"}
@@ -442,23 +424,32 @@ export default function PerformancePage() {
 
                         {isExpanded && (
                           <tr className="bg-zinc-950/80">
-                            <td colSpan={7} className="p-4 border-b border-zinc-800 text-xs">
+                            <td colSpan={6} className="p-4 border-b border-zinc-800 text-xs">
                               <div className="space-y-2">
                                 <span className="text-zinc-400 uppercase text-[10px] font-semibold block">
-                                  Session Breakdown & Regime Snapshot:
+                                  Frozen Snapshot vs Actual 09:30–10:00 ET Window:
                                 </span>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-zinc-300">
                                   <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                                    <span className="text-[10px] text-zinc-500 block">Spot at Freeze</span>
-                                    <span>{item.prediction.spotAtFreeze.toFixed(2)}</span>
+                                    <span className="text-[10px] text-zinc-500 block">Frozen Spot / Time</span>
+                                    <span>
+                                      {item.prediction.spotAtFreeze.toFixed(2)}
+                                    </span>
                                   </div>
                                   <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                                    <span className="text-[10px] text-zinc-500 block">Confidence</span>
-                                    <span>{item.prediction.confidenceTier}</span>
+                                    <span className="text-[10px] text-zinc-500 block">Frozen Bounce Levels</span>
+                                    <span>
+                                      VWAP {item.prediction.primaryRetraceLevels.vwap.toFixed(1)} / PDC{" "}
+                                      {item.prediction.primaryRetraceLevels.pdc.toFixed(1)}
+                                    </span>
                                   </div>
                                   <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
-                                    <span className="text-[10px] text-zinc-500 block">Archetype</span>
-                                    <span>{item.prediction.archetype}</span>
+                                    <span className="text-[10px] text-zinc-500 block">Actual 09:30 → 10:00</span>
+                                    <span>
+                                      {grade
+                                        ? `${grade.openPrice930.toFixed(1)} → ${grade.windowClose1000.toFixed(1)}`
+                                        : "Pending"}
+                                    </span>
                                   </div>
                                   <div className="p-2 rounded bg-zinc-900 border border-zinc-800">
                                     <span className="text-[10px] text-zinc-500 block">Brier Score</span>

@@ -207,7 +207,7 @@ export async function getOpenBrief(options?: {
       (sessionInfo.phase === "PRE_MARKET_LOCK" && timeMins >= 555) ||
       sessionInfo.phase === "NY_OPEN_WINDOW"
     ) {
-      freezePredictionSnapshot(briefData).catch((e) =>
+      await freezePredictionSnapshot(briefData).catch((e) =>
         console.warn("Auto-freeze prediction notice:", e?.message || e)
       );
     }
@@ -220,7 +220,7 @@ export async function getOpenBrief(options?: {
     const etParts = getETParts(new Date());
     const timeMins = etParts.hour * 60 + etParts.minute;
     if (timeMins >= 620 || sessionInfo.phase === "POST_WINDOW_RECAP" || sessionInfo.phase === "CME_BREAK_OR_WEEKEND") {
-      gradePendingPredictions().catch((e) =>
+      await gradePendingPredictions().catch((e) =>
         console.warn("Auto-grade pending notice:", e?.message || e)
       );
     }

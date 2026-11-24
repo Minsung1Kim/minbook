@@ -9,14 +9,22 @@ import {
 } from "../../types/calibration";
 import { getCalibrationRepository, DEFAULT_MODEL_WEIGHTS } from "./store";
 
-export const FACTOR_KEY_CONFIG: Record<string, { name: string; defaultWeight: number }> = {
-  // v3.0 4 Orthogonal Signals
-  compositeHtf: { name: "Composite HTF & Auction Location", defaultWeight: 1.0 },
-  smtBreadth: { name: "Cross-Index SMT Divergence + Breadth", defaultWeight: 1.0 },
-  macroImpulse: { name: "23h Macro Impulse (ZN / DXY)", defaultWeight: 1.0 },
-  openingFlow: { name: "Opening Flow (VW Wick Rejection)", defaultWeight: 1.0 },
+export const ACTIVE_FACTOR_KEYS = new Set([
+  "compositeLocation",
+  "smtBreadth",
+  "macroImpulse",
+  "openingFlow"
+]);
 
-  // Historical / Legacy Factor Mappings
+export const FACTOR_KEY_CONFIG: Record<string, { name: string; defaultWeight: number }> = {
+  // v3.1 4 Orthogonal Signals
+  compositeLocation: { name: "Price & Structure (HTF / VWAP / PDC)", defaultWeight: 1.0 },
+  smtBreadth: { name: "NQ vs ES Divergence (SMT + Breadth)", defaultWeight: 1.0 },
+  macroImpulse: { name: "Rates & Dollar Macro (ZN / DXY)", defaultWeight: 1.0 },
+  openingFlow: { name: "Opening Order Flow (1m Delta)", defaultWeight: 1.0 },
+
+  // Historical / Legacy Factor Mappings (shown only if present in graded history)
+  compositeHtf: { name: "Composite HTF & Auction Location", defaultWeight: 1.0 },
   htfTrend: { name: "HTF Trend Alignment", defaultWeight: 1.0 },
   vwapAlignment: { name: "VWAP / Opening Location", defaultWeight: 1.0 },
   overnightInventory: { name: "Overnight Inventory Skew", defaultWeight: 1.0 },
@@ -40,9 +48,7 @@ export const STATUS_TAG_MIN_SAMPLE_SIZE = 60;
 export async function computeCalibrationSummary(
   repo: ICalibrationRepository = getCalibrationRepository()
 ): Promise<CalibrationAuditSummary> {
-  // Ensure default seed if DB is brand new
-  await repo.seedSampleArchiveIfEmpty();
-
+  // Never seed fake synthetic sessions; only real frozen predictions & real outcomes are audited.
   const gradedHistory: Array<{ prediction: DailyPrediction; grade: PredictionGrade }> = await repo.getGradedHistory();
   const auditHistory = await repo.getAuditHistory(100);
   const activeWeights = await repo.getActiveModelWeights();
@@ -56,6 +62,12 @@ export async function computeCalibrationSummary(
       totalPredictions,
       gradedSessions: 0,
       pendingSessions,
+      directionalCallsCount: 0,
+      directionalCorrectCount: 0,
+      cautionCallsCount: 0,
+      cautionCorrectCount: 0,
+      avgBrierScore: 0,
+      totalSimulatedNetR: 0,
       overallBiasAccuracy: 0,
       retraceTapRate: 0,
       stopHuntAccuracy: 0,
@@ -70,26 +82,50 @@ export async function computeCalibrationSummary(
         remaining: 30
       },
       activeModelVersion: activeWeights.version,
-      factorAttributions: Object.entries(FACTOR_KEY_CONFIG).map(([key, cfg]) => ({
-        factorKey: key,
-        factorName: cfg.name,
-        totalOccurrences: 0,
-        winsWhenActive: 0,
-        winRate: 0,
-        baselineWinRate: 0,
-        liftPercent: 0,
-        currentWeight: activeWeights.weights[key] ?? cfg.defaultWeight,
-        performanceByVol: { normalVolWinRate: 0, highVolWinRate: 0 },
-        status: "NEUTRAL"
-      })),
+      factorAttributions: Object.entries(FACTOR_KEY_CONFIG)
+        .filter(([key]) => ACTIVE_FACTOR_KEYS.has(key))
+        .map(([key, cfg]) => ({
+          factorKey: key,
+          factorName: cfg.name,
+          totalOccurrences: 0,
+          winsWhenActive: 0,
+          winRate: 0,
+          baselineWinRate: 0,
+          liftPercent: 0,
+          currentWeight: activeWeights.weights[key] ?? cfg.defaultWeight,
+          performanceByVol: { normalVolWinRate: 0, highVolWinRate: 0 },
+          status: "NEUTRAL"
+        })),
       proposedUpdate: null,
       history: auditHistory
     };
   }
 
-  // 1. Overall Hit Rates
+  // 1. Overall Hit Rates (Directional vs Caution separated honestly)
+  const isCautionVerdict = (v: string) => {
+    const u = v.toUpperCase();
+    return u.includes("CAUTION") || u.includes("STAND") || u.includes("CHOP");
+  };
+  const directionalItems = gradedHistory.filter((h) => !isCautionVerdict(h.prediction.biasVerdict));
+  const cautionItems = gradedHistory.filter((h) => isCautionVerdict(h.prediction.biasVerdict));
+
+  const directionalCorrectCount = directionalItems.filter((h) => h.grade.biasCorrect).length;
+  const cautionCorrectCount = cautionItems.filter((h) => h.grade.biasCorrect).length;
+
   const correctCount = gradedHistory.filter((h: { grade: PredictionGrade }) => h.grade.biasCorrect).length;
-  const overallBiasAccuracy = Math.round((correctCount / gradedSessions) * 1000) / 10;
+  const overallBiasAccuracy =
+    directionalItems.length > 0
+      ? Math.round((directionalCorrectCount / directionalItems.length) * 1000) / 10
+      : Math.round((correctCount / gradedSessions) * 1000) / 10;
+
+  const avgBrierScore =
+    Math.round(
+      (gradedHistory.reduce((sum, h) => sum + (h.grade.brierScore || 0), 0) / gradedSessions) * 1000
+    ) / 1000;
+  const totalSimulatedNetR =
+    Math.round(
+      gradedHistory.reduce((sum, h) => sum + (h.grade.realizedNetR ?? 0), 0) * 100
+    ) / 100;
 
   const retraceTappedCount = gradedHistory.filter(
     (h: { grade: PredictionGrade }) => h.grade.retraceTapped && h.grade.retraceTapped.length > 0
@@ -171,6 +207,11 @@ export async function computeCalibrationSummary(
       else if (liftPercent <= -4.0) status = "NOISE_DETRACTOR";
     }
 
+    // Only show active v3.1 orthogonal factors or legacy factors that actually occurred
+    if (!ACTIVE_FACTOR_KEYS.has(key) && occurrences === 0) {
+      continue;
+    }
+
     factorAttributions.push({
       factorKey: key,
       factorName: cfg.name,
@@ -201,6 +242,12 @@ export async function computeCalibrationSummary(
     totalPredictions,
     gradedSessions,
     pendingSessions,
+    directionalCallsCount: directionalItems.length,
+    directionalCorrectCount,
+    cautionCallsCount: cautionItems.length,
+    cautionCorrectCount,
+    avgBrierScore,
+    totalSimulatedNetR,
     overallBiasAccuracy,
     retraceTapRate,
     stopHuntAccuracy,

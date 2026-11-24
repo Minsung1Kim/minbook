@@ -67,6 +67,9 @@ export async function getJournalTrades(userId?: string): Promise<TradeLogEntry[]
         exitTimeET: r.exit_time_et || "09:50:00",
         retraceLevelUsed: r.retrace_level_used || "",
         notes: r.notes || r.setup_notes || "",
+        overlayColor: (r.overlay_color as TradeLogEntry["overlayColor"]) || (Number(r.actual_pnl_dollars ?? r.pnl_usd ?? 0) >= 0 ? "GREEN" : "RED"),
+        rawOcrText: r.raw_ocr_text || undefined,
+        ocrConfidence: (r.ocr_confidence as TradeLogEntry["ocrConfidence"]) || undefined,
         screenshotPath: r.screenshot_path || undefined,
         screenshotSignedUrl: signedUrl,
         sessionBarsJson: r.session_bars_json ? JSON.stringify(r.session_bars_json) : undefined,
@@ -160,6 +163,9 @@ export async function addJournalTrade(
       retrace_level_used: trade.retraceLevelUsed,
       notes: trade.notes,
       setup_notes: trade.notes,
+      overlay_color: trade.overlayColor ?? null,
+      raw_ocr_text: trade.rawOcrText ?? null,
+      ocr_confidence: trade.ocrConfidence ?? null,
       screenshot_path: screenshotPath,
       session_bars_json: trade.sessionBarsJson ? JSON.parse(trade.sessionBarsJson) : null,
       created_at: new Date().toISOString()
@@ -182,8 +188,11 @@ export async function addJournalTrade(
     };
   }
 
-  // Local SQLite fallback
-  return addSqliteTrade(trade);
+  // Local SQLite fallback (preserve screenshot data URL locally)
+  return addSqliteTrade({
+    ...trade,
+    screenshotDataUrl: screenshotBase64
+  });
 }
 
 export async function deleteJournalTrade(id: string): Promise<boolean> {

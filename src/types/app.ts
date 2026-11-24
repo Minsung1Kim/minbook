@@ -18,7 +18,7 @@ export interface TradeLogEntry {
   userId: string;
   tradeDate: string; // YYYY-MM-DD
   symbol: "NQ" | "MNQ";
-  direction: "LONG" | "SHORT";
+  direction: "LONG" | "SHORT" | "SCREENSHOT";
   entryPrice: number;
   stopPrice: number;
   targetPrice: number;
@@ -38,6 +38,11 @@ export interface TradeLogEntry {
   exitTimeET: string;
   retraceLevelUsed: string;
   notes: string;
+  // Screenshot P&L Overlay Metadata
+  overlayColor?: "GREEN" | "RED" | "UNKNOWN";
+  rawOcrText?: string;
+  ocrConfidence?: "HIGH" | "MEDIUM" | "LOW";
+  screenshotDataUrl?: string;
   // Regime Snapshot at time of entry
   vxnSnapshot?: number;
   termRatioSnapshot?: number;
@@ -59,6 +64,10 @@ export interface JournalAnalytics {
   scratches: number;
   winRatePercent: number;
   totalPnlDollars: number;
+  avgWinDollars?: number;
+  avgLossDollars?: number;
+  bestDayDollars?: number;
+  worstDayDollars?: number;
   avgPnlR: number;
   profitFactor: number;
   expectancyR: number;

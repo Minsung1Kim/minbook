@@ -124,7 +124,7 @@ export function Header({
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60"
                 }`}
               >
-                AI Journal
+                P&amp;L Journal
               </Link>
 
               <Link

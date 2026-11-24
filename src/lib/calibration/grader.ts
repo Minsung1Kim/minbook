@@ -8,40 +8,30 @@ import {
 import { getCalibrationRepository } from "./store";
 import { YahooFinanceProvider } from "../market/yahoo";
 import { getBarETParts } from "../market/levels";
+import { fetch1mBars } from "../market/footprint";
+import { getETParts } from "../market/sessionClock";
 
 /**
  * Maps factor names from playbook factorScorecard to standard factor keys
  */
 export function mapScorecardToFactorKeys(factorScorecard: Array<{ factor: string; score: number }>): Record<string, number> {
   const result: Record<string, number> = {
-    htfTrend: 0,
-    vwapAlignment: 0,
-    overnightInventory: 0,
-    openingGap: 0,
-    smtDivergence: 0,
-    volatilitySurface: 0,
-    macroRegime: 0,
-    gexRegime: 0
+    compositeLocation: 0,
+    smtBreadth: 0,
+    macroImpulse: 0,
+    openingFlow: 0
   };
 
   for (const item of factorScorecard) {
     const f = item.factor.toLowerCase();
-    if (f.includes("htf") || f.includes("trend")) {
-      result.htfTrend = item.score;
-    } else if (f.includes("vwap") || f.includes("opening location")) {
-      result.vwapAlignment = item.score;
-    } else if (f.includes("inventory")) {
-      result.overnightInventory = item.score;
-    } else if (f.includes("gap")) {
-      result.openingGap = item.score;
-    } else if (f.includes("smt")) {
-      result.smtDivergence = item.score;
-    } else if (f.includes("volatility") || f.includes("vrp")) {
-      result.volatilitySurface = item.score;
-    } else if (f.includes("macro") || f.includes("yields")) {
-      result.macroRegime = item.score;
-    } else if (f.includes("gex") || f.includes("gamma")) {
-      result.gexRegime = item.score;
+    if (f.includes("location") || f.includes("htf") || f.includes("vwap")) {
+      result.compositeLocation = item.score;
+    } else if (f.includes("smt") || f.includes("breadth")) {
+      result.smtBreadth = item.score;
+    } else if (f.includes("macro") || f.includes("zn") || f.includes("yield")) {
+      result.macroImpulse = item.score;
+    } else if (f.includes("flow") || f.includes("vwwr") || f.includes("delta")) {
+      result.openingFlow = item.score;
     }
   }
 
@@ -112,6 +102,7 @@ export async function freezePredictionSnapshot(
       vixTermRatio: brief.bias.volatilitySurface?.termRatio,
       vvix: brief.bias.volatilitySurface?.vvix,
       vrp: brief.bias.volatilitySurface?.vrp,
+      atr15m: brief.sessionMetrics.atrOpen15m || brief.sessionMetrics.atr15mIntraday,
       gexRegime: brief.bias.gex?.netGammaRegime,
       gammaFlipNq: brief.bias.gex?.gammaFlipNq,
       overnightInventoryPct: brief.sessionMetrics.inventoryPercent,
@@ -282,7 +273,13 @@ export function computePredictionGrade(
 
   if (isCaution) {
     const totalRange = windowHigh - windowLow;
-    biasCorrect = totalRange <= atr15m * 1.35;
+    const upMove = Math.max(0, windowHigh - openPrice930);
+    const downMove = Math.max(0, openPrice930 - windowLow);
+    const netMove = Math.abs(windowClose1000 - openPrice930);
+    const directionalEfficiency = totalRange > 0 ? netMove / totalRange : 0;
+    const isTwoWayWhipsaw = upMove >= atr15m * 0.75 && downMove >= atr15m * 0.75;
+    const isCompressedChop = totalRange <= atr15m * 1.35 || directionalEfficiency < 0.35;
+    biasCorrect = isTwoWayWhipsaw || isCompressedChop;
     tripleBarrierOutcome = "NO_FILL";
   } else if (isFilled && fillBarIdx >= 0) {
     const stopPts = Math.max(3.0, Math.abs(fillPrice - stopLoss));
@@ -449,7 +446,14 @@ export function computePredictionGrade(
   }
 
   // Chop warning check
-  const chopWarningCorrect = isCaution ? biasCorrect : (windowHigh - windowLow) <= atr15m * 1.1;
+  const totalWindowRange = windowHigh - windowLow;
+  const upExcursion = Math.max(0, windowHigh - openPrice930);
+  const downExcursion = Math.max(0, openPrice930 - windowLow);
+  const netWindowMove = Math.abs(windowClose1000 - openPrice930);
+  const windowEfficiency = totalWindowRange > 0 ? netWindowMove / totalWindowRange : 0;
+  const chopWarningCorrect = isCaution
+    ? biasCorrect
+    : totalWindowRange <= atr15m * 1.1 || (upExcursion >= atr15m * 0.75 && downExcursion >= atr15m * 0.75) || windowEfficiency < 0.35;
 
   // Strictly proper scoring rules: Brier score and Log score
   const pConfidence =
@@ -514,29 +518,57 @@ export async function gradePendingPredictions(
     return { gradedCount: 0, gradedDates: [], errors: [] };
   }
 
+  const nowET = getETParts(new Date());
+  const todayET = nowET.dateStr;
+  const nowMinsET = nowET.hour * 60 + nowET.minute;
+
+  // Filter out predictions whose 09:30-10:00 ET window + 20m CME delay (10:20 ET) has not settled yet
+  const eligible = pending.filter((p) => {
+    if (p.targetTradeDate < todayET) return true;
+    if (p.targetTradeDate === todayET && nowMinsET >= 10 * 60 + 20) return true;
+    return false;
+  });
+
+  if (eligible.length === 0) {
+    return { gradedCount: 0, gradedDates: [], errors: [] };
+  }
+
   const gradedDates: string[] = [];
   const errors: string[] = [];
 
-  // Fetch 5m intraday bars for NQ=F
-  let bars: OHLCVBar[] = [];
+  // Prefer 1m bars for accurate 09:30-09:33 OR and 09:34-09:48 limit-fill simulation; fallback to 5m bars
+  let bars1m: OHLCVBar[] = [];
+  let bars5m: OHLCVBar[] = [];
   try {
-    bars = await provider.getIntradayBars("NQ=F", "5m");
-  } catch (err: any) {
-    errors.push(`Failed to fetch 5m intraday bars: ${err?.message || err}`);
-    return { gradedCount: 0, gradedDates: [], errors };
+    bars1m = await fetch1mBars("NQ=F");
+  } catch {
+    bars1m = [];
   }
 
-  for (const pred of pending) {
-    try {
-      const windowBars = extractNYOpenBars(bars, pred.targetTradeDate);
+  try {
+    bars5m = await provider.getIntradayBars("NQ=F", "5m");
+  } catch (err: any) {
+    if (bars1m.length === 0) {
+      errors.push(`Failed to fetch intraday bars: ${err?.message || err}`);
+      return { gradedCount: 0, gradedDates: [], errors };
+    }
+  }
 
-      // We require at least 3 bars (e.g. 5m bars from 9:30, 9:35, 9:40, 9:45, 9:50, 9:55)
+  for (const pred of eligible) {
+    try {
+      const window1m = extractNYOpenBars(bars1m, pred.targetTradeDate);
+      const window5m = extractNYOpenBars(bars5m, pred.targetTradeDate);
+      const windowBars = window1m.length >= 6 ? window1m : window5m;
+
+      // Require at least 3 bars in 09:30-10:00 ET window
       if (windowBars.length < 3) {
-        // Window may not have settled yet if it is today
         continue;
       }
 
-      const grade = computePredictionGrade(pred, windowBars);
+      const frozenAtr = pred.regimeInputs?.atr15m && pred.regimeInputs.atr15m > 0
+        ? pred.regimeInputs.atr15m
+        : 24.5;
+      const grade = computePredictionGrade(pred, windowBars, frozenAtr);
       if (grade) {
         await repo.saveGrade(grade);
         gradedDates.push(pred.targetTradeDate);

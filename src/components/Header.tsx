@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { RefreshCw, Activity, BookOpen, Target, Clock, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { DataStatus } from "@/types/market";
 import { UserProfile } from "@/types/app";
@@ -45,10 +45,23 @@ export function Header({
   onSelectProfile,
 }: HeaderProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { timezone, setTimezone, timezoneCode, config } = useTimezone();
   const [currentTime, setCurrentTime] = useState<string>("");
   const [sessionInfo, setSessionInfo] = useState<CMESessionInfo | null>(null);
   const [currentUser, setCurrentUser] = useState<{ email?: string } | null>(null);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    try {
+      await fetch("/auth/signout", { method: "POST" });
+    } catch {}
+    router.push("/login");
+    router.refresh();
+  };
 
   useEffect(() => {
     const supabase = createClient();
@@ -146,7 +159,7 @@ export function Header({
                     : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60"
                 }`}
               >
-                Calendar
+                News Calendar
               </Link>
             </nav>
           </div>
@@ -276,14 +289,15 @@ export function Header({
                 >
                   {currentUser.email?.split("@")[0]}
                 </span>
-                <Link
-                  href="/auth/signout"
+                <button
+                  type="button"
+                  onClick={handleSignOut}
                   className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center space-x-1"
                   title="Sign Out"
                 >
                   <LogOut className="w-3 h-3" />
                   <span className="hidden sm:inline">Sign Out</span>
-                </Link>
+                </button>
               </div>
             ) : (
               <div className="flex items-center pl-2 border-l border-zinc-800">
@@ -351,7 +365,7 @@ export function Header({
           }`}
         >
           <Clock className="w-4 h-4 mb-0.5" />
-          <span className="text-[10px] tracking-tight">Calendar</span>
+          <span className="text-[10px] tracking-tight">News</span>
         </Link>
       </nav>
     </>

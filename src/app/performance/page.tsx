@@ -22,18 +22,23 @@ export default function PerformancePage() {
     "ALL" | "CORRECT" | "FAILED" | "RETRACE_HIT" | "STOP_HUNT"
   >("ALL");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
 
   const fetchSummary = async () => {
     try {
       setLoading(true);
+      setErrorMsg(null);
       const res = await fetch("/api/calibration/audit");
       const json = await res.json();
       if (json.success) {
         setSummary(json.data);
+      } else {
+        setErrorMsg(json.error || "Failed to load audit summary.");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to load audit summary:", err);
+      setErrorMsg(err?.message || "Failed to load audit summary.");
     } finally {
       setLoading(false);
     }
@@ -146,6 +151,12 @@ export default function PerformancePage() {
             </button>
           </div>
         </div>
+
+        {errorMsg && (
+          <div className="px-4 py-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-mono">
+            {errorMsg}
+          </div>
+        )}
 
         {/* 1. 4-STAT AUDIT SUMMARY (100% Real Data) */}
         {summary && (

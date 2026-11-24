@@ -199,12 +199,10 @@ export async function getOpenBrief(options?: {
   }
 
   // Automatic Calibration Pipeline:
-  // 1. Auto-freeze immutable pre-market prediction snapshot (09:15–10:00 ET)
+  // 1. Auto-freeze immutable pre-market prediction snapshot (08:30–10:00 ET)
   try {
-    const etParts = getETParts(new Date());
-    const timeMins = etParts.hour * 60 + etParts.minute;
     if (
-      (sessionInfo.phase === "PRE_MARKET_LOCK" && timeMins >= 555) ||
+      sessionInfo.phase === "PRE_MARKET_LOCK" ||
       sessionInfo.phase === "NY_OPEN_WINDOW"
     ) {
       await freezePredictionSnapshot(briefData).catch((e) =>

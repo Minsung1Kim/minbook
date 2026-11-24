@@ -655,3 +655,14 @@ All notable changes and architectural decisions are logged here.
 - **Areas To Target Above Bounce Areas (`src/components/Dashboard.tsx`):** Reordered the right panel so `Areas To Target` appears above `Areas It Could Bounce From`.
 - **Price Ladder Default (`src/components/KeyLevelsTable.tsx`):** Changed default `sortMode` to `"LADDER"` in `All Levels`.
 - **Direct Plain-English Bias Copy (`src/lib/market/plainEnglishBrief.ts`):** Replaced academic/contradictory risk messaging (`TERM STRUCTURE BACKWARDATION... risk scaled to 0.5x` under `0x`) with direct explanations, `"NO CLEAR EDGE"`, `"STAY FLAT (0x SIZE)"`, and plain signal counts (`"Signals Split (X Bull, Y Bear)"`).
+
+## [2026-11-24] - News Calendar Overhaul, Session Persistence Fix & Audit Reliability
+- **Fixed Unexpected Sign-Out Bug (`src/components/Header.tsx`, `src/app/auth/signout/route.ts`):**
+  - Root cause: `<Link href="/auth/signout">` triggered Next.js background prefetching against `GET /auth/signout`, which immediately invoked `supabase.auth.signOut()` right after login.
+  - Removed the `GET` handler from `/auth/signout` (now `POST`-only) and replaced the navbar `<Link>` with an explicit `POST` sign-out button handler.
+- **News Calendar (`src/app/calendar/page.tsx`, `src/components/Header.tsx`):**
+  - Renamed `Calendar` / `Economic Calendar` to `News Calendar`.
+  - Set default view filter to `This Week` (`"ALL"`), and minimized days whose events have all passed (`PASSED` collapsible header cards).
+- **Audit Reliability & Automation (`vercel.json`, `src/lib/market/service.ts`, `src/app/api/cron/snapshot-and-grade/route.ts`, `src/app/performance/page.tsx`):**
+  - Added `vercel.json` weekday cron (`25 14 * * 1-5`) targeting `/api/cron/snapshot-and-grade`.
+  - Expanded pre-market immutable freeze window to full `PRE_MARKET_LOCK` (`08:30–09:29 ET`) + `NY_OPEN_WINDOW` (`09:30–09:59 ET`), and added explicit API error display in `/performance`.

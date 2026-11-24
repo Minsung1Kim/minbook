@@ -29,9 +29,9 @@ async function handleCron(req: NextRequest) {
   const etParts = getETParts(new Date());
   const timeMins = etParts.hour * 60 + etParts.minute;
 
-  // 1. Freeze Snapshot if within 09:15–09:30 ET
+  // 1. Freeze Snapshot if within 08:30–09:59 ET
   if (
-    (sessionInfo.phase === "PRE_MARKET_LOCK" && timeMins >= 555) ||
+    sessionInfo.phase === "PRE_MARKET_LOCK" ||
     sessionInfo.phase === "NY_OPEN_WINDOW"
   ) {
     try {

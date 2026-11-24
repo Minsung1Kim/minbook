@@ -24,9 +24,10 @@ export default function CalendarPage() {
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [timeFilter, setTimeFilter] = useState<"ALL" | "TODAY" | "UPCOMING">("TODAY");
+  const [timeFilter, setTimeFilter] = useState<"ALL" | "TODAY" | "UPCOMING">("ALL");
   const [impactFilter, setImpactFilter] = useState<"ALL" | "RED_ONLY" | "RED_ORANGE">("RED_ORANGE");
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
+  const [expandedPassedDays, setExpandedPassedDays] = useState<Record<string, boolean>>({});
   const [lastUpdated, setLastUpdated] = useState<string>("");
 
   const todayStr = useMemo(() => {
@@ -145,7 +146,7 @@ export default function CalendarPage() {
             <div className="space-y-0.5">
               <div className="flex items-center space-x-2">
                 <span className="font-semibold text-base text-zinc-100 tracking-tight">
-                  Economic Calendar
+                  News Calendar
                 </span>
                 <span className="text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
                   Forex Factory Engine
@@ -337,169 +338,204 @@ export default function CalendarPage() {
             <p className="text-zinc-500">Try switching to &quot;This Week&quot; or selecting &quot;All Impacts&quot;.</p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {groupedEvents.map(([dateKey, dayEvents]) => (
-              <div
-                key={dateKey}
-                className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden"
-              >
-                {/* Date Header Strip */}
-                <div className="px-4 py-2 border-b border-zinc-800/80 bg-zinc-950/80 flex items-center justify-between text-xs font-mono">
-                  <span className="font-bold text-zinc-200 text-[11px] tracking-wider">
-                    {formatDateHeader(dateKey)}
-                  </span>
-                  <span className="text-[11px] text-zinc-500">
-                    {dayEvents.length} {dayEvents.length === 1 ? "release" : "releases"}
-                  </span>
-                </div>
+          <div className="space-y-3">
+            {groupedEvents.map(([dateKey, dayEvents]) => {
+              const isDayPassed =
+                dateKey < todayStr ||
+                dayEvents.every((ev) => isEventPassed(ev.date, ev.timeET, !!ev.actual));
+              const isDayExpanded = !isDayPassed || Boolean(expandedPassedDays[dateKey]);
 
-                {/* Events Table */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs font-mono">
-                    <thead className="bg-zinc-950/40 text-zinc-500 text-[11px] uppercase tracking-wider border-b border-zinc-800/60">
-                      <tr>
-                        <th className="py-2 px-3 w-28">Time ({timezoneCode})</th>
-                        <th className="py-2 px-2.5 w-24">Impact</th>
-                        <th className="py-2 px-2 w-16">Cur</th>
-                        <th className="py-2 px-3">Economic Event</th>
-                        <th className="py-2 px-3 text-right w-24">Actual</th>
-                        <th className="py-2 px-3 text-right w-24">Forecast</th>
-                        <th className="py-2 px-3 text-right w-24">Previous</th>
-                        <th className="py-2 px-2.5 text-center w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800/60 tabular-nums">
-                      {dayEvents.map((ev) => {
-                        const passed = isEventPassed(ev.date, ev.timeET, !!ev.actual);
-                        const isExpanded = expandedEventId === ev.id;
-                        const isRed = ev.folderColor === "RED";
-                        const isOrange = ev.folderColor === "ORANGE";
-                        const localTime = convertETTime(ev.timeET);
+              return (
+                <div
+                  key={dateKey}
+                  className={`rounded-lg border overflow-hidden transition-colors ${
+                    isDayPassed
+                      ? "bg-zinc-900/30 border-zinc-800/60"
+                      : "bg-zinc-900/70 border-zinc-800/80"
+                  }`}
+                >
+                  {/* Date Header Strip (Clickable to toggle passed days) */}
+                  <div
+                    onClick={() => {
+                      if (isDayPassed) {
+                        setExpandedPassedDays((prev) => ({
+                          ...prev,
+                          [dateKey]: !prev[dateKey]
+                        }));
+                      }
+                    }}
+                    className={`px-4 py-2 bg-zinc-950/80 flex items-center justify-between text-xs font-mono ${
+                      isDayExpanded ? "border-b border-zinc-800/80" : ""
+                    } ${isDayPassed ? "cursor-pointer hover:bg-zinc-900/80" : ""}`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      {isDayPassed && (
+                        <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/80 text-[10px]">
+                          PASSED
+                        </span>
+                      )}
+                      <span
+                        className={`font-bold text-[11px] tracking-wider ${
+                          isDayPassed ? "text-zinc-500" : "text-zinc-200"
+                        }`}
+                      >
+                        {formatDateHeader(dateKey)}
+                      </span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-[11px] text-zinc-500">
+                      <span>
+                        {dayEvents.length} {dayEvents.length === 1 ? "release" : "releases"}
+                      </span>
+                      {isDayPassed && (
+                        <span className="flex items-center space-x-1 text-zinc-400">
+                          <span>{isDayExpanded ? "Hide" : "Show"}</span>
+                          {isDayExpanded ? (
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-                        // Compare actual vs forecast
-                        const hasActual = Boolean(ev.actual && ev.actual !== "-");
-                        const hasForecast = Boolean(ev.forecast && ev.forecast !== "-");
+                  {/* Events Table (hidden when passed day is minimized) */}
+                  {isDayExpanded && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs font-mono">
+                        <thead className="bg-zinc-950/40 text-zinc-500 text-[11px] uppercase tracking-wider border-b border-zinc-800/60">
+                          <tr>
+                            <th className="py-2 px-3 w-28">Time ({timezoneCode})</th>
+                            <th className="py-2 px-2.5 w-24">Impact</th>
+                            <th className="py-2 px-2 w-16">Cur</th>
+                            <th className="py-2 px-3">News Event</th>
+                            <th className="py-2 px-3 text-right w-24">Actual</th>
+                            <th className="py-2 px-3 text-right w-24">Forecast</th>
+                            <th className="py-2 px-3 text-right w-24">Previous</th>
+                            <th className="py-2 px-2.5 text-center w-10"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800/60 tabular-nums">
+                          {dayEvents.map((ev) => {
+                            const passed = isEventPassed(ev.date, ev.timeET, !!ev.actual);
+                            const isExpanded = expandedEventId === ev.id;
+                            const isRed = ev.folderColor === "RED";
+                            const isOrange = ev.folderColor === "ORANGE";
+                            const localTime = convertETTime(ev.timeET);
 
-                        return (
-                          <React.Fragment key={ev.id}>
-                            <tr
-                              onClick={() =>
-                                setExpandedEventId(isExpanded ? null : ev.id)
-                              }
-                              className={`hover:bg-zinc-800/40 transition-colors cursor-pointer group ${
-                                passed ? "opacity-50 bg-zinc-950/20" : ""
-                              } ${ev.isNearOpenWindow && !passed ? "bg-amber-500/5" : ""}`}
-                            >
-                              {/* Time */}
-                              <td className="py-2.5 px-3 whitespace-nowrap">
-                                <span
-                                  className={`font-semibold ${
-                                    passed
-                                      ? "text-zinc-500 line-through"
-                                      : ev.isNearOpenWindow
-                                      ? "text-amber-400 font-bold"
-                                      : "text-zinc-200"
-                                  }`}
+                            return (
+                              <React.Fragment key={ev.id}>
+                                <tr
+                                  onClick={() =>
+                                    setExpandedEventId(isExpanded ? null : ev.id)
+                                  }
+                                  className={`hover:bg-zinc-800/40 transition-colors cursor-pointer group ${
+                                    passed ? "opacity-50 bg-zinc-950/20" : ""
+                                  } ${ev.isNearOpenWindow && !passed ? "bg-amber-500/5" : ""}`}
                                 >
-                                  {localTime}
-                                </span>
-                              </td>
-
-                              {/* Impact Badge */}
-                              <td className="py-2.5 px-2.5 whitespace-nowrap">
-                                <span
-                                  className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold border ${
-                                    isRed
-                                      ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                      : isOrange
-                                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                                      : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                                  }`}
-                                >
-                                  {isRed ? "HIGH" : isOrange ? "MED" : "LOW"}
-                                </span>
-                              </td>
-
-                              {/* Country */}
-                              <td className="py-2.5 px-2 text-zinc-400 font-medium">
-                                {ev.country}
-                              </td>
-
-                              {/* Event Name */}
-                              <td className="py-2.5 px-3">
-                                <div className="flex items-center space-x-2">
-                                  <span
-                                    className={`font-medium ${
-                                      passed ? "text-zinc-400" : "text-zinc-100"
-                                    }`}
-                                  >
-                                    {ev.event}
-                                  </span>
-                                  {ev.isNearOpenWindow && (
-                                    <span className="text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                      Open Window
+                                  <td className="py-2.5 px-3 whitespace-nowrap">
+                                    <span
+                                      className={`font-semibold ${
+                                        passed
+                                          ? "text-zinc-500 line-through"
+                                          : ev.isNearOpenWindow
+                                          ? "text-amber-400 font-bold"
+                                          : "text-zinc-200"
+                                      }`}
+                                    >
+                                      {localTime}
                                     </span>
-                                  )}
-                                </div>
-                              </td>
+                                  </td>
 
-                              {/* Actual */}
-                              <td className="py-2.5 px-3 text-right">
-                                {ev.actual ? (
-                                  <span className="font-bold text-zinc-100">
-                                    {ev.actual}
-                                  </span>
-                                ) : (
-                                  <span className="text-zinc-600">—</span>
-                                )}
-                              </td>
+                                  <td className="py-2.5 px-2.5 whitespace-nowrap">
+                                    <span
+                                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-bold border ${
+                                        isRed
+                                          ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                          : isOrange
+                                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                          : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                                      }`}
+                                    >
+                                      {isRed ? "HIGH" : isOrange ? "MED" : "LOW"}
+                                    </span>
+                                  </td>
 
-                              {/* Forecast */}
-                              <td className="py-2.5 px-3 text-right text-zinc-300">
-                                {ev.forecast || "—"}
-                              </td>
+                                  <td className="py-2.5 px-2 text-zinc-400 font-medium">
+                                    {ev.country}
+                                  </td>
 
-                              {/* Previous */}
-                              <td className="py-2.5 px-3 text-right text-zinc-500">
-                                {ev.previous || "—"}
-                              </td>
-
-                              {/* Expand Toggle */}
-                              <td className="py-2.5 px-2.5 text-center text-zinc-500 group-hover:text-zinc-300">
-                                {isExpanded ? (
-                                  <ChevronUp className="w-3.5 h-3.5 mx-auto" />
-                                ) : (
-                                  <ChevronDown className="w-3.5 h-3.5 mx-auto" />
-                                )}
-                              </td>
-                            </tr>
-
-                            {/* Expanded Details Row */}
-                            {isExpanded && (
-                              <tr className="bg-zinc-950/60 border-t border-zinc-800/40">
-                                <td colSpan={8} className="p-3.5 space-y-2">
-                                  <div className="p-3 rounded bg-zinc-900 border border-zinc-800 space-y-1.5 text-xs font-sans">
-                                    <div className="flex items-center space-x-1.5 text-zinc-300 font-mono text-[11px] uppercase tracking-wider">
-                                      <Zap className="w-3 h-3 text-amber-400" />
-                                      <span className="font-bold text-zinc-200">
-                                        Futures Market Impact & Mechanics:
+                                  <td className="py-2.5 px-3">
+                                    <div className="flex items-center space-x-2">
+                                      <span
+                                        className={`font-medium ${
+                                          passed ? "text-zinc-400" : "text-zinc-100"
+                                        }`}
+                                      >
+                                        {ev.event}
                                       </span>
+                                      {ev.isNearOpenWindow && (
+                                        <span className="text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                          Open Window
+                                        </span>
+                                      )}
                                     </div>
-                                    <p className="text-zinc-300 leading-relaxed text-xs">
-                                      {ev.marketImpact || ev.notes || "High-impact catalyst. Expect algorithmic spread widening and stop-run probes around release time."}
-                                    </p>
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right">
+                                    {ev.actual ? (
+                                      <span className="font-bold text-zinc-100">
+                                        {ev.actual}
+                                      </span>
+                                    ) : (
+                                      <span className="text-zinc-600">—</span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right text-zinc-300">
+                                    {ev.forecast || "—"}
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right text-zinc-500">
+                                    {ev.previous || "—"}
+                                  </td>
+
+                                  <td className="py-2.5 px-2.5 text-center text-zinc-500 group-hover:text-zinc-300">
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-3.5 h-3.5 mx-auto" />
+                                    ) : (
+                                      <ChevronDown className="w-3.5 h-3.5 mx-auto" />
+                                    )}
+                                  </td>
+                                </tr>
+
+                                {isExpanded && (
+                                  <tr className="bg-zinc-950/60 border-t border-zinc-800/40">
+                                    <td colSpan={8} className="p-3.5 space-y-2">
+                                      <div className="p-3 rounded bg-zinc-900 border border-zinc-800 space-y-1.5 text-xs font-sans">
+                                        <div className="flex items-center space-x-1.5 text-zinc-300 font-mono text-[11px] uppercase tracking-wider">
+                                          <Zap className="w-3 h-3 text-amber-400" />
+                                          <span className="font-bold text-zinc-200">
+                                            Futures Market Impact &amp; Mechanics:
+                                          </span>
+                                        </div>
+                                        <p className="text-zinc-300 leading-relaxed text-xs">
+                                          {ev.marketImpact || ev.notes || "High-impact catalyst. Expect algorithmic spread widening and stop-run probes around release time."}
+                                        </p>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

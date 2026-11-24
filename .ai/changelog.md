@@ -559,6 +559,55 @@ All notable changes and architectural decisions are logged here.
   - Journal view displays an MAE Sample Calibration Banner showing calibration status, trade counts ($N/150$, $N_{\text{wins}}/75$), and upper 90% bootstrap bound.
 - **Documentation Reconciliation (`docs/methodology.md`, `docs/MinBook_Quantitative_Architecture_and_Reasoning_Whitepaper.md`):**
   - Updated both documents to v3.0.0 unified configuration (session hours, 4 orthogonal factors, LTF target bounds, PropProfile rules, Triple-Barrier grader, Bayesian shrinkage, and bootstrap MAE calibration).
+
+## [2026-11-24] - Intraday NQ Scalper Calibration & UI Streamlining Overhaul
+- **Scalper Stop-Loss & Target Calibration (`src/lib/execution/ltfExecution.ts`, `src/lib/market/playbook.ts`):**
+  - Re-calibrated execution engine strictly for CME NQ/MNQ 1-minute intraday scalpers (09:34–09:50 AM ET):
+    - **Stop Loss Tightened:** Capped structural invalidation stops strictly to $[10.0, 18.0]$ pts ($\$20–\$36$/MNQ). Anchored to the immediate 1m micro-swing extreme of the trailing 3 bars rather than the 60–150 pt 3-minute opening impulse range.
+    - **Reachable Scalp TP1 & TP2:**
+      - TP1 (Quick 1:1 Scalp): Capped strictly inside $[10.0, 18.0]$ pts ($+\$20–\$36$/MNQ), measured directly from `entryZone.mid`.
+      - TP2 (Scalp Runner Extension): Capped strictly inside $[20.0, 35.0]$ pts ($+\$40–\$70$/MNQ), measured directly from `entryZone.mid`.
+    - **Demoted HTF Levels:** Any level with distance $> 35$ pts (or $> 0.75 \times \text{ATR}$) from `entryZone.mid` is demoted into the collapsed `Distant HTF Levels` drawer with badge `Distant HTF Pivot (> 35 pts) — Not a Scalp Target`.
+  - Updated `drawsOnLiquidity` and `rrGuidance` in `playbook.ts` to output immediate 1m scalp objectives (+14/-14 pts) and `1.0R–1.8R QUICK SCALP & LOCK (12–25 PTS)`.
+- **UI Simplification & De-Cluttering (`src/components/LTFTradeCardView.tsx`):**
+  - **Removed Account Types Dropdown:** Purged dropdown popover menu and account selector button. Replaced with a clean, static, high-contrast `MNQ SCALP MODE` badge.
+  - **Instant-Read Terminal Grid:** Re-architected trade card into an ultra-clean 4-box parameter grid:
+    - `Trade Action`: Bold `BUY / LONG` or `SELL / SHORT`.
+    - `Limit Entry Zone`: High-contrast price range and mid benchmark.
+    - `Scalp Stop-Loss`: Red bold price with exact points and $\$$/MNQ risk.
+    - `Position Sizing`: MNQ contract count, net risk, and net target.
+  - **High-Visibility Target Cards:** Highlighting TP1 (scale 50%) and TP2 (runner to BE) with Brownian touch probabilities.
+  - **Concise Invalidation Banner:** Sharp 1m MSS kill-switch rule callout.
+- **Grader & Quantization Edge Case Hardening (`src/lib/calibration/grader.ts`, `src/lib/market/gex.ts`):**
+  - Updated `grader.ts`: Preserves `HIT_TP1` when price hits TP1 before later triggering the runner stop or MSS kill-switch.
+  - Hardened `gex.ts`: Locks basis ratio to standard 41.35 when timestamps mismatch $> 60$s and settlement basis is undefined.
+  - Hardened `ltfExecution.ts`: Transitions status to `STAND_ASIDE` when contracts quantize to 0.
+- **Verification:**
+  - Full Vitest suite: 16 test files, 114 tests passing (0 failures).
+  - Next.js 16 production build succeeded with 0 errors.
+- **1-Minute Path-Dependent Triple-Barrier R-Expectancy Grader (`src/lib/calibration/grader.ts`, `src/lib/calibration/store.ts`):**
+  - Replaced binary 0.75x ATR vs 1.00x ATR open-to-high grader with realistic 1-minute path-dependent execution simulation:
+    - Isolates 09:30–09:33 ET observation lock bars to establish `orh3m`, `orl3m`, and initial impulse range.
+    - Simulates limit entry execution at the predicted 40%–50% retrace zone between 09:34 and 09:48 ET. If price never retraces, logs outcome honestly as `NO_FILL`.
+    - Evaluates Barrier 1 (Stop Loss): Invalidation stop hit logs realized $-1.0R$ net of friction.
+    - Evaluates Barrier 2 (Take Profit): Scales out 1 contract at TP1, exits runner at TP2 or triggers 1m MSS kill-switch if opposing candle displaces back across entry.
+    - Evaluates Barrier 3 (Time Exit): At 10:00 AM ET, liquidates remaining active contracts at the 10:00 AM close price.
+    - Deducts exact all-in round-trip commissions ($1.30 MNQ) + 3-tick (0.75 pt / $1.50) opening slippage.
+    - Evaluates strictly proper scoring rules: Brier score $(p - y)^2$ and Logarithmic scoring rule $-\sum y \ln(p)$.
+  - Updated SQLite schema for `prediction_grades` table with columns: `log_score`, `triple_barrier_outcome`, `realized_net_r`, `net_pnl_dollars`, `fill_price`, `fill_time_et`, `exit_price`, `exit_time_et`.
+- **Closed-Form Beta-Binomial Bayesian Shrinkage Optimizer (`src/lib/calibration/optimizer.ts`):**
+  - Replaced discrete 21/9 chronological walk-forward optimizer with closed-form conjugate Beta-Binomial Bayesian Shrinkage:
+    $$\hat{\theta}_j^{\text{Bayes}} = \frac{k_j^{(\gamma)} + \alpha_0}{n_j^{(\gamma)} + \alpha_0 + \beta_0}, \quad \alpha_0 = 25, \beta_0 = 25, \gamma = 0.99$$
+  - Clamps production calibrated weights strictly within $[0.6, 1.5]$ ($w_j^* = \text{clip}(2.0 \times \hat{\theta}_j^{\text{Bayes}}, 0.6, 1.5)$).
+  - Enforced strict Sample Size Gate ($N \ge 60$): `EDGE ENHANCER` ($\ge +4\%$) and `NOISE DETRACTOR` ($\le -4\%$) tags remain suppressed (`NEUTRAL`) until effective sample size $N \ge 60$.
+- **Bootstrap MAE Stop Calibration (`src/lib/db/index.ts`):**
+  - Raised MAE collection gate from 50 total trades to $N \ge 150$ total trades AND $\ge 75$ winning trades.
+  - Implemented `computeBootstrapUpperP90`: evaluates 1,000 bootstrap resamples of Winners' P90 MAE and computes the non-parametric upper 90% confidence bound before recommending any stop tightening.
+- **UI Enhancements (`src/app/performance/page.tsx`, `src/app/journal/page.tsx`):**
+  - Performance audit view displays `Beta-Binomial Bayesian Shrinkage active`, showing triple barrier outcome badges (`HIT_TP1`, `HIT_TP2`, `STOPPED_OUT`, `TIME_EXIT`, `NO_FILL`) and realized net R.
+  - Journal view displays an MAE Sample Calibration Banner showing calibration status, trade counts ($N/150$, $N_{\text{wins}}/75$), and upper 90% bootstrap bound.
+- **Documentation Reconciliation (`docs/methodology.md`, `docs/MinBook_Quantitative_Architecture_and_Reasoning_Whitepaper.md`):**
+  - Updated both documents to v3.0.0 unified configuration (session hours, 4 orthogonal factors, LTF target bounds, PropProfile rules, Triple-Barrier grader, Bayesian shrinkage, and bootstrap MAE calibration).
 - **Verification:**
   - Added unit test suite `src/__tests__/sprint3_calibration_and_grader.test.ts` covering:
     - Triple-Barrier limit fill, scale-out, MSS kill-switch, and 10:00 AM vertical exit.

@@ -25,15 +25,13 @@ interface LTFTradeCardViewProps {
 export function LTFTradeCardView({
   card,
   currentPrice,
-  propProfile = PROP_PRESETS.Topstep_EOD,
-  onSelectPropProfile
+  propProfile = PROP_PRESETS.Topstep_EOD
 }: LTFTradeCardViewProps) {
   const [showHTFContext, setShowHTFContext] = useState(false);
-  const [showProfileSelector, setShowProfileSelector] = useState(false);
 
   if (!card) {
     return (
-      <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-4 text-xs font-mono text-zinc-400">
+      <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-4 text-xs font-mono text-zinc-400">
         Waiting for 09:30 AM ET market open bars to initialize LTF Execution Engine...
       </div>
     );
@@ -43,13 +41,13 @@ export function LTFTradeCardView({
   const isShort = card.direction === "SHORT";
 
   return (
-    <div className="rounded-lg bg-zinc-900/90 border border-zinc-800/90 overflow-hidden font-sans space-y-0 shadow-lg">
+    <div className="rounded-lg bg-zinc-900/90 border border-zinc-800 overflow-hidden font-sans space-y-0 shadow-xl">
       {/* Top Header Bar */}
-      <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/80 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-4 py-2.5 border-b border-zinc-800 bg-zinc-950 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center space-x-2">
           <Crosshair className="w-4 h-4 text-cyan-400" />
           <span className="font-mono text-xs font-bold text-zinc-100 uppercase tracking-wider">
-            1-Min Intraday Execution Card
+            1-Min NQ Scalp Card
           </span>
           <span
             className={`font-mono text-[10px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider ${
@@ -65,41 +63,10 @@ export function LTFTradeCardView({
         </div>
 
         <div className="flex items-center space-x-2 text-xs">
-          {/* Prop Profile Badge / Dropdown Toggle */}
-          <div className="relative">
-            <button
-              onClick={() => setShowProfileSelector(!showProfileSelector)}
-              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 font-mono text-[11px] flex items-center space-x-1 transition-colors"
-            >
-              <span>{propProfile.accountName}</span>
-              <ChevronDown className="w-3 h-3 text-zinc-400" />
-            </button>
-
-            {showProfileSelector && (
-              <div className="absolute right-0 mt-1 w-64 bg-zinc-950 border border-zinc-800 rounded shadow-xl z-50 p-1 divide-y divide-zinc-900">
-                <div className="px-2 py-1 text-[10px] font-mono text-zinc-500 uppercase">
-                  Select Prop Profile
-                </div>
-                {Object.values(PROP_PRESETS).map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      onSelectPropProfile?.(p);
-                      setShowProfileSelector(false);
-                    }}
-                    className={`w-full text-left px-2 py-1.5 rounded text-xs font-mono transition-colors flex items-center justify-between ${
-                      p.id === propProfile.id
-                        ? "bg-cyan-950/60 text-cyan-300"
-                        : "hover:bg-zinc-900 text-zinc-300"
-                    }`}
-                  >
-                    <span>{p.accountName}</span>
-                    <span className="text-[10px] text-zinc-500">{p.drawdownMode.split("_")[0]}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Static Clean Scalper Badge - No Dropdown Clutter */}
+          <span className="px-2.5 py-0.5 rounded bg-zinc-800/90 text-cyan-300 border border-zinc-700/80 font-mono text-[11px] font-semibold tracking-wider">
+            MNQ SCALP MODE
+          </span>
 
           <span className="font-mono text-[11px] text-zinc-400">
             NQ: <strong className="text-zinc-100 tabular-nums">{currentPrice.toFixed(2)}</strong>
@@ -109,14 +76,14 @@ export function LTFTradeCardView({
 
       {/* Observation Lock Banner (09:30–09:33 ET) */}
       {isObservationLock && (
-        <div className="px-4 py-3 bg-amber-950/30 border-b border-amber-900/50 flex items-start space-x-2.5">
+        <div className="px-4 py-2.5 bg-amber-950/40 border-b border-amber-900/50 flex items-start space-x-2.5">
           <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           <div className="text-xs space-y-0.5 font-mono">
             <span className="font-bold text-amber-300 uppercase tracking-wider block">
-              09:30–09:33 ET Observation Freeze Active
+              09:30–09:33 ET Observation Freeze
             </span>
             <p className="text-zinc-300 text-[11px] leading-tight font-sans">
-              Hands off mouse. Establishing 3-minute Opening Range: ORH ({card.orh3m?.toFixed(1)}) / ORL ({card.orl3m?.toFixed(1)}). The execution window opens at 09:34 ET.
+              Hands off mouse. Establishing 3-minute Opening Range: ORH ({card.orh3m?.toFixed(1)}) / ORL ({card.orl3m?.toFixed(1)}). Execution window opens at 09:34 ET.
             </p>
           </div>
         </div>
@@ -124,11 +91,11 @@ export function LTFTradeCardView({
 
       {/* Anti-Chase Gate Alert Banner */}
       {card.antiChaseWarning && (
-        <div className="px-4 py-3 bg-rose-950/40 border-b border-rose-900/50 flex items-start space-x-2.5">
+        <div className="px-4 py-2.5 bg-rose-950/50 border-b border-rose-900/60 flex items-start space-x-2.5">
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-          <div className="text-xs space-y-1 font-mono">
+          <div className="text-xs space-y-0.5 font-mono">
             <span className="font-bold text-rose-300 uppercase tracking-wider block">
-              Anti-Chase Gate Triggered — Do Not Market Chase
+              Anti-Chase Gate: Do Not Market Chase
             </span>
             <p className="text-zinc-300 text-[11px] leading-tight font-sans">
               {card.antiChaseMessage}
@@ -139,7 +106,7 @@ export function LTFTradeCardView({
 
       {/* News Blackout Alert Banner */}
       {card.newsBlackoutWarning && (
-        <div className="px-4 py-2.5 bg-rose-900/30 border-b border-rose-800/60 flex items-center space-x-2 text-xs font-mono text-rose-300">
+        <div className="px-4 py-2 bg-rose-900/30 border-b border-rose-800/60 flex items-center space-x-2 text-xs font-mono text-rose-300">
           <Flame className="w-4 h-4 text-rose-400 shrink-0" />
           <span>{card.newsBlackoutWarning}</span>
         </div>
@@ -154,75 +121,90 @@ export function LTFTradeCardView({
       )}
 
       {/* Main Trade Parameters Grid */}
-      <div className="p-4 space-y-4">
-        {/* Row 1: Direction, Limit Entry Zone, Stop-Loss */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono">
-          {/* Direction */}
-          <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 space-y-1">
-            <span className="text-[11px] text-zinc-500 uppercase tracking-wider block">
-              Trade Direction
+      <div className="p-4 space-y-3">
+        {/* Row 1: Direction, Limit Entry Zone, Tight Scalp Stop, Position Size */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono">
+          {/* Action / Direction */}
+          <div className="p-2.5 rounded bg-zinc-950/70 border border-zinc-800 space-y-1">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">
+              Trade Action
             </span>
             <span
-              className={`text-sm font-bold block ${
+              className={`text-base font-bold block ${
                 isShort ? "text-rose-400" : "text-emerald-400"
               }`}
             >
-              {card.direction} ({card.archetype === "SWEEP_MSS_REVERSAL" ? "MSS REVERSAL" : "40-50% RETRACE"})
+              {isShort ? "SELL / SHORT" : "BUY / LONG"}
             </span>
-            <span className="text-[10px] text-zinc-400 block font-sans">
-              1 trade per day mandate
+            <span className="text-[10px] text-zinc-400 block font-sans truncate">
+              {card.archetype === "SWEEP_MSS_REVERSAL" ? "MSS Reversal" : "40-50% Retrace"}
             </span>
           </div>
 
           {/* Limit Entry Zone */}
-          <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 space-y-1">
-            <span className="text-[11px] text-zinc-500 uppercase tracking-wider block">
+          <div className="p-2.5 rounded bg-zinc-950/70 border border-zinc-800 space-y-1">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">
               Limit Entry Zone
             </span>
             <span className="text-sm font-bold text-zinc-100 tabular-nums block">
               {card.entryZone.low.toFixed(1)} – {card.entryZone.high.toFixed(1)}
             </span>
             <span className="text-[10px] text-cyan-400 block tabular-nums">
-              Mid Benchmark: {card.entryZone.mid.toFixed(1)}
+              Mid: {card.entryZone.mid.toFixed(1)}
             </span>
           </div>
 
-          {/* Structural Stop-Loss */}
-          <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 space-y-1">
-            <span className="text-[11px] text-zinc-500 uppercase tracking-wider block">
-              1m Structural Stop
+          {/* Tight Scalp Stop-Loss */}
+          <div className="p-2.5 rounded bg-zinc-950/70 border border-zinc-800 space-y-1">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">
+              Scalp Stop-Loss
             </span>
-            <span className="text-sm font-bold text-rose-400 tabular-nums block">
+            <span className="text-base font-bold text-rose-400 tabular-nums block">
               {card.stopLoss.toFixed(1)}
             </span>
             <span className="text-[10px] text-zinc-400 block tabular-nums">
-              Risk: {card.stopPts.toFixed(1)} pts (Swing + buffer)
+              Risk: {card.stopPts.toFixed(1)} pts (${(card.stopPts * 2).toFixed(0)}/MNQ)
+            </span>
+          </div>
+
+          {/* Position Sizing */}
+          <div className="p-2.5 rounded bg-zinc-950/70 border border-zinc-800 space-y-1">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider block">
+              Position Sizing
+            </span>
+            <span className="text-base font-bold text-amber-300 tabular-nums block">
+              {card.contracts} MNQ
+            </span>
+            <span className="text-[10px] text-zinc-400 block tabular-nums truncate">
+              Net Risk: ${card.netRiskDollars}
             </span>
           </div>
         </div>
 
-        {/* Row 2: Reachability Targets (TP1 & TP2 with Brownian Touch Probabilities) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono">
-          {/* TP1 Card */}
-          <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 space-y-2">
+        {/* Row 2: Scalp Targets (TP1 & TP2 with Brownian Touch Probabilities) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 font-mono">
+          {/* TP1 Scalp Card */}
+          <div className="p-3 rounded bg-zinc-950/70 border border-zinc-800 space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-zinc-400 uppercase tracking-wider flex items-center space-x-1.5 font-semibold">
+              <span className="text-[11px] text-zinc-300 uppercase tracking-wider flex items-center space-x-1.5 font-semibold">
                 <Target className="w-3.5 h-3.5 text-emerald-400" />
-                <span>TP1 · Primary Scalp [0.25–0.45x ATR]</span>
+                <span>TP1 · Quick Scalp Target</span>
               </span>
-              <span className="text-sm font-bold text-emerald-400 tabular-nums">
+              <span className="text-base font-bold text-emerald-400 tabular-nums">
                 {card.tp1.price.toFixed(1)}
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs text-zinc-300">
               <span className="text-[11px] text-zinc-400 font-sans">{card.tp1.rationale}</span>
-              <span className="tabular-nums font-semibold">+{card.tp1.distancePts.toFixed(1)} pts</span>
+              <span className="tabular-nums font-semibold text-emerald-400">
+                +{card.tp1.distancePts.toFixed(1)} pts (${(card.tp1.distancePts * 2).toFixed(0)}/MNQ)
+              </span>
             </div>
 
             {/* Brownian Touch Probabilities */}
             <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between text-[10px] text-zinc-400">
-              <span>First-Passage Prob:</span>
+              <span>First-Passage Probability:</span>
               <span className="space-x-2 tabular-nums">
                 <span>5m: <strong className="text-zinc-200">{(card.tp1.hitProb5m * 100).toFixed(0)}%</strong></span>
                 <span>10m: <strong className="text-emerald-400">{(card.tp1.hitProb10m * 100).toFixed(0)}%</strong></span>
@@ -231,26 +213,28 @@ export function LTFTradeCardView({
             </div>
           </div>
 
-          {/* TP2 Card */}
-          <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 space-y-2">
+          {/* TP2 Scalp Runner Card */}
+          <div className="p-3 rounded bg-zinc-950/70 border border-zinc-800 space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-zinc-400 uppercase tracking-wider flex items-center space-x-1.5 font-semibold">
+              <span className="text-[11px] text-zinc-300 uppercase tracking-wider flex items-center space-x-1.5 font-semibold">
                 <Target className="w-3.5 h-3.5 text-cyan-400" />
-                <span>TP2 · Runner Extension [0.50–0.75x ATR]</span>
+                <span>TP2 · Scalp Runner Extension</span>
               </span>
-              <span className="text-sm font-bold text-cyan-400 tabular-nums">
+              <span className="text-base font-bold text-cyan-400 tabular-nums">
                 {card.tp2.price.toFixed(1)}
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs text-zinc-300">
               <span className="text-[11px] text-zinc-400 font-sans">{card.tp2.rationale}</span>
-              <span className="tabular-nums font-semibold">+{card.tp2.distancePts.toFixed(1)} pts</span>
+              <span className="tabular-nums font-semibold text-cyan-400">
+                +{card.tp2.distancePts.toFixed(1)} pts (${(card.tp2.distancePts * 2).toFixed(0)}/MNQ)
+              </span>
             </div>
 
             {/* Brownian Touch Probabilities */}
             <div className="pt-1 border-t border-zinc-800/80 flex items-center justify-between text-[10px] text-zinc-400">
-              <span>First-Passage Prob:</span>
+              <span>First-Passage Probability:</span>
               <span className="space-x-2 tabular-nums">
                 <span>5m: <strong className="text-zinc-200">{(card.tp2.hitProb5m * 100).toFixed(0)}%</strong></span>
                 <span>10m: <strong className="text-cyan-400">{(card.tp2.hitProb10m * 100).toFixed(0)}%</strong></span>
@@ -260,39 +244,28 @@ export function LTFTradeCardView({
           </div>
         </div>
 
-        {/* Row 3: Sizing, Scale-Out Split & Net R:R after Friction */}
-        <div className="p-3 rounded bg-zinc-950/80 border border-zinc-800 space-y-2 text-xs font-mono">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/80 pb-2">
-            <div className="flex items-center space-x-2">
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span className="font-bold text-zinc-200 uppercase tracking-wider">
-                Position Sizing: {card.contracts} MNQ Contracts
-              </span>
-            </div>
-            <div className="flex items-center space-x-3 tabular-nums">
-              <span className="text-zinc-400">Net Risk: <strong className="text-rose-400">${card.netRiskDollars}</strong></span>
-              <span className="text-zinc-400">Net Target: <strong className="text-emerald-400">${card.netTargetDollars}</strong></span>
-              <span className="text-zinc-400">Net R:R: <strong className="text-zinc-100">{card.netRR}R</strong></span>
-            </div>
+        {/* Row 3: Sizing & Scale-Out Execution Directive */}
+        <div className="p-2.5 rounded bg-zinc-950/80 border border-zinc-800 space-y-1 text-xs font-mono">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-zinc-300 uppercase tracking-wider flex items-center space-x-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span>Execution Directive</span>
+            </span>
+            <span className="text-zinc-400 tabular-nums text-[11px]">
+              Target: <strong className="text-emerald-400">${card.netTargetDollars}</strong> · Net R:R: <strong className="text-zinc-100">{card.netRR}R</strong>
+            </span>
           </div>
-
-          <p className="text-zinc-300 text-[11px] leading-tight font-sans">
+          <p className="text-zinc-300 text-[11px] leading-relaxed font-sans">
             {card.contractSplitDirective}
           </p>
-
-          {card.consistencyCapWarning && (
-            <p className="text-amber-400 text-[11px] font-sans">
-              {card.consistencyCapWarning}
-            </p>
-          )}
         </div>
 
-        {/* Row 4: 1m MSS Exit / Kill-Switch Price */}
-        <div className="p-3 rounded bg-zinc-950/60 border border-zinc-800 flex items-start space-x-2.5">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        {/* Row 4: 1m MSS Invalidation Rule */}
+        <div className="p-2.5 rounded bg-zinc-950/60 border border-zinc-800 flex items-start space-x-2.5">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
           <div className="text-xs space-y-0.5 font-mono">
-            <span className="font-bold text-amber-300 uppercase tracking-wider block">
-              1-Minute MSS Exit / Kill-Switch Price: {card.killSwitchPrice.toFixed(2)}
+            <span className="font-bold text-amber-300 uppercase tracking-wider block text-[11px]">
+              1-Minute MSS Invalidation: {card.killSwitchPrice.toFixed(2)}
             </span>
             <p className="text-zinc-400 text-[11px] leading-tight font-sans">
               {card.killSwitchMessage}
@@ -302,31 +275,31 @@ export function LTFTradeCardView({
 
         {/* Collapsed HTF Context Only Panel */}
         {card.htfDemotedLevels && card.htfDemotedLevels.length > 0 && (
-          <div className="border border-zinc-800 rounded bg-zinc-950/40 overflow-hidden text-xs">
+          <div className="border border-zinc-800/80 rounded bg-zinc-950/30 overflow-hidden text-xs">
             <button
               onClick={() => setShowHTFContext(!showHTFContext)}
-              className="w-full px-3 py-2 flex items-center justify-between text-zinc-400 hover:text-zinc-200 transition-colors font-mono text-[11px]"
+              className="w-full px-3 py-1.5 flex items-center justify-between text-zinc-500 hover:text-zinc-300 transition-colors font-mono text-[10px]"
             >
               <span>
-                HTF Context Only ({card.htfDemotedLevels.length} Distant Levels Demoted &gt; 0.75x ATR)
+                Distant HTF Levels ({card.htfDemotedLevels.length} Pivots &gt; 35 pts away — Not Scalp Targets)
               </span>
               <div className="flex items-center space-x-1">
-                <span className="text-[10px] text-zinc-500">Not Scalp Targets</span>
-                {showHTFContext ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                <span>{showHTFContext ? "Hide" : "Show"}</span>
+                {showHTFContext ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
               </div>
             </button>
 
             {showHTFContext && (
-              <div className="divide-y divide-zinc-800/60 border-t border-zinc-800 px-3 py-1 font-mono text-[11px]">
+              <div className="divide-y divide-zinc-800/50 border-t border-zinc-800/60 px-3 py-1 font-mono text-[11px]">
                 {card.htfDemotedLevels.map((lvl, idx) => (
-                  <div key={idx} className="py-1.5 flex items-center justify-between">
+                  <div key={idx} className="py-1 flex items-center justify-between">
                     <div>
-                      <span className="text-zinc-300 font-semibold">{lvl.name}</span>
-                      <span className="text-zinc-500 ml-2">({lvl.price.toFixed(1)})</span>
+                      <span className="text-zinc-400">{lvl.name}</span>
+                      <span className="text-zinc-600 ml-2">({lvl.price.toFixed(1)})</span>
                     </div>
-                    <div className="flex items-center space-x-3 tabular-nums">
-                      <span className="text-zinc-400">{lvl.distancePts.toFixed(1)} pts</span>
-                      <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">
+                    <div className="flex items-center space-x-2 tabular-nums">
+                      <span className="text-zinc-500">{lvl.distancePts.toFixed(1)} pts away</span>
+                      <span className="px-1.5 py-0.2 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-500">
                         {lvl.badge}
                       </span>
                     </div>

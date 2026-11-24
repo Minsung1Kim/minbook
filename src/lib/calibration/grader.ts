@@ -300,8 +300,8 @@ export function computePredictionGrade(
       const et = getBarETParts(b.timestamp);
       const m = et.hour * 60 + et.minute;
 
-      // Barrier 1: Stop Loss
-      if ((isBull && b.low <= stopLoss) || (isBear && b.high >= stopLoss)) {
+      // Barrier 1: Stop Loss (Pre-TP1 initial stop-loss)
+      if (!tp1Hit && ((isBull && b.low <= stopLoss) || (isBear && b.high >= stopLoss))) {
         const exitPx = isBull ? stopLoss - slippagePts : stopLoss + slippagePts;
         const pts = isBull ? exitPx - fillPrice : fillPrice - exitPx;
         realizedGrossDollars += remainingContracts * (pts * pointValue);

@@ -327,57 +327,65 @@ export function generateTacticalPlaybook(
     }
   ];
 
-  // D. Strongest Draws on Liquidity (Magnets)
-  const drawsOnLiquidity: Trader5Answers["drawsOnLiquidity"] = [
-    {
-      name: `Overnight High (ONH ${onh.toFixed(1)})`,
-      price: onh,
-      type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
-      strength: "MAGNET #1 (PRIMARY TARGET)",
-      pointsDistance: Math.round((onh - currentPrice) * 10) / 10
-    },
-    {
-      name: `Prior Day High (${pdh.toFixed(1)})`,
-      price: pdh,
-      type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
-      strength: "MAGNET #2",
-      pointsDistance: Math.round((pdh - currentPrice) * 10) / 10
-    },
-    {
-      name: `Daily Volatility Upper Boundary (${metrics.upperStraddle.toFixed(1)})`,
-      price: metrics.upperStraddle,
-      type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
-      strength: "SECONDARY",
-      pointsDistance: Math.round((metrics.upperStraddle - currentPrice) * 10) / 10
-    }
-  ];
+  // D. Strongest Draws on Liquidity (Direction-Aware Scalp Objectives & HTF Pools)
+  const drawsOnLiquidity: Trader5Answers["drawsOnLiquidity"] = isBull
+    ? [
+        {
+          name: `Immediate 1m Scalp Objective (+14.0 pts)`,
+          price: Math.round((currentPrice + 14.0) * 10) / 10,
+          type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
+          strength: "MAGNET #1 (PRIMARY TARGET)",
+          pointsDistance: 14.0
+        },
+        {
+          name: `Overnight High (ONH ${onh.toFixed(1)})`,
+          price: onh,
+          type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
+          strength: "MAGNET #2",
+          pointsDistance: Math.round((onh - currentPrice) * 10) / 10
+        },
+        {
+          name: `Prior Day High (${pdh.toFixed(1)}) [HTF Context]`,
+          price: pdh,
+          type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
+          strength: "SECONDARY",
+          pointsDistance: Math.round((pdh - currentPrice) * 10) / 10
+        }
+      ]
+    : [
+        {
+          name: `Immediate 1m Scalp Objective (-14.0 pts)`,
+          price: Math.round((currentPrice - 14.0) * 10) / 10,
+          type: "SELL-SIDE LIQUIDITY (RESTING SELL STOPS)",
+          strength: "MAGNET #1 (PRIMARY TARGET)",
+          pointsDistance: -14.0
+        },
+        {
+          name: `Overnight Low (ONL ${onl.toFixed(1)})`,
+          price: onl,
+          type: "SELL-SIDE LIQUIDITY (RESTING SELL STOPS)",
+          strength: "MAGNET #2",
+          pointsDistance: Math.round((onl - currentPrice) * 10) / 10
+        },
+        {
+          name: `Prior Day Low (${pdl.toFixed(1)}) [HTF Context]`,
+          price: pdl,
+          type: "SELL-SIDE LIQUIDITY (RESTING SELL STOPS)",
+          strength: "SECONDARY",
+          pointsDistance: Math.round((pdl - currentPrice) * 10) / 10
+        }
+      ];
 
-  // E. Session R:R Strategy Recommendation factoring Layer 1 Risk & Target Caps
-  const isNegGamma = bias.gex?.netGammaRegime === "NEGATIVE_GAMMA";
-  const isPosGamma = bias.gex?.netGammaRegime === "POSITIVE_GAMMA";
-  const isHighVol = atr15 > 30 || bias.volatilitySurface?.isNegativeVrp;
-  const targetMultipleR = layer1.targetCapMultipleR;
-  const isCapped = targetMultipleR <= 1.8;
+  // E. Session R:R Strategy Recommendation factoring Scalp Rules & Layer 1 Caps
+  const targetMultipleR = Math.min(1.8, Math.max(1.0, layer1.targetCapMultipleR));
+  const scalpTargetPts = Math.max(12, Math.min(25, Math.round(atr15 * 0.25)));
 
-  const rrGuidance: Trader5Answers["rrGuidance"] = isCapped
-    ? {
-        recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
-        targetMultipleR: targetMultipleR,
-        recommendedTargetPts: Math.round(atr15 * 0.8),
-        rationale: isPosGamma
-          ? `Options dealers are dampening volatility (+Γ). Pinning risk is high near Call Wall (${bias.gex?.callWallNq}). Layer 1 target capped at ${targetMultipleR}R.`
-          : isHighVol
-          ? `Intraday volatility is elevated (${atr15} pts 15m ATR) or negative VRP active. Whipsaws are violent. Layer 1 risk target capped at ${targetMultipleR}R.`
-          : `Market regime indicates compression/chop or reversal risk. Target capped at ${targetMultipleR}R.`
-      }
-    : {
-        recommendedStrategy: "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)",
-        targetMultipleR: isNegGamma ? 3.0 : Math.max(2.2, targetMultipleR),
-        recommendedTargetPts: Math.round(atr15 * (isNegGamma ? 1.8 : 1.5)),
-        rationale: isNegGamma
-          ? `Options dealers are accelerating momentum (-Γ). The market has room to run toward Call Wall (${bias.gex?.callWallNq}) / Put Wall (${bias.gex?.putWallNq}). Aim for a 2.5R–3.0R runner target.`
-          : `Volatility is normal and healthy (${atr15} pts 15m ATR). Allow your runner to reach primary targets at ONH/PDH for ~2.2R–2.8R.`
-      };
+  const rrGuidance: Trader5Answers["rrGuidance"] = {
+    recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
+    targetMultipleR,
+    recommendedTargetPts: scalpTargetPts,
+    rationale: `Scalp Execution Mandate: Quick 10–18 pt scalp on TP1 (scale 50%), 20–35 pt runner on TP2 with stop moved to Breakeven. Risk capped at 10–18 pts.`
+  };
 
   const trader5Answers: Trader5Answers = {
     biasDirection,

@@ -56,7 +56,7 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
         accountName: "Topstep $50k",
         drawdownMode: "EOD_TRAILING",
         maxTrailingDrawdown: 2000,
-        currentRemainingDrawdown: 2000,
+        currentRemainingDrawdown: 40, // severely depleted drawdown ($40 left, risk cap $20)
         cycleProfitTarget: 3000,
         consistencyRulePercent: 40,
         mnqFeeRoundTrip: 1.30,

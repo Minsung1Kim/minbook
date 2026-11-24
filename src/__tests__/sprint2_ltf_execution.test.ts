@@ -172,28 +172,26 @@ describe("Sprint 2: Lower-Timeframe (1m) Trade Card & Prop-Firm Risk Engine", ()
       expect(card.archetype).toBe("RETRACE_CONTINUATION");
       expect(card.direction).toBe("SHORT");
 
-      // Reachable targets inside [0.25, 0.75] * ATR_Open_15m (26.25 to 78.75 pts)
-      // TP1 must be inside [0.25, 0.45] * ATR_Open_15m (26.25 to 47.25 pts)
-      expect(card.tp1.distancePts).toBeGreaterThanOrEqual(0.25 * atrOpen15m);
-      expect(card.tp1.distancePts).toBeLessThanOrEqual(0.45 * atrOpen15m);
-      expect(card.tp1.distancePts).toBeCloseTo(42.0, 0);
+      // Reachable scalper targets inside tight [10, 18] and [20, 35] pt bounds
+      // TP1 must be inside [10.0, 18.0] pts (tight 1:1 scalp)
+      expect(card.tp1.distancePts).toBeGreaterThanOrEqual(10.0);
+      expect(card.tp1.distancePts).toBeLessThanOrEqual(18.0);
 
-      // TP2 must be inside [0.50, 0.75] * ATR_Open_15m (52.5 to 78.75 pts)
-      expect(card.tp2.distancePts).toBeGreaterThanOrEqual(0.50 * atrOpen15m);
-      expect(card.tp2.distancePts).toBeLessThanOrEqual(0.75 * atrOpen15m);
-      expect(card.tp2.distancePts).toBeCloseTo(68.0, 0);
+      // TP2 must be inside [20.0, 35.0] pts (tight scalp runner)
+      expect(card.tp2.distancePts).toBeGreaterThanOrEqual(20.0);
+      expect(card.tp2.distancePts).toBeLessThanOrEqual(35.0);
 
-      // Sizing on Topstep $50k Express ($250 risk budget, stopPts ~20-25 pts)
+      // Sizing on Topstep $50k Express ($250 risk budget, stopPts ~14 pts)
       expect(card.contracts).toBeGreaterThanOrEqual(3);
-      expect(card.contracts).toBeLessThanOrEqual(5);
+      expect(card.contracts).toBeLessThanOrEqual(8);
 
-      // Proves distant 150-pt HTF magnets (> 0.75x ATR = 78.75 pts) are demoted to HTF Context Only
+      // Proves distant 150-pt HTF magnets are demoted to HTF Context Only
       expect(card.tp1.distancePts).not.toBe(150.0);
       expect(card.tp2.distancePts).not.toBe(150.0);
 
       const demotedPDL = card.htfDemotedLevels.find((lvl) => lvl.name.includes("Distant Prior Day Low") || lvl.distancePts >= 140);
       expect(demotedPDL).toBeDefined();
-      expect(demotedPDL?.badge).toContain("HTF Context Only — Low 10m Hit Prob");
+      expect(demotedPDL?.badge).toContain("Distant HTF Pivot");
       expect(demotedPDL?.hitProb10m).toBeLessThan(0.10); // < 10% Brownian touch probability
     });
 

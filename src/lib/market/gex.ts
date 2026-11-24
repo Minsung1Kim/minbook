@@ -308,6 +308,9 @@ export function finalizeGEXData(
           syncOptions.priorSynchronousSettlementBasis > 0
         ) {
           basisRatio = syncOptions.priorSynchronousSettlementBasis;
+        } else {
+          // If prior synchronous settlement basis is missing, reject corrupted async ratio and lock to standard QQQ parity
+          basisRatio = 41.35;
         }
       }
     }

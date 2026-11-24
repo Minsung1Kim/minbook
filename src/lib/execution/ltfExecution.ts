@@ -131,12 +131,21 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     propProfile?.newsBlackoutMinutes ?? 2
   );
 
+  // Default direction determination from Layer 2 / HTF impulse
+  let direction: "LONG" | "SHORT" = "SHORT";
+  if (layer2) {
+    direction = layer2.direction === "BULLISH" ? "LONG" : "SHORT";
+  } else if (metrics.htfImpulseDirection) {
+    direction = metrics.htfImpulseDirection === "BULLISH" ? "LONG" : "SHORT";
+  }
+
   // 3. Phase A: 09:30–09:33 ET Observation Lock
   if (curTotalMins <= 9 * 60 + 33) {
-    const stopPts = Math.round(0.25 * safeAtrOpen15m * 10) / 10;
+    const stopPts = 14.0; // Scalper baseline stop (14 pts)
+    const stopLoss = direction === "LONG" ? currentPrice - 14.0 : currentPrice + 14.0;
     const dummySizing = computeDetailedRiskPlan({
       entryPrice: currentPrice,
-      stopPrice: currentPrice - stopPts,
+      stopPrice: stopLoss,
       instrument: "MNQ",
       propProfile
     });
@@ -144,30 +153,30 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     return {
       status: "OBSERVATION_LOCK",
       archetype: "OBSERVATION_FREEZE",
-      direction: "SHORT",
+      direction,
       entryZone: {
         low: orl3m,
         high: orh3m,
         mid: Math.round(((orh3m + orl3m) / 2) * 100) / 100
       },
-      stopLoss: orh3m + 5,
+      stopLoss,
       stopPts,
       antiChaseWarning: false,
       tp1: {
-        price: orl3m,
-        distancePts: Math.abs(currentPrice - orl3m),
-        hitProb5m: 0.5,
-        hitProb10m: 0.6,
-        hitProb15m: 0.7,
-        rationale: "ORL 3m Boundary"
+        price: direction === "LONG" ? currentPrice + 14.0 : currentPrice - 14.0,
+        distancePts: 14.0,
+        hitProb5m: 0.65,
+        hitProb10m: 0.80,
+        hitProb15m: 0.88,
+        rationale: "Scalp Target 1 (14 pts)"
       },
       tp2: {
-        price: orl3m - 20,
-        distancePts: Math.abs(currentPrice - (orl3m - 20)),
-        hitProb5m: 0.3,
-        hitProb10m: 0.45,
-        hitProb15m: 0.55,
-        rationale: "Initial Liquidity Pool"
+        price: direction === "LONG" ? currentPrice + 26.0 : currentPrice - 26.0,
+        distancePts: 26.0,
+        hitProb5m: 0.40,
+        hitProb10m: 0.60,
+        hitProb15m: 0.72,
+        rationale: "Scalp Runner (26 pts)"
       },
       htfDemotedLevels: [],
       killSwitchPrice: currentPrice,
@@ -198,14 +207,6 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
       : safeAtrOpen15m / 8;
 
   const stopBuffer = Math.max(3.0, Math.round(0.25 * atr1mPost933 * 10) / 10);
-
-  // Default direction determination from Layer 2 / HTF impulse
-  let direction: "LONG" | "SHORT" = "SHORT";
-  if (layer2) {
-    direction = layer2.direction === "BULLISH" ? "LONG" : "SHORT";
-  } else if (metrics.htfImpulseDirection) {
-    direction = metrics.htfImpulseDirection === "BULLISH" ? "LONG" : "SHORT";
-  }
 
   // Detect Setup Archetypes:
   // a) Sweep + MSS Reversal Check in post-09:33 bars
@@ -256,6 +257,7 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
   let archetype: LTFTradeCard["archetype"] = isSweepMssReversal ? "SWEEP_MSS_REVERSAL" : "RETRACE_CONTINUATION";
   let entryZone = { low: 0, high: 0, mid: 0 };
   let stopLoss = 0;
+  let stopPts = 14.0;
 
   if (archetype === "SWEEP_MSS_REVERSAL") {
     if (direction === "SHORT") {
@@ -264,14 +266,18 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         high: Math.round((sweepLevel + 1.5) * 100) / 100,
         mid: Math.round(sweepLevel * 100) / 100
       };
-      stopLoss = Math.round((sweepExtreme + stopBuffer) * 100) / 100;
+      const rawDist = Math.abs(sweepExtreme + stopBuffer - entryZone.mid);
+      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopLoss = Math.round((entryZone.mid + stopPts) * 100) / 100;
     } else {
       entryZone = {
         low: Math.round((sweepLevel - 1.5) * 100) / 100,
         high: Math.round((sweepLevel + 2.5) * 100) / 100,
         mid: Math.round(sweepLevel * 100) / 100
       };
-      stopLoss = Math.round((sweepExtreme - stopBuffer) * 100) / 100;
+      const rawDist = Math.abs(entryZone.mid - (sweepExtreme - stopBuffer));
+      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopLoss = Math.round((entryZone.mid - stopPts) * 100) / 100;
     }
   } else {
     // Retrace Continuation: 40%–50% impulse retrace zone
@@ -288,15 +294,12 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
       };
 
-      // 1m structural swing stop:
-      // If price has retraced into or near the zone, anchor to retrace high + buffer
-      const hasRetraced = post933Bars.some((b) => b.high >= entryZone.low - 5);
-      if (hasRetraced) {
-        const retraceHigh = Math.max(...post933Bars.map((b) => b.high));
-        stopLoss = Math.round((retraceHigh + Math.max(stopBuffer, 0.15 * safeAtrOpen15m)) * 100) / 100;
-      } else {
-        stopLoss = Math.round((impulseHigh + stopBuffer) * 100) / 100;
-      }
+      // 1m structural micro-swing stop bounded strictly to [10.0, 18.0] pts for scalpers
+      const recentBars = post933Bars.slice(-3);
+      const localHigh = recentBars.length > 0 ? Math.max(...recentBars.map((b) => b.high)) : entryZone.mid + 12;
+      const rawDist = Math.abs(localHigh + stopBuffer - entryZone.mid);
+      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopLoss = Math.round((entryZone.mid + stopPts) * 100) / 100;
     } else {
       const retrace40 = impulseHigh - 0.40 * impulseRange;
       const retrace50 = impulseHigh - 0.50 * impulseRange;
@@ -306,33 +309,35 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
       };
 
-      const hasRetraced = post933Bars.some((b) => b.low <= entryZone.high + 5);
-      if (hasRetraced) {
-        const retraceLow = Math.min(...post933Bars.map((b) => b.low));
-        stopLoss = Math.round((retraceLow - Math.max(stopBuffer, 0.15 * safeAtrOpen15m)) * 100) / 100;
-      } else {
-        stopLoss = Math.round((impulseLow - stopBuffer) * 100) / 100;
-      }
+      // 1m structural micro-swing stop bounded strictly to [10.0, 18.0] pts for scalpers
+      const recentBars = post933Bars.slice(-3);
+      const localLow = recentBars.length > 0 ? Math.min(...recentBars.map((b) => b.low)) : entryZone.mid - 12;
+      const rawDist = Math.abs(entryZone.mid - (localLow - stopBuffer));
+      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopLoss = Math.round((entryZone.mid - stopPts) * 100) / 100;
     }
   }
 
-  const stopPts = Math.max(3.0, Math.round(Math.abs(entryZone.mid - stopLoss) * 100) / 100);
-
-  // 5. Anti-Chase Gate
-  const liveDistToStop = Math.abs(currentPrice - stopLoss);
-  const chaseThreshold = 0.35 * safeAtrOpen15m;
-  const antiChaseWarning = archetype === "SWEEP_MSS_REVERSAL" ? false : liveDistToStop > chaseThreshold;
+  // 5. Anti-Chase Gate (Flag when price runs away > 15-20 pts from limit entry)
+  const liveDistFromEntry = Math.abs(currentPrice - entryZone.mid);
+  const chaseThreshold = Math.max(12.0, Math.min(20.0, 0.25 * safeAtrOpen15m));
+  const antiChaseWarning =
+    archetype === "SWEEP_MSS_REVERSAL"
+      ? false
+      : (direction === "LONG" ? currentPrice > entryZone.high + 5.0 : currentPrice < entryZone.low - 5.0) &&
+        liveDistFromEntry > chaseThreshold;
   const antiChaseMessage = antiChaseWarning
-    ? `ANTI-CHASE GATE TRIGGERED: Current price (${currentPrice.toFixed(2)}) is ${liveDistToStop.toFixed(1)} pts from stop (${stopLoss.toFixed(2)}), exceeding 0.35 * ATR_Open_15m (${chaseThreshold.toFixed(1)} pts). DO NOT chase market orders! Set limit order inside retrace zone [${entryZone.low.toFixed(1)} – ${entryZone.high.toFixed(1)}].`
+    ? `ANTI-CHASE GATE TRIGGERED: Live price (${currentPrice.toFixed(2)}) is ${liveDistFromEntry.toFixed(1)} pts away from entry zone mid (${entryZone.mid.toFixed(2)}). DO NOT chase market orders! Set limit order inside [${entryZone.low.toFixed(1)} – ${entryZone.high.toFixed(1)}].`
     : undefined;
 
   // 6. Reachability Target Engine (TP1 & TP2 & HTF Demotion)
-  const entryRefPrice = currentPrice;
-  const minTP1Dist = 0.25 * safeAtrOpen15m;
-  const maxTP1Dist = 0.45 * safeAtrOpen15m;
-  const minTP2Dist = 0.50 * safeAtrOpen15m;
-  const maxTP2Dist = 0.75 * safeAtrOpen15m;
-  const htfDemoteDist = 0.75 * safeAtrOpen15m;
+  // CRITICAL: Anchor candidate distances to entryZone.mid (the limit execution benchmark), NOT fluctuating currentPrice
+  const entryRefPrice = entryZone.mid;
+  const minTP1Dist = Math.min(10.0, 0.25 * safeAtrOpen15m);
+  const maxTP1Dist = Math.min(18.0, 0.45 * safeAtrOpen15m);
+  const minTP2Dist = Math.min(20.0, 0.50 * safeAtrOpen15m);
+  const maxTP2Dist = Math.min(35.0, 0.75 * safeAtrOpen15m);
+  const htfDemoteDist = Math.min(35.0, 0.75 * safeAtrOpen15m);
 
   // Candidate levels
   const candidates: Array<{ name: string; price: number; distance: number }> = [];
@@ -353,31 +358,32 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     return direction === "LONG" ? c.price > entryRefPrice : c.price < entryRefPrice;
   });
 
-  // Select TP1
+  // Select TP1 (Tight 1:1 Scalp inside [minTP1Dist, maxTP1Dist])
+  const defaultTp1Dist = Math.max(minTP1Dist, Math.min(maxTP1Dist, Math.round(1.0 * stopPts * 10) / 10));
   const tp1Candidates = directionalCandidates.filter((c) => c.distance >= minTP1Dist && c.distance <= maxTP1Dist);
-  let tp1Dist = Math.round(0.35 * safeAtrOpen15m * 10) / 10;
+  let tp1Dist = defaultTp1Dist;
   let tp1Price = direction === "LONG" ? entryRefPrice + tp1Dist : entryRefPrice - tp1Dist;
-  let tp1Rationale = `Diurnal 0.35x ATR_Open_15m Scalp`;
+  let tp1Rationale = `Quick 1:1 Scalp Target (+${tp1Dist.toFixed(1)} pts)`;
 
   if (tp1Candidates.length > 0) {
-    // Pick candidate closest to median of [minTP1Dist, maxTP1Dist]
-    tp1Candidates.sort((a, b) => Math.abs(a.distance - 0.35 * safeAtrOpen15m) - Math.abs(b.distance - 0.35 * safeAtrOpen15m));
+    tp1Candidates.sort((a, b) => Math.abs(a.distance - defaultTp1Dist) - Math.abs(b.distance - defaultTp1Dist));
     tp1Price = tp1Candidates[0].price;
     tp1Dist = tp1Candidates[0].distance;
-    tp1Rationale = `${tp1Candidates[0].name} (${tp1Dist.toFixed(1)} pts)`;
+    tp1Rationale = `${tp1Candidates[0].name} (+${tp1Dist.toFixed(1)} pts)`;
   }
 
-  // Select TP2
+  // Select TP2 (Scalp Extension / Runner inside [minTP2Dist, maxTP2Dist])
+  const defaultTp2Dist = Math.max(minTP2Dist, Math.min(maxTP2Dist, Math.round(1.8 * stopPts * 10) / 10));
   const tp2Candidates = directionalCandidates.filter((c) => c.distance >= minTP2Dist && c.distance <= maxTP2Dist);
-  let tp2Dist = Math.round(0.65 * safeAtrOpen15m * 10) / 10;
+  let tp2Dist = defaultTp2Dist;
   let tp2Price = direction === "LONG" ? entryRefPrice + tp2Dist : entryRefPrice - tp2Dist;
-  let tp2Rationale = `Diurnal 0.65x ATR_Open_15m Runner Extension`;
+  let tp2Rationale = `Scalp Runner Extension (+${tp2Dist.toFixed(1)} pts)`;
 
   if (tp2Candidates.length > 0) {
-    tp2Candidates.sort((a, b) => Math.abs(a.distance - 0.65 * safeAtrOpen15m) - Math.abs(b.distance - 0.65 * safeAtrOpen15m));
+    tp2Candidates.sort((a, b) => Math.abs(a.distance - defaultTp2Dist) - Math.abs(b.distance - defaultTp2Dist));
     tp2Price = tp2Candidates[0].price;
     tp2Dist = tp2Candidates[0].distance;
-    tp2Rationale = `${tp2Candidates[0].name} (${tp2Dist.toFixed(1)} pts)`;
+    tp2Rationale = `${tp2Candidates[0].name} (+${tp2Dist.toFixed(1)} pts)`;
   }
 
   // Intraday Unrealized Drawdown Cap on TP2
@@ -408,7 +414,7 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     rationale: tp2Rationale
   };
 
-  // HTF Demoted Levels (distance > 0.75 * ATR_Open_15m)
+  // HTF Demoted Levels (distance > 35 pts — Demoted so they never masquerade as scalp targets)
   const htfDemotedLevels: HTFDemotedLevel[] = directionalCandidates
     .filter((c) => c.distance > htfDemoteDist)
     .map((c) => {
@@ -418,14 +424,23 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         price: Math.round(c.price * 100) / 100,
         distancePts: Math.round(c.distance * 100) / 100,
         hitProb10m: prob10m,
-        badge: `HTF Context Only — Low 10m Hit Prob (${(prob10m * 100).toFixed(1)}%)`
+        badge: `Distant HTF Pivot (> 35 pts) — Not a Scalp Target (${(prob10m * 100).toFixed(0)}% 10m Hit Prob)`
       };
     })
     .sort((a, b) => a.distancePts - b.distancePts);
 
   // 7. 1m MSS Exit / Kill-Switch Price
-  const killSwitchPrice = entryZone.mid;
-  const killSwitchMessage = `1m MSS Kill-Switch at ${killSwitchPrice.toFixed(2)}. If trade reaches >= 0.8R MFE and an opposing 1m candle closes back across entry, flatten immediately.`;
+  let killSwitchPrice = entryZone.mid;
+  let killSwitchMessage = `1m MSS Kill-Switch at ${killSwitchPrice.toFixed(2)}. If trade reaches >= 0.8R MFE and an opposing 1m candle closes back across entry, flatten immediately.`;
+
+  if (propProfile?.drawdownMode === "INTRADAY_UNREALIZED") {
+    // Under Intraday Unrealized Trailing mode, protect profit once reached:
+    killSwitchPrice =
+      direction === "LONG"
+        ? Math.round((entryZone.mid + 0.3 * stopPts) * 100) / 100
+        : Math.round((entryZone.mid - 0.3 * stopPts) * 100) / 100;
+    killSwitchMessage = `1m MSS Kill-Switch at ${killSwitchPrice.toFixed(2)}. In Intraday Unrealized trailing mode, locks +0.3R profit to defend against phantom drawdown once trade advances.`;
+  }
 
   // 8. Contract Sizing & Quantization
   const riskPlan = computeDetailedRiskPlan({
@@ -436,8 +451,15 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     propProfile
   });
 
+  // If contracts quantize to 0, status transitions to STAND_ASIDE to prevent phantom execution
+  let status: LTFTradeCard["status"] =
+    archetype === "SWEEP_MSS_REVERSAL" ? "ARMED_SWEEP_REVERSAL" : antiChaseWarning ? "STAND_ASIDE" : "ARMED_RETRACE";
+  if (riskPlan.suggestedContracts === 0) {
+    status = "STAND_ASIDE";
+  }
+
   return {
-    status: archetype === "SWEEP_MSS_REVERSAL" ? "ARMED_SWEEP_REVERSAL" : antiChaseWarning ? "STAND_ASIDE" : "ARMED_RETRACE",
+    status,
     archetype,
     direction,
     entryZone,

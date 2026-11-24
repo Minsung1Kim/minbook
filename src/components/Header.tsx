@@ -106,12 +106,12 @@ export function Header({
       <header className="sticky top-0 z-50 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
         <div className="max-w-[1640px] mx-auto px-3 sm:px-5 lg:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
           {/* Left: Wordmark & Clean Nav */}
-          <div className="flex items-center space-x-6 shrink-0">
+          <div className="flex items-center space-x-2 sm:space-x-6 shrink-0">
             <Link href="/" className="flex items-center space-x-2 group">
               <span className="font-semibold text-sm tracking-tight text-zinc-100 group-hover:text-white transition-colors">
                 MinBook
               </span>
-              <span className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
+              <span className="hidden sm:inline text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
                 NQ
               </span>
             </Link>
@@ -165,7 +165,7 @@ export function Header({
           </div>
 
           {/* Right: Instrument, Timezone, Target Session Pill, Countdown, Latency Dot, Refresh */}
-          <div className="flex items-center space-x-2 sm:space-x-3 text-xs">
+          <div className="flex items-center space-x-1.5 sm:space-x-3 text-xs min-w-0">
             {/* Instrument Toggle: NQ | MNQ */}
             <div className="hidden sm:flex items-center p-0.5 rounded bg-zinc-900 border border-zinc-800 text-[11px] font-mono">
               <button
@@ -240,7 +240,7 @@ export function Header({
             </div>
 
             {/* Live Countdown & Session Indicator */}
-            <div className="flex items-center space-x-1.5 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 font-mono text-[11px] tabular-nums text-zinc-300">
+            <div className="flex items-center space-x-1.5 px-1.5 sm:px-2 py-1 rounded bg-zinc-900 border border-zinc-800 font-mono text-[10px] sm:text-[11px] tabular-nums text-zinc-300 whitespace-nowrap shrink-0">
               <span
                 className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                   sessionInfo?.activeSession === "NY_AM" ||
@@ -253,7 +253,7 @@ export function Header({
                     : "bg-zinc-500"
                 }`}
               />
-              <span className="lg:hidden font-semibold text-zinc-200">
+              <span className="hidden md:inline lg:hidden font-semibold text-zinc-200">
                 {sessionInfo?.activeSession?.replace("_", " ") || "--"} ·
               </span>
               <span className="font-medium">{sessionInfo?.activeSessionCountdown || "--"}</span>

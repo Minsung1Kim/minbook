@@ -211,7 +211,7 @@ export function KeyLevelsTable({
               <th className="py-2 px-2.5 sm:px-3">Level &amp; Meaning</th>
               <th className="py-2 px-2 sm:px-2.5 text-right w-24 sm:w-28">Price</th>
               <th className="py-2 px-2 sm:px-2.5 text-right w-20 sm:w-24">Dist</th>
-              <th className="hidden md:table-cell py-2 px-2.5 w-36 text-center">Hit Likelihood</th>
+              <th className="hidden 2xl:table-cell py-2 px-2.5 w-36 text-center">Hit Likelihood</th>
               <th className="py-2 px-1.5 sm:px-2 text-center w-8"></th>
             </tr>
           </thead>
@@ -274,7 +274,7 @@ export function KeyLevelsTable({
                   </td>
 
                   {/* Hit Likelihood Badge */}
-                  <td className="hidden md:table-cell py-2.5 px-2.5 text-center whitespace-nowrap">
+                  <td className="hidden 2xl:table-cell py-2.5 px-2.5 text-center whitespace-nowrap">
                     <span
                       className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${lvl.statusColor}`}
                     >

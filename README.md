@@ -78,13 +78,27 @@ flowchart LR
 
 ---
 
-## Interface & Security Preview
+## Live Terminal Screenshots
 
-> MinBook is configured for invite-only multi-user access via Supabase Auth (`src/proxy.ts` + Row-Level Security). Authenticated views (`/`, `/journal`, `/performance`, `/calendar`, `/settings`) store per-account risk budgets, screenshot P&L entries, and model audits isolated per user.
-
+### Main Trading Workspace (`/`) — Hero Bias, Futures Gameplan, Chart & Target/Bounce Levels
 <p align="center">
-  <img src="./docs/screenshots/05-desktop-login.png" alt="MinBook Sign-In Screen" width="760" />
+  <img src="./docs/screenshots/01-desktop-dashboard-chart.png" alt="MinBook Main Dashboard — Hero Bias, Futures Gameplan, Candlestick Chart, Targets and Bounce Levels" width="100%" />
 </p>
+
+### Quant Math Breakdown, All Levels Price Ladder & Interactive Chart Drawings (`Line` · `Square` · `Type`)
+<p align="center">
+  <img src="./docs/screenshots/02-desktop-quant-ladder-drawings.png" alt="MinBook Expanded Quant Math, Price Ladder and Interactive Chart Drawing Tools" width="100%" />
+</p>
+
+### Workspace Views — Journal, News Calendar, System Audit & Mobile
+
+| Screenshot-Only P&L Journal (`/journal`) | Week-Default News Calendar (`/calendar`) |
+| :---: | :---: |
+| <img src="./docs/screenshots/03-desktop-pnl-journal.png" alt="MinBook Screenshot P&L Journal" width="100%" /> | <img src="./docs/screenshots/04-desktop-news-calendar.png" alt="MinBook Week-Default News Calendar" width="100%" /> |
+
+| Verified System Audit (`/performance`) | Invite-Only Auth (`/login`) | Responsive Mobile View (`390×844`) |
+| :---: | :---: | :---: |
+| <img src="./docs/screenshots/05-desktop-audit.png" alt="MinBook Verified Audit" width="100%" /> | <img src="./docs/screenshots/07-desktop-login.png" alt="MinBook Sign In" width="100%" /> | <img src="./docs/screenshots/06-mobile-dashboard.png" alt="MinBook Mobile View" width="240" /> |
 
 <details>
 <summary><strong>Interactive Chart Tools & Responsive Breakpoints</strong></summary>

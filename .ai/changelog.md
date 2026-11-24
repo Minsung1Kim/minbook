@@ -672,3 +672,4 @@ All notable changes and architectural decisions are logged here.
   - **Wait for Stop Hunt?**: Live guidance on whether to wait for an overnight high/low liquidity sweep before entering.
   - **Stop Loss Placement**: Recommends `AT THE WICK (+2–3 pts)` vs `GIVE EXTRA ROOM (+5–8 pts past wick)` based on VRP, term structure, GEX, and 15m ATR.
   - **Key Futures Notes Today**: Concise reminders for timing, red-folder news proximity, take-profit style (positive vs negative gamma), and risk sizing.
+- **Minimizable Gameplan & Realistic 15m Swing ATR (`src/components/Dashboard.tsx`, `src/lib/market/plainEnglishBrief.ts`):** Added persistent Minimize/Show toggle for the Futures Gameplan strip and switched 15m swing display to `atr15mIntraday` so outlier opening-bar spikes don't overstate 15m range.

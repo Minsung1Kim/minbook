@@ -528,7 +528,7 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
   targetPool.sort((a, b) => a.absDistancePts - b.absDistancePts);
 
   // 7. Futures Day-Trading Gameplan (Stop Hunt, Stop Loss Placement, Key Tips)
-  const atr15 = metrics.atrOpen15m || metrics.atr15mIntraday || 25;
+  const atr15 = metrics.atr15mIntraday || metrics.atrOpen15m || 25;
   const distToOnh = Math.abs(metrics.onh - spot);
   const distToOnl = Math.abs(spot - metrics.onl);
   const nearOvernightExtreme = Math.min(distToOnh, distToOnl) <= Math.max(35, atr15 * 1.5);

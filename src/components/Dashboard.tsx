@@ -58,6 +58,22 @@ export function Dashboard() {
   const [focusedLevel, setFocusedLevel] = useState<KeyLevel | null>(null);
   const [copiedPriceId, setCopiedPriceId] = useState<string | null>(null);
   const [showQuantMath, setShowQuantMath] = useState<boolean>(false);
+  const [showGameplan, setShowGameplan] = useState<boolean>(true);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("minbook_show_gameplan");
+      if (saved === "false") setShowGameplan(false);
+    } catch {}
+  }, []);
+
+  const toggleGameplan = () => {
+    const next = !showGameplan;
+    setShowGameplan(next);
+    try {
+      localStorage.setItem("minbook_show_gameplan", String(next));
+    } catch {}
+  };
 
   useEffect(() => {
     fetch("/api/settings")
@@ -405,76 +421,122 @@ export function Dashboard() {
               )}
             </div>
 
-            {/* 1B. FUTURES DAY-TRADING GAMEPLAN (Stop Hunt, Stop Loss Room & Key Reminders) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {/* Box 1: Wait for Stop Hunt? */}
-              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-                    Wait for Stop Hunt?
+            {/* 1B. FUTURES DAY-TRADING GAMEPLAN (Minimizable: Stop Hunt, Stop Loss Room & Key Reminders) */}
+            <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden">
+              <button
+                type="button"
+                onClick={toggleGameplan}
+                className="w-full px-4 py-2 bg-zinc-950/60 hover:bg-zinc-900/80 transition-colors flex items-center justify-between text-xs font-mono"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
+                    Futures Gameplan
                   </span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
-                      plainBrief.gameplan.stopHunt.shouldWait
-                        ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                        : "bg-zinc-800 text-zinc-300 border-zinc-700"
-                    }`}
-                  >
-                    {plainBrief.gameplan.stopHunt.badge}
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {plainBrief.gameplan.stopHunt.detail}
-                </p>
-              </div>
-
-              {/* Box 2: Stop Loss Placement (At Wick vs Extra Room) */}
-              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-                    Stop Loss Placement
-                  </span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
-                      plainBrief.gameplan.stopLoss.mode === "EXTRA_ROOM"
-                        ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                        : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                    }`}
-                  >
-                    {plainBrief.gameplan.stopLoss.badge}
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-300 leading-relaxed">
-                  {plainBrief.gameplan.stopLoss.detail}
-                </p>
-              </div>
-
-              {/* Box 3: Key Futures Day-Trading Reminders */}
-              <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-3.5 space-y-1.5">
-                <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 block">
-                  Key Futures Notes Today
-                </span>
-                <ul className="space-y-1 text-xs">
-                  {plainBrief.gameplan.keyTips.map((tip, i) => (
-                    <li key={i} className="flex items-start space-x-1.5 leading-snug">
+                  {!showGameplan && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                       <span
-                        className={`font-mono text-[10px] font-bold shrink-0 mt-0.5 ${
-                          tip.tone === "emerald"
-                            ? "text-emerald-400"
-                            : tip.tone === "amber"
-                            ? "text-amber-400"
-                            : tip.tone === "rose"
-                            ? "text-rose-400"
-                            : "text-zinc-400"
+                        className={`px-1.5 py-0.2 rounded font-bold border ${
+                          plainBrief.gameplan.stopHunt.shouldWait
+                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            : "bg-zinc-800 text-zinc-300 border-zinc-700"
                         }`}
                       >
-                        • {tip.label}:
+                        {plainBrief.gameplan.stopHunt.badge}
                       </span>
-                      <span className="text-zinc-300">{tip.value}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+                      <span
+                        className={`px-1.5 py-0.2 rounded font-bold border ${
+                          plainBrief.gameplan.stopLoss.mode === "EXTRA_ROOM"
+                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        }`}
+                      >
+                        SL: {plainBrief.gameplan.stopLoss.mode === "EXTRA_ROOM" ? "EXTRA ROOM" : "AT WICK"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <span className="flex items-center space-x-1 text-[11px] text-zinc-400">
+                  <span>{showGameplan ? "Minimize" : "Show"}</span>
+                  {showGameplan ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </span>
+              </button>
+
+              {showGameplan && (
+                <div className="p-3 border-t border-zinc-800/80 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Box 1: Wait for Stop Hunt? */}
+                  <div className="rounded-lg bg-zinc-950/60 border border-zinc-800/80 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                        Wait for Stop Hunt?
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                          plainBrief.gameplan.stopHunt.shouldWait
+                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            : "bg-zinc-800 text-zinc-300 border-zinc-700"
+                        }`}
+                      >
+                        {plainBrief.gameplan.stopHunt.badge}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      {plainBrief.gameplan.stopHunt.detail}
+                    </p>
+                  </div>
+
+                  {/* Box 2: Stop Loss Placement (At Wick vs Extra Room) */}
+                  <div className="rounded-lg bg-zinc-950/60 border border-zinc-800/80 p-3 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                        Stop Loss Placement
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                          plainBrief.gameplan.stopLoss.mode === "EXTRA_ROOM"
+                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        }`}
+                      >
+                        {plainBrief.gameplan.stopLoss.badge}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-300 leading-relaxed">
+                      {plainBrief.gameplan.stopLoss.detail}
+                    </p>
+                  </div>
+
+                  {/* Box 3: Key Futures Day-Trading Reminders */}
+                  <div className="rounded-lg bg-zinc-950/60 border border-zinc-800/80 p-3 space-y-1.5">
+                    <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 block">
+                      Key Futures Notes Today
+                    </span>
+                    <ul className="space-y-1 text-xs">
+                      {plainBrief.gameplan.keyTips.map((tip, i) => (
+                        <li key={i} className="flex items-start space-x-1.5 leading-snug">
+                          <span
+                            className={`font-mono text-[10px] font-bold shrink-0 mt-0.5 ${
+                              tip.tone === "emerald"
+                                ? "text-emerald-400"
+                                : tip.tone === "amber"
+                                ? "text-amber-400"
+                                : tip.tone === "rose"
+                                ? "text-rose-400"
+                                : "text-zinc-400"
+                            }`}
+                          >
+                            • {tip.label}:
+                          </span>
+                          <span className="text-zinc-300">{tip.value}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 2. WORKSPACE: CHART (LEFT) + BOUNCE & TARGET AREAS (RIGHT) */}

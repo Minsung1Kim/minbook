@@ -495,3 +495,42 @@ All notable changes and architectural decisions are logged here.
   - `npx tsc --noEmit`: 0 TypeScript errors.
   - `npm run build`: 17/17 routes compiled successfully in Next.js Turbopack.
 
+## [2026-11-24] - Supabase Cloud Integration & Vercel Live Production Deployment
+- **Supabase Cloud Infrastructure Provisioned:**
+  - Project ID: `qpzqftmybortbutxggmv` (`minbook`, region: `us-east-1`).
+  - Production Supabase URL: `https://qpzqftmybortbutxggmv.supabase.co`.
+  - Modern 2026 Publishable API Key: `sb_publishable_xgl51WKxiNaTXqUsgEBUyQ_CFun5WGO`.
+  - Applied migration `0001_init_minbook.sql` and `0002_expand_system_predictions_roles.sql`:
+    - Strict Row Level Security (RLS) enabled on all tables: `user_settings`, `journal_trades`, `daily_predictions`, `prediction_grades`, `model_weights_history`.
+    - Created private screenshot storage bucket `journal-screenshots` with user-isolated RLS folder policies (`auth.uid() = (storage.foldername(name))[1]`).
+    - Verified via Supabase Advisors: 0 security, performance, or RLS warnings.
+- **Authentication & Next.js 16 Session Security:**
+  - Integrated `@supabase/supabase-js` and `@supabase/ssr`.
+  - Created browser client (`src/lib/supabase/client.ts`) and server client (`src/lib/supabase/server.ts`).
+  - Created Next.js 16 file convention `src/proxy.ts` (replacing deprecated `middleware.ts`):
+    - Refreshes auth sessions via `supabase.auth.getUser()`.
+    - Enforces route protection on `/journal`, redirecting unauthenticated users to `/login?redirect=/journal`.
+    - Redirects authenticated users from `/login` back to dashboard.
+  - Built high-contrast monochrome terminal `/login` page with Email + Password sign-in wrapped in `<Suspense>`.
+  - Added quiet user email indicator and Sign Out button to navbar (`src/components/Header.tsx`).
+  - Implemented `/auth/signout` server route.
+- **Route & Storage Protection:**
+  - Hardened `/api/journal/analyze` and `/api/journal/insights` to return `401 Unauthorized` for unauthenticated requests.
+  - Updated `/api/journal` and `/api/settings` to synchronize with Supabase Postgres.
+  - Implemented base64 screenshot upload to private Supabase Storage (`journal-screenshots/{userId}/{tradeId}.webp`) with short-lived signed URLs (`createSignedUrl`).
+  - Dual fallback architecture: app gracefully falls back to local SQLite when Supabase environment variables are absent.
+- **Serverless & Polling Optimization (Vercel Free Tier Guardrails):**
+  - Added CDN cache headers `Cache-Control: public, s-maxage=60, stale-while-revalidate=120` to `/api/market-data`, `/api/market-data/chart`, and `/api/calendar`.
+  - Throttled dashboard polling from 10s to 60s, automatically pausing when tab is hidden (`document.hidden`) and triggering instant refresh on tab focus.
+- **Vercel Production Deployment:**
+  - Linked to Vercel account `minsung1kims-projects` under project `minbook`.
+  - Configured Environment Variables in Vercel for Production and Preview (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `MARKET_DATA_PROVIDER=yahoo`, `CACHE_TTL_SECONDS=60`).
+  - Production deployment succeeded and aliased to **`https://minbook-omega.vercel.app`**.
+- **Live Production Smoke Test Verification:**
+  - `GET /` -> HTTP 200 (PRERENDER)
+  - `GET /login` -> HTTP 200 (PRERENDER)
+  - `GET /journal` -> HTTP 307 Redirect to `/login?redirect=%2Fjournal`
+  - `POST /api/journal/analyze` -> HTTP 401 Unauthorized
+  - `GET /api/market-data` -> HTTP 200 with live calculation payload
+
+

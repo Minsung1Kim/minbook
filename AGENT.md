@@ -155,6 +155,7 @@
   - **Auth & SSR Protection:** Next.js 16 `src/proxy.ts` refreshes Supabase session tokens and protects `/journal`, redirecting unauthenticated visitors to `/login`. Dual client setup (`client.ts` for browser, `server.ts` for Server Components/Route Handlers).
   - **Local Offline Fallback:** If `NEXT_PUBLIC_SUPABASE_URL` is omitted on localhost, the app automatically falls back to local SQLite without crashing.
   - **Vercel Hobby Serverless Optimization:** Market data, calendar, and chart API routes emit `Cache-Control: public, s-maxage=60, stale-while-revalidate=120`. Client polling is throttled to 60 seconds with automated freeze on `document.hidden` and resume on tab focus.
+  - **Live Production URL:** `https://minbook-omega.vercel.app` (Vercel Project: `minbook` under `minsung1kims-projects`). Deployed with zero secrets committed, full SSR proxy protection on `/journal`, and verified live smoke tests.
 
 ## Testing & Verification
 - **Institutional UI/UX Visual Architecture:**

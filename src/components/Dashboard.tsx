@@ -436,12 +436,86 @@ export function Dashboard() {
                     </TabsTrigger>
                   </TabsList>
 
-                  {/* Tab 1: Bounce Areas & Target Areas */}
+                  {/* Tab 1: Areas To Target (Top) & Areas It Could Bounce From (Bottom) */}
                   <TabsContent
                     value="zones"
                     className="mt-0 space-y-3 focus-visible:outline-none"
                   >
-                    {/* Section A: Areas It Could Bounce From */}
+                    {/* Section A: Areas To Target */}
+                    <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden">
+                      <div className="px-3.5 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between">
+                        <span className="text-xs font-mono font-semibold text-zinc-200 uppercase tracking-wider flex items-center space-x-1.5">
+                          <Target className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Areas To Target</span>
+                        </span>
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          Click to show on chart
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-zinc-800/60">
+                        {plainBrief.targetAreas.length === 0 ? (
+                          <div className="p-4 text-xs text-zinc-500 font-mono">
+                            No target magnets computed.
+                          </div>
+                        ) : (
+                          plainBrief.targetAreas.map((area) => {
+                            const isFocused = focusedLevel?.id === area.id || focusedLevel?.id === area.sourceLevel?.id;
+                            const isCopied = copiedPriceId === area.id;
+                            return (
+                              <div
+                                key={area.id}
+                                onClick={() => handleSelectArea(area)}
+                                className={`p-3 cursor-pointer transition-colors group ${
+                                  isFocused ? "bg-zinc-800/80" : "hover:bg-zinc-800/40"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center space-x-2 min-w-0">
+                                    <span className="text-xs font-semibold text-zinc-100 truncate">
+                                      {area.name}
+                                    </span>
+                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
+                                      {area.directionTag === "UPSIDE TARGET" ? "UP" : "DOWN"}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center space-x-2 font-mono tabular-nums shrink-0">
+                                    <span className="text-xs font-bold text-zinc-100">
+                                      {area.price.toFixed(2)}
+                                    </span>
+                                    <span
+                                      className={`text-[11px] ${
+                                        area.distancePts >= 0 ? "text-emerald-400" : "text-rose-400"
+                                      }`}
+                                    >
+                                      {area.distancePts >= 0 ? "+" : ""}
+                                      {area.distancePts.toFixed(1)}
+                                    </span>
+                                    <button
+                                      onClick={(e) => handleCopyPrice(e, area.id, area.price)}
+                                      className="p-1 text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Copy price"
+                                    >
+                                      {isCopied ? (
+                                        <Check className="w-3 h-3 text-emerald-400" />
+                                      ) : (
+                                        <Copy className="w-3 h-3" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-zinc-400 mt-1 leading-snug">
+                                  {area.reason}
+                                </p>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Section B: Areas It Could Bounce From */}
                     <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden">
                       <div className="px-3.5 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between">
                         <span className="text-xs font-mono font-semibold text-emerald-400 uppercase tracking-wider flex items-center space-x-1.5">
@@ -483,80 +557,6 @@ export function Dashboard() {
                                       }`}
                                     >
                                       {area.strengthLabel}
-                                    </span>
-                                  </div>
-
-                                  <div className="flex items-center space-x-2 font-mono tabular-nums shrink-0">
-                                    <span className="text-xs font-bold text-zinc-100">
-                                      {area.price.toFixed(2)}
-                                    </span>
-                                    <span
-                                      className={`text-[11px] ${
-                                        area.distancePts >= 0 ? "text-emerald-400" : "text-rose-400"
-                                      }`}
-                                    >
-                                      {area.distancePts >= 0 ? "+" : ""}
-                                      {area.distancePts.toFixed(1)}
-                                    </span>
-                                    <button
-                                      onClick={(e) => handleCopyPrice(e, area.id, area.price)}
-                                      className="p-1 text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity"
-                                      title="Copy price"
-                                    >
-                                      {isCopied ? (
-                                        <Check className="w-3 h-3 text-emerald-400" />
-                                      ) : (
-                                        <Copy className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                  </div>
-                                </div>
-                                <p className="text-[11px] text-zinc-400 mt-1 leading-snug">
-                                  {area.reason}
-                                </p>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Section B: Areas To Target */}
-                    <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden">
-                      <div className="px-3.5 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex items-center justify-between">
-                        <span className="text-xs font-mono font-semibold text-zinc-200 uppercase tracking-wider flex items-center space-x-1.5">
-                          <Target className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Areas To Target</span>
-                        </span>
-                        <span className="text-[11px] font-mono text-zinc-500">
-                          Click to show on chart
-                        </span>
-                      </div>
-
-                      <div className="divide-y divide-zinc-800/60">
-                        {plainBrief.targetAreas.length === 0 ? (
-                          <div className="p-4 text-xs text-zinc-500 font-mono">
-                            No target magnets computed.
-                          </div>
-                        ) : (
-                          plainBrief.targetAreas.map((area) => {
-                            const isFocused = focusedLevel?.id === area.id || focusedLevel?.id === area.sourceLevel?.id;
-                            const isCopied = copiedPriceId === area.id;
-                            return (
-                              <div
-                                key={area.id}
-                                onClick={() => handleSelectArea(area)}
-                                className={`p-3 cursor-pointer transition-colors group ${
-                                  isFocused ? "bg-zinc-800/80" : "hover:bg-zinc-800/40"
-                                }`}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="flex items-center space-x-2 min-w-0">
-                                    <span className="text-xs font-semibold text-zinc-100 truncate">
-                                      {area.name}
-                                    </span>
-                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-semibold bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0">
-                                      {area.directionTag === "UPSIDE TARGET" ? "UP" : "DOWN"}
                                     </span>
                                   </div>
 

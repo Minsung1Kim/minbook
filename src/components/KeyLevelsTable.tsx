@@ -128,7 +128,7 @@ export function KeyLevelsTable({
   onSelectLevel,
 }: KeyLevelsTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<"VITALITY" | "LADDER">("VITALITY");
+  const [sortMode, setSortMode] = useState<"VITALITY" | "LADDER">("LADDER");
 
   // Rank and sort levels
   const rankedLevels = useMemo(() => {

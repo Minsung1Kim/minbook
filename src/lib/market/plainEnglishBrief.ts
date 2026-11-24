@@ -1,7 +1,7 @@
 import { OpenBriefData, KeyLevel } from "../../types/market";
 import { computeLevelVitality } from "../../components/KeyLevelsTable";
 
-export type BiasDirectionLabel = "BULLISH" | "BEARISH" | "CHOP / NEUTRAL";
+export type BiasDirectionLabel = "BULLISH" | "BEARISH" | "NO CLEAR EDGE";
 
 export interface QuantFactItem {
   id: string;
@@ -151,7 +151,7 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
   const footprint = brief.footprint;
 
   // 1. Determine Direction
-  let direction: BiasDirectionLabel = "CHOP / NEUTRAL";
+  let direction: BiasDirectionLabel = "NO CLEAR EDGE";
   if (bias.verdict.includes("BULLISH")) {
     direction = "BULLISH";
   } else if (bias.verdict.includes("BEARISH")) {
@@ -162,65 +162,86 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
     direction = "BEARISH";
   }
 
-  // 2. Verdict Headline & Subtitle
-  let verdictTitle = "Mixed / Chop — Wait for Clear Direction";
-  let verdictSubtitle = "Quant signals are split or volatility is elevated. No strong directional edge right now.";
+  // 2. Plain-English Risk Reason (never contradicts 0x vs 0.5x)
+  const buildPlainRiskReason = (): string => {
+    const reasons: string[] = [];
+    if (vol && (vol.termRatio > 1.0 || vol.termStructureRegime === "BACKWARDATION (STRESS)")) {
+      reasons.push(`Short-term fear is elevated (VIX is ${vol.termRatio.toFixed(2)}x 3-month VIX), which usually causes violent two-way whipsaws.`);
+    }
+    if (vol?.isNegativeVrp) {
+      reasons.push("Actual price swings are larger than options priced in — expect sharper wicks and stop sweeps.");
+    }
+    if (vol && vol.vvix >= 110) {
+      reasons.push(`Volatility itself is spiking (VVIX ${vol.vvix.toFixed(0)}), making clean trends less reliable.`);
+    }
+    if (layer1?.reversalVetoActive) {
+      reasons.push(
+        metrics.inventoryPercent >= 70
+          ? `Overnight buyers (${metrics.inventoryPercent}%) are trapped below the overnight midpoint, risking an early flush.`
+          : `Overnight sellers (${100 - metrics.inventoryPercent}%) are trapped above the overnight midpoint, risking a short squeeze.`
+      );
+    }
+    if (reasons.length === 0) {
+      return "Market volatility is normal and levels are clean.";
+    }
+    return reasons.join(" ");
+  };
+
+  const plainRiskReason = buildPlainRiskReason();
+
+  // 3. Verdict Headline & Subtitle (Direct, zero jargon)
+  let verdictTitle = "No Clear Bias — Wait for Direction";
+  let verdictSubtitle = "Quant signals are split right now. Wait for price to clearly pick a side before trading.";
 
   if (bias.verdict === "STAND ASIDE / HIGH VOL") {
-    verdictTitle = "Stand Aside — Extreme Volatility Risk";
-    verdictSubtitle =
-      layer1?.activeVetoes?.[0] ||
-      "Options volatility and/or major news risk is extreme. Expect violent two-way whipsaws.";
+    verdictTitle = "Do Not Trade — High Whipsaw Risk";
+    verdictSubtitle = `${plainRiskReason} Best move is to stay flat.`;
   } else if (layer1?.reversalVetoActive) {
-    verdictTitle = "Caution — Overnight Traders Trapped Offside";
-    verdictSubtitle =
-      layer1.reversalVetoReason ||
-      "Overnight positioning is offside vs the 50% midpoint, creating early stop-run / flush risk.";
+    verdictTitle = "Be Careful — Overnight Crowd Is Trapped";
+    verdictSubtitle = plainRiskReason;
   } else if (direction === "BULLISH") {
-    verdictTitle = "Bullish Bias — Favor Pullbacks to Bounce Higher";
-    verdictSubtitle = `Price is holding above key fair value (${metrics.sessionVwap.toFixed(1)} VWAP / ${metrics.pdc.toFixed(1)} prior close) with quant momentum aligned up.`;
+    verdictTitle = "Lean Bullish — Look for Dips to Bounce";
+    verdictSubtitle = `Price is holding above today's average (${metrics.sessionVwap.toFixed(1)} VWAP) and yesterday's close (${metrics.pdc.toFixed(1)}) with buyers in control.`;
   } else if (direction === "BEARISH") {
-    verdictTitle = "Bearish Bias — Favor Bounces to Reject Lower";
-    verdictSubtitle = `Price is trading below key fair value (${metrics.sessionVwap.toFixed(1)} VWAP / ${metrics.pdc.toFixed(1)} prior close) with sellers in control.`;
+    verdictTitle = "Lean Bearish — Look for Bounces to Reject";
+    verdictSubtitle = `Price is below today's average (${metrics.sessionVwap.toFixed(1)} VWAP) and yesterday's close (${metrics.pdc.toFixed(1)}) with sellers in control.`;
   }
 
-  // 3. Honest Score Summary (No fabricated percentages)
-  const scoreVal = layer2?.totalScore ?? 0;
-  const activeSignalsCount = layer2?.signals.filter((s) => s.score !== 0).length ?? 0;
-  const alignedSignalsCount =
-    direction === "BULLISH"
-      ? layer2?.signals.filter((s) => s.score > 0).length ?? 0
-      : direction === "BEARISH"
-      ? layer2?.signals.filter((s) => s.score < 0).length ?? 0
-      : 0;
+  // 4. Honest, Easy-to-Read Signal Tally
+  const bullCount = layer2?.signals.filter((s) => s.score > 0).length ?? 0;
+  const bearCount = layer2?.signals.filter((s) => s.score < 0).length ?? 0;
 
   const scoreSummary =
-    direction === "CHOP / NEUTRAL"
-      ? `Quant Score: ${scoreVal >= 0 ? "+" : ""}${scoreVal.toFixed(1)} / 4.0 (${activeSignalsCount}/4 signals active)`
-      : `${alignedSignalsCount} of 4 Core Quant Signals ${direction === "BULLISH" ? "Bullish" : "Bearish"} (Score ${scoreVal >= 0 ? "+" : ""}${scoreVal.toFixed(1)} / 4.0)`;
+    direction === "BULLISH"
+      ? `${bullCount} of 4 Signals Bullish`
+      : direction === "BEARISH"
+      ? `${bearCount} of 4 Signals Bearish`
+      : bullCount === 0 && bearCount === 0
+      ? "All 4 Signals Neutral"
+      : `Signals Split (${bullCount} Bull, ${bearCount} Bear)`;
 
-  // 4. Risk Status Badge
+  // 5. Risk Status Badge
   const sizeMultiplier = bias.regimeRiskMultiplier;
   let riskStatus: PlainEnglishBrief["riskStatus"];
   if (sizeMultiplier === 0.0 || !layer1?.allowTrading) {
     riskStatus = {
-      label: "STAND ASIDE (0x SIZE)",
+      label: "STAY FLAT (0x SIZE)",
       tone: "rose",
-      reason: layer1?.activeVetoes?.[0] || "Extreme volatility / news veto active.",
+      reason: plainRiskReason,
       sizeMultiplier: 0.0
     };
   } else if (sizeMultiplier === 0.5) {
     riskStatus = {
-      label: "CHOP / HIGH VOL (0.5x SIZE)",
+      label: "USE HALF SIZE (0.5x)",
       tone: "amber",
-      reason: layer1?.activeVetoes?.[0] || layer1?.gateDetails?.[0] || "Elevated volatility or pinning risk — use smaller size.",
+      reason: plainRiskReason,
       sizeMultiplier: 0.5
     };
   } else {
     riskStatus = {
-      label: "NORMAL VOLATILITY (1.0x SIZE)",
+      label: "NORMAL SIZE (1.0x)",
       tone: "emerald",
-      reason: "Volatility term structure and realized vol are balanced for standard setups.",
+      reason: "Volatility is calm and normal.",
       sizeMultiplier: 1.0
     };
   }
@@ -417,7 +438,7 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       // Direction filter for clean bounce areas:
       const matchesBullBounce = direction === "BULLISH" && lvl.price <= spot + 12;
       const matchesBearBounce = direction === "BEARISH" && lvl.price >= spot - 12;
-      const matchesNeutralBounce = direction === "CHOP / NEUTRAL" && absDist <= 220;
+      const matchesNeutralBounce = direction === "NO CLEAR EDGE" && absDist <= 220;
 
       if (matchesBullBounce || matchesBearBounce || matchesNeutralBounce) {
         bouncePool.push({
@@ -457,7 +478,7 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       const matchesBullTarget = direction === "BULLISH" && isUpside;
       const matchesBearTarget = direction === "BEARISH" && !isUpside;
       const matchesNeutralTarget =
-        direction === "CHOP / NEUTRAL" &&
+        direction === "NO CLEAR EDGE" &&
         (s === "onh" || s === "onl" || s === "pdh" || s === "pdl" || s.includes("wall") || s.includes("straddle"));
 
       if (matchesBullTarget || matchesBearTarget || matchesNeutralTarget) {

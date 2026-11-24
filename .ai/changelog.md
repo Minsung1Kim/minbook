@@ -650,3 +650,8 @@ All notable changes and architectural decisions are logged here.
 ## [2026-11-24] - Login-Only Auth & Quant Math Collapsed by Default
 - **Login-Only Gate (`src/app/login/page.tsx`):** Removed public sign-up option and toggle; users are provisioned manually via Supabase.
 - **Quieter Initial Dashboard (`src/components/Dashboard.tsx`):** Collapsed `showQuantMath` to `false` by default on login so traders see only the bias verdict, chart, bounce areas, and target areas first, with one-click `"Show Quant Math"` on demand.
+
+## [2026-11-24] - Target-First Ordering, Price Ladder Default & Clearer Bias Copy
+- **Areas To Target Above Bounce Areas (`src/components/Dashboard.tsx`):** Reordered the right panel so `Areas To Target` appears above `Areas It Could Bounce From`.
+- **Price Ladder Default (`src/components/KeyLevelsTable.tsx`):** Changed default `sortMode` to `"LADDER"` in `All Levels`.
+- **Direct Plain-English Bias Copy (`src/lib/market/plainEnglishBrief.ts`):** Replaced academic/contradictory risk messaging (`TERM STRUCTURE BACKWARDATION... risk scaled to 0.5x` under `0x`) with direct explanations, `"NO CLEAR EDGE"`, `"STAY FLAT (0x SIZE)"`, and plain signal counts (`"Signals Split (X Bull, Y Bear)"`).

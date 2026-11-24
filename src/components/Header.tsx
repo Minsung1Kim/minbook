@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { RefreshCw, Activity, BookOpen, Target, Clock, LogIn, LogOut, User as UserIcon } from "lucide-react";
+import { RefreshCw, Activity, BookOpen, Target, Clock, LogIn, LogOut, MessageSquare } from "lucide-react";
 import { DataStatus } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import { getCMESessionInfo, CMESessionInfo } from "@/lib/market/sessionClock";
@@ -116,7 +116,7 @@ export function Header({
               </span>
             </Link>
 
-            {/* Clean 4-Tab Nav (Desktop) */}
+            {/* Clean 5-Tab Nav (Desktop) */}
             <nav className="hidden sm:flex items-center space-x-1">
               <Link
                 href="/"
@@ -127,6 +127,17 @@ export function Header({
                 }`}
               >
                 Brief
+              </Link>
+
+              <Link
+                href="/chat"
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  pathname.startsWith("/chat")
+                    ? "bg-zinc-800/90 text-zinc-100 shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/60"
+                }`}
+              >
+                Chat
               </Link>
 
               <Link
@@ -396,6 +407,18 @@ export function Header({
         >
           <Activity className="w-4 h-4 mb-0.5" />
           <span className="text-[10px] tracking-tight">Brief</span>
+        </Link>
+
+        <Link
+          href="/chat"
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded transition-colors ${
+            pathname.startsWith("/chat")
+              ? "text-zinc-100 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] tracking-tight">Chat</span>
         </Link>
 
         <Link

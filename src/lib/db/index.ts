@@ -101,6 +101,24 @@ export function getDb(): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (trade_date, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS chat_threads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'default',
+      title TEXT NOT NULL DEFAULT 'New NQ Strat Session',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      image_urls_json TEXT NOT NULL DEFAULT '[]',
+      market_context_snapshot_json TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Auto-migrate schema for v2.0

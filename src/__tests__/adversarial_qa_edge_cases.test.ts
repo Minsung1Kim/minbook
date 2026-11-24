@@ -29,7 +29,7 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
     atrOpen15m: 40,
     inventoryPercent: 50,
     htfImpulseDirection: "BULLISH"
-  };
+  } as unknown as SessionMetrics;
 
   // =========================================================================
   // SUITE 1: Extreme 09:30 Volatility (120–150 pt ATR) & Quantization Traps
@@ -81,7 +81,7 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
           regimeRiskMultiplier: 0.5, // 0.5x defensive size cut
           macroNewsLockout: false,
           riskGatesSummary: "0.5x Defensive Size Cut"
-        },
+        } as unknown as import("@/types/market").Layer1RiskGates,
         forcedTimeET: { hour: 9, minute: 35 }
       });
 
@@ -127,7 +127,7 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
         stopHuntTargetLevel: null,
         primaryRetraceLevels: { vwap: 20990, onMid: 20980, pdc: 20960, htf50: 20970, htf618: 20950 },
         liquidityDraws: { onh: 21060, onl: 20950, pdh: 21080, pdl: 20930 },
-        regimeInputs: {},
+        regimeInputs: { factorScores: {} },
         status: "PENDING_GRADE",
         createdAt: "2026-11-24T09:25:00.000Z"
       };
@@ -450,7 +450,7 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
         stopHuntTargetLevel: null,
         primaryRetraceLevels: { vwap: 20990, onMid: 20980, pdc: 20960, htf50: 20970, htf618: 20950 },
         liquidityDraws: { onh: 21060, onl: 20950, pdh: 21080, pdl: 20930 },
-        regimeInputs: {},
+        regimeInputs: { factorScores: {} },
         status: "PENDING_GRADE",
         createdAt: "2026-11-24T09:25:00.000Z"
       };
@@ -501,13 +501,12 @@ describe("Adversarial Quantitative QA: Stress Tests & Edge-Case Probes", () => {
         name: "Prior Day High",
         shortName: "PDH",
         price: 21047, // 36 pts from entry 21011 (> 0.75 * 40 = 30 pts)
-        type: "STRUCTURAL_PIVOT",
         significance: "HIGH",
         proximityScore: 80,
         hitProbability: 30,
         timeframe: "DAILY",
         description: "Distant PDH"
-      };
+      } as unknown as KeyLevel;
 
       const card = evaluateLTFExecution({
         m1Bars,

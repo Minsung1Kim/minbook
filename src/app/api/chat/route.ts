@@ -1,3 +1,4 @@
+import { createGoogle } from "@ai-sdk/google";
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
@@ -16,16 +17,18 @@ import {
   saveChatMessage,
   updateChatThreadTitle,
 } from "@/lib/chat/store";
-import {
-  CHAT_MODEL_OPTIONS,
-  DEFAULT_CHAT_MODEL,
-  StratUIMessage,
-} from "@/types/chat";
+import { CHAT_MODEL_ID, StratUIMessage } from "@/types/chat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ALLOWED_MODEL_IDS = new Set(CHAT_MODEL_OPTIONS.map((m) => m.id));
+function getServerGeminiApiKey(): string {
+  return (
+    process.env.GEMINI_API_KEY?.trim() ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ||
+    ""
+  );
+}
 
 function extractTextFromParts(parts: StratUIMessage["parts"] | undefined): string {
   if (!Array.isArray(parts)) return "";
@@ -48,15 +51,20 @@ function sanitizeUIMessages(messages: StratUIMessage[]): StratUIMessage[] {
   }));
 }
 
-function formatStreamError(err: unknown): string {
+function formatSafeError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err || "Unknown AI error");
-  if (raw.includes("valid credit card on file") || raw.includes("403")) {
-    return "Vercel AI Gateway requires an active billing card or AI_GATEWAY_API_KEY in your Vercel team AI settings to service model requests.";
+  // Redact any accidental API key or key= query param from upstream errors
+  const redacted = raw
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, "[REDACTED]")
+    .replace(/([?&]key=)[^&\s]+/gi, "$1[REDACTED]");
+
+  if (redacted.includes("API_KEY_INVALID") || redacted.includes("API key not valid")) {
+    return "The configured GEMINI_API_KEY appears invalid. Verify it in Google AI Studio and update your server environment variable.";
   }
-  if (raw.includes("API key") || raw.includes("401") || raw.includes("Unauthorized")) {
-    return "AI model authentication failed. Check VERCEL_OIDC_TOKEN or AI_GATEWAY_API_KEY configuration.";
+  if (redacted.includes("429") || redacted.toLowerCase().includes("quota")) {
+    return "Free Gemini API rate limit reached. Wait a few seconds and retry.";
   }
-  return `Model error: ${raw}`;
+  return `Chat error: ${redacted}`;
 }
 
 export async function POST(request: NextRequest) {
@@ -66,6 +74,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Unauthorized: Please sign in to use MinBook AI Chat" },
         { status: 401 }
+      );
+    }
+
+    const apiKey = getServerGeminiApiKey();
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "GEMINI_API_KEY is not configured. Add a free Google AI Studio key to your server environment variables.",
+        },
+        { status: 503 }
       );
     }
 
@@ -79,10 +99,6 @@ export async function POST(request: NextRequest) {
       typeof body?.symbol === "string" && body.symbol.toUpperCase().startsWith("MNQ")
         ? "MNQ"
         : "NQ";
-    const requestedModel =
-      typeof body?.model === "string" && ALLOWED_MODEL_IDS.has(body.model)
-        ? body.model
-        : DEFAULT_CHAT_MODEL;
     const attachmentPathsMap: Record<string, string> =
       body?.attachmentPaths && typeof body.attachmentPaths === "object"
         ? body.attachmentPaths
@@ -114,7 +130,6 @@ export async function POST(request: NextRequest) {
       deriveThreadTitle(userText, userFileParts.length > 0)
     );
 
-    // Update default thread title on first meaningful prompt
     if (
       thread.title === "New NQ Strat Session" &&
       (userText.length > 0 || userFileParts.length > 0)
@@ -132,7 +147,6 @@ export async function POST(request: NextRequest) {
       userId: auth.userId,
     });
 
-    // Persist incoming user message with canonical storage paths + context snapshot
     if (lastUserMessage) {
       const storedImageUrls = userFileParts
         .map((fp) => {
@@ -155,10 +169,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const google = createGoogle({ apiKey });
     const modelMessages = await convertToModelMessages(sanitizedMessages);
 
     const result = streamText({
-      model: requestedModel,
+      model: google(CHAT_MODEL_ID),
       instructions: systemPrompt,
       messages: modelMessages,
     });
@@ -175,18 +190,13 @@ export async function POST(request: NextRequest) {
           if (part.type === "start") {
             return {
               createdAt: new Date().toISOString(),
-              model: requestedModel,
+              model: CHAT_MODEL_ID,
               snapshot,
-            };
-          }
-          if (part.type === "finish") {
-            return {
-              totalTokens: part.totalUsage?.totalTokens,
             };
           }
           return undefined;
         },
-        onError: (err) => formatStreamError(err),
+        onError: (err) => formatSafeError(err),
         onEnd: async ({ responseMessage, isAborted }) => {
           const assistantText = extractTextFromParts(responseMessage?.parts);
           if (!assistantText) return;
@@ -208,9 +218,9 @@ export async function POST(request: NextRequest) {
       }),
     });
   } catch (error: unknown) {
-    console.error("API /api/chat POST error:", error);
+    console.error("API /api/chat POST error");
     return NextResponse.json(
-      { success: false, error: formatStreamError(error) },
+      { success: false, error: formatSafeError(error) },
       { status: 500 }
     );
   }

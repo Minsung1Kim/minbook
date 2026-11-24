@@ -750,3 +750,13 @@ All notable changes and architectural decisions are logged here.
   - Added safe HTTP/HTTPS link and strikethrough rendering in `MarkdownMessage.tsx`.
   - Updated `vitest.config.mts` to `import.meta.dirname` (eliminating Vite warning).
   - Re-verified `eslint` (0 errors/warnings on all chat files), `npx tsc --noEmit` (0 errors), `npm test` (18/18 suites, 133/133 tests passing), and `npm run build` (27/27 routes, 0 warnings).
+
+## [2026-11-24] - Chat UI Cleanup & Free Google Gemini (`gemini-2.5-flash`) Setup
+- **Single Free Multimodal Provider ([api/chat/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/chat/route.ts), [api/chat/context/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/chat/context/route.ts), [package.json](file:///Users/minsung/Documents/GitHub/minbook/package.json), [.env.example](file:///Users/minsung/Documents/GitHub/minbook/.env.example)):**
+  - Installed `@ai-sdk/google` (`4.0.126`) and routed `/api/chat` exclusively through `createGoogle({ apiKey })("gemini-2.5-flash")` using server-only `GEMINI_API_KEY` (or `GOOGLE_GENERATIVE_AI_API_KEY`) — free tier via Google AI Studio with no credit card required.
+  - Added explicit key redaction (`AIza...` and `key=...` scrubbing) in `formatSafeError`, strict `503` guard when `GEMINI_API_KEY` is missing, and non-secret `aiConfigured` boolean status in `/api/chat/context`.
+- **Decluttered `/chat` Interface ([ChatWorkspace.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chat/ChatWorkspace.tsx), [types/chat.ts](file:///Users/minsung/Documents/GitHub/minbook/src/types/chat.ts)):**
+  - Simplified top status bar to a single calm row (`NQ`/`MNQ`, live price, short bias badge, source, timestamp, staleness badge, and refresh button).
+  - Removed model selector dropdown, extra key-level pill row, expandable levels grid, per-bubble metadata/snapshot drawers, follow-up chip spam, and composer footer hints.
+  - Kept full Strat + MinBook live level/GEX/VRP/journal grounding in the server prompt and retained clean `Copy`, `Retry`, `Rename`, `Delete`, drag-and-drop, file upload, and `Cmd+V` paste workflows.
+  - Verified with `eslint` (0 errors/warnings on chat files), `npx tsc --noEmit` (0 errors), `npm test` (18/18 suites, 133/133 tests passing), and `npm run build` (27/27 routes, 0 warnings).

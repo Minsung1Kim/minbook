@@ -2,53 +2,8 @@ import type { UIMessage } from "ai";
 
 export type MarketStalenessBadge = "FRESH" | "DELAYED" | "STALE" | "SAMPLE";
 
-export interface ChatModelOption {
-  id: string;
-  label: string;
-  provider: "Google" | "OpenAI" | "Anthropic";
-  note: string;
-}
-
-export const CHAT_MODEL_OPTIONS: ChatModelOption[] = [
-  {
-    id: "google/gemini-3-flash",
-    label: "Gemini 3 Flash",
-    provider: "Google",
-    note: "Fast vision + Strat chart breakdown",
-  },
-  {
-    id: "google/gemini-2.5-flash",
-    label: "Gemini 2.5 Flash",
-    provider: "Google",
-    note: "Low-latency multimodal analysis",
-  },
-  {
-    id: "google/gemini-3.1-pro-preview",
-    label: "Gemini 3.1 Pro",
-    provider: "Google",
-    note: "Deep multi-timeframe reasoning",
-  },
-  {
-    id: "openai/gpt-5.4",
-    label: "GPT-5.4",
-    provider: "OpenAI",
-    note: "High-precision chart & regime synthesis",
-  },
-  {
-    id: "openai/gpt-5-mini",
-    label: "GPT-5 mini",
-    provider: "OpenAI",
-    note: "Fast OpenAI vision model",
-  },
-  {
-    id: "anthropic/claude-sonnet-4.6",
-    label: "Claude Sonnet 4.6",
-    provider: "Anthropic",
-    note: "Structured playbook critique",
-  },
-];
-
-export const DEFAULT_CHAT_MODEL = "google/gemini-3-flash";
+export const CHAT_MODEL_ID = "gemini-2.5-flash";
+export const CHAT_MODEL_LABEL = "Gemini 2.5 Flash";
 
 export interface ChatContextLevel {
   name: string;

@@ -25,8 +25,13 @@ export async function GET(request: NextRequest) {
       forceRefresh: refresh,
     });
 
+    const aiConfigured = Boolean(
+      process.env.GEMINI_API_KEY?.trim() ||
+        process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim()
+    );
+
     return NextResponse.json(
-      { success: true, snapshot },
+      { success: true, snapshot, aiConfigured },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
   } catch (error: unknown) {

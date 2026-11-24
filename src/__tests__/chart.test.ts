@@ -6,6 +6,11 @@ import {
   formatETDateTime
 } from "../components/chart/MinBookChart";
 import { isEventPassed } from "../components/EconomicNewsCard";
+import {
+  timeSecToLogicalIndex,
+  logicalIndexToTimeSec,
+  DRAWING_COLOR_PALETTE
+} from "../components/chart/primitives";
 import { OHLCVBar } from "../types/market";
 
 describe("MinBookChart Unit Tests", () => {
@@ -116,5 +121,23 @@ describe("MinBookChart Unit Tests", () => {
 
     // 3. Event far in the future
     expect(isEventPassed("2035-12-31", "10:00 AM", false)).toBe(false);
+  });
+
+  it("maps custom drawing coordinates cleanly between timestamps and logical indices (including future whitespace)", () => {
+    const barTimes = [1000, 1900, 2800]; // 15m (900s) spacing
+    const intervalSec = 900;
+
+    // Exact bar match
+    expect(timeSecToLogicalIndex(barTimes, intervalSec, 1900)).toBe(1);
+
+    // Midpoint between bar 1 and bar 2 (e.g., 5m sub-bar mapped onto 15m chart)
+    expect(timeSecToLogicalIndex(barTimes, intervalSec, 2350)).toBeCloseTo(1.5, 4);
+
+    // Future whitespace beyond last bar (e.g., 2 bars to the right)
+    expect(timeSecToLogicalIndex(barTimes, intervalSec, 4600)).toBeCloseTo(4.0, 4);
+    expect(logicalIndexToTimeSec(barTimes, intervalSec, 4.0)).toBe(4600);
+
+    // Drawing color palette contains all 4 colors
+    expect(Object.keys(DRAWING_COLOR_PALETTE)).toEqual(["CYAN", "EMERALD", "ROSE", "AMBER"]);
   });
 });

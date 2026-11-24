@@ -695,3 +695,8 @@ All notable changes and architectural decisions are logged here.
   - Exposed `NQ | MNQ` and `ET | CT | PT` + live session label in a compact mobile/tablet sub-bar inside `Header.tsx` (`md:hidden`) so phone and iPad users have full controls.
   - Constrained mobile chart HUD overlay widths (`max-w-[52%]` / `max-w-[46%]`) to prevent OHLC and GEX card collisions on small screens.
   - Made copy-price buttons visible on touch screens (`opacity-75 sm:opacity-0 sm:group-hover:opacity-100`), converted P&L Journal stats into a clean responsive grid, and added responsive column hiding (`hidden sm:table-cell` / `hidden md:table-cell` with mobile detail drawer fields in News Calendar) across tables.
+
+## [2026-11-24] - Simple Interactive Chart Drawing Tools (`Line`, `Square`, `Type`)
+- **Canvas Drawing Engine ([primitives.ts](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/primitives.ts), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
+  - Added `UserDrawingsPrimitive` plus `timeSecToLogicalIndex` / `logicalIndexToTimeSec` / `timeSecToChartX` / `chartXToTimeSec` helpers so boxes and text annotations pan/zoom smoothly inside Lightweight Charts (including between bars and into future right-side whitespace).
+  - Added slim drawing bar with `Cursor`, `Line` (0.25-tick snapped straight horizontal line with price-axis tag), `Square` (supports both drag-and-release and click-two-corners), `Type` (inline floating input anchored to clicked price/time), 4 color dots (`CYAN`, `EMERALD`, `ROSE`, `AMBER`), `Undo`, `Clear`, `Esc` cancel shortcut, and `localStorage` persistence per instrument (`tapebook_chart_drawings_${selectedInstrument}`).

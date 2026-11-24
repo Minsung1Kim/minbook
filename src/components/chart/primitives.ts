@@ -4,6 +4,7 @@ import type {
   IPrimitivePaneView,
   IPrimitivePaneRenderer,
   Time,
+  Logical,
   SeriesType,
   IChartApiBase,
   ISeriesApi,
@@ -434,5 +435,381 @@ export class HorizontalRetraceZonePrimitive implements ISeriesPrimitive<Time> {
       this._label,
       this._bias
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. USER DRAWINGS PRIMITIVE (HORIZONTAL LINE, SQUARE/RECTANGLE, TEXT NOTE)
+// ---------------------------------------------------------------------------
+export type ChartDrawingColor = "CYAN" | "EMERALD" | "ROSE" | "AMBER";
+
+export interface HLineDrawing {
+  id: string;
+  type: "hline";
+  price: number;
+  color: ChartDrawingColor;
+}
+
+export interface RectDrawing {
+  id: string;
+  type: "rect";
+  timeSec1: number;
+  price1: number;
+  timeSec2: number;
+  price2: number;
+  color: ChartDrawingColor;
+}
+
+export interface TextDrawing {
+  id: string;
+  type: "text";
+  timeSec: number;
+  price: number;
+  text: string;
+  color: ChartDrawingColor;
+}
+
+export type ChartDrawing = HLineDrawing | RectDrawing | TextDrawing;
+
+export const DRAWING_COLOR_PALETTE: Record<
+  ChartDrawingColor,
+  { hex: string; fill: string; stroke: string; pillBg: string; label: string }
+> = {
+  CYAN: {
+    hex: "#38bdf8",
+    fill: "rgba(56, 189, 248, 0.14)",
+    stroke: "rgba(56, 189, 248, 0.85)",
+    pillBg: "rgba(8, 47, 73, 0.88)",
+    label: "Blue"
+  },
+  EMERALD: {
+    hex: "#34d399",
+    fill: "rgba(52, 211, 153, 0.14)",
+    stroke: "rgba(52, 211, 153, 0.85)",
+    pillBg: "rgba(6, 78, 59, 0.88)",
+    label: "Green"
+  },
+  ROSE: {
+    hex: "#fb7185",
+    fill: "rgba(251, 113, 133, 0.14)",
+    stroke: "rgba(251, 113, 133, 0.85)",
+    pillBg: "rgba(76, 5, 25, 0.88)",
+    label: "Red"
+  },
+  AMBER: {
+    hex: "#fbbf24",
+    fill: "rgba(251, 191, 36, 0.14)",
+    stroke: "rgba(251, 191, 36, 0.85)",
+    pillBg: "rgba(69, 26, 3, 0.88)",
+    label: "Amber"
+  }
+};
+
+export function timeSecToLogicalIndex(
+  barsTimes: number[],
+  intervalSec: number,
+  targetTimeSec: number
+): number | null {
+  if (barsTimes.length === 0 || intervalSec <= 0) return null;
+  const n = barsTimes.length;
+
+  if (targetTimeSec <= barsTimes[0]) {
+    return (targetTimeSec - barsTimes[0]) / intervalSec;
+  }
+  if (targetTimeSec >= barsTimes[n - 1]) {
+    return n - 1 + (targetTimeSec - barsTimes[n - 1]) / intervalSec;
+  }
+
+  let lo = 0;
+  let hi = n - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (barsTimes[mid] === targetTimeSec) return mid;
+    if (barsTimes[mid] < targetTimeSec) lo = mid + 1;
+    else hi = mid - 1;
+  }
+
+  const left = Math.max(0, hi);
+  const right = Math.min(n - 1, lo);
+  const span = Math.max(barsTimes[right] - barsTimes[left], 1);
+  return left + (targetTimeSec - barsTimes[left]) / span;
+}
+
+export function logicalIndexToTimeSec(
+  barsTimes: number[],
+  intervalSec: number,
+  logical: number
+): number | null {
+  if (barsTimes.length === 0 || intervalSec <= 0) return null;
+  const n = barsTimes.length;
+
+  if (logical <= 0) {
+    return Math.round(barsTimes[0] + logical * intervalSec);
+  }
+  if (logical >= n - 1) {
+    return Math.round(barsTimes[n - 1] + (logical - (n - 1)) * intervalSec);
+  }
+
+  const left = Math.floor(logical);
+  const right = Math.min(n - 1, left + 1);
+  const frac = logical - left;
+  return Math.round(barsTimes[left] + frac * (barsTimes[right] - barsTimes[left]));
+}
+
+export function timeSecToChartX(
+  chart: IChartApiBase<Time>,
+  barsTimes: number[],
+  intervalSec: number,
+  targetTimeSec: number
+): number | null {
+  const ts = chart.timeScale();
+  const direct = ts.timeToCoordinate(targetTimeSec as Time);
+  if (direct !== null && Number.isFinite(direct)) {
+    return direct as number;
+  }
+  const logical = timeSecToLogicalIndex(barsTimes, intervalSec, targetTimeSec);
+  if (logical === null) return null;
+  const coord = ts.logicalToCoordinate(logical as Logical);
+  return coord !== null && Number.isFinite(coord) ? (coord as number) : null;
+}
+
+export function chartXToTimeSec(
+  chart: IChartApiBase<Time>,
+  barsTimes: number[],
+  intervalSec: number,
+  x: number
+): number | null {
+  const ts = chart.timeScale();
+  const direct = ts.coordinateToTime(x);
+  if (typeof direct === "number" && Number.isFinite(direct)) {
+    return direct;
+  }
+  const logical = ts.coordinateToLogical(x);
+  if (logical === null || !Number.isFinite(logical)) return null;
+  return logicalIndexToTimeSec(barsTimes, intervalSec, logical as number);
+}
+
+interface RenderedRectItem {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: ChartDrawingColor;
+  isPreview?: boolean;
+}
+
+interface RenderedTextItem {
+  x: number;
+  y: number;
+  text: string;
+  color: ChartDrawingColor;
+}
+
+interface RenderedHLinePreview {
+  y: number;
+  price: number;
+  color: ChartDrawingColor;
+}
+
+class UserDrawingsRenderer implements IPrimitivePaneRenderer {
+  private _rects: RenderedRectItem[] = [];
+  private _texts: RenderedTextItem[] = [];
+  private _hlinePreview: RenderedHLinePreview | null = null;
+
+  setData(
+    rects: RenderedRectItem[],
+    texts: RenderedTextItem[],
+    hlinePreview: RenderedHLinePreview | null
+  ) {
+    this._rects = rects;
+    this._texts = texts;
+    this._hlinePreview = hlinePreview;
+  }
+
+  draw(target: CanvasRenderingTarget2D): void {
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      // 1. User Squares / Rectangles
+      for (const r of this._rects) {
+        const palette = DRAWING_COLOR_PALETTE[r.color] || DRAWING_COLOR_PALETTE.CYAN;
+        const left = Math.min(r.x1, r.x2);
+        const top = Math.min(r.y1, r.y2);
+        const width = Math.max(Math.abs(r.x2 - r.x1), 2);
+        const height = Math.max(Math.abs(r.y2 - r.y1), 2);
+
+        ctx.save();
+        ctx.fillStyle = palette.fill;
+        ctx.strokeStyle = palette.stroke;
+        ctx.lineWidth = r.isPreview ? 1.5 : 1.5;
+        if (r.isPreview) {
+          ctx.setLineDash([4, 3]);
+        }
+        ctx.fillRect(left, top, width, height);
+        ctx.strokeRect(left, top, width, height);
+        ctx.restore();
+      }
+
+      // 2. Preview Horizontal Line while hovering in Line mode
+      if (this._hlinePreview !== null) {
+        const palette = DRAWING_COLOR_PALETTE[this._hlinePreview.color] || DRAWING_COLOR_PALETTE.CYAN;
+        ctx.save();
+        ctx.strokeStyle = palette.stroke;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(0, this._hlinePreview.y);
+        ctx.lineTo(mediaSize.width, this._hlinePreview.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 3. Text Annotations
+      for (const t of this._texts) {
+        const palette = DRAWING_COLOR_PALETTE[t.color] || DRAWING_COLOR_PALETTE.CYAN;
+        const label = t.text.trim();
+        if (!label) continue;
+
+        ctx.save();
+        ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const textWidth = ctx.measureText(label).width;
+        const padX = 7;
+        const boxW = textWidth + padX * 2;
+        const boxH = 20;
+        const drawX = Math.max(4, Math.min(t.x, mediaSize.width - boxW - 4));
+        const drawY = Math.max(4, Math.min(t.y - boxH / 2, mediaSize.height - boxH - 4));
+
+        ctx.fillStyle = palette.pillBg;
+        ctx.strokeStyle = palette.stroke;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(drawX, drawY, boxW, boxH, 4);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#f4f4f5";
+        ctx.fillText(label, drawX + padX, drawY + 13.5);
+        ctx.restore();
+      }
+    });
+  }
+}
+
+export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
+  private _chart: IChartApiBase<Time> | null = null;
+  private _series: ISeriesApi<SeriesType, Time> | null = null;
+  private _requestUpdate: (() => void) | null = null;
+  private _drawings: ChartDrawing[] = [];
+  private _previewRect: Omit<RectDrawing, "id"> | null = null;
+  private _previewHLine: { price: number; color: ChartDrawingColor } | null = null;
+  private _barsTimes: number[] = [];
+  private _intervalSec: number = 900;
+  private _renderer = new UserDrawingsRenderer();
+  private _paneView: IPrimitivePaneView;
+  private _views: readonly IPrimitivePaneView[];
+
+  constructor() {
+    this._paneView = {
+      zOrder: (): PrimitivePaneViewZOrder => "top",
+      renderer: (): IPrimitivePaneRenderer => this._renderer
+    };
+    this._views = [this._paneView];
+  }
+
+  attached(param: SeriesAttachedParameter<Time, SeriesType>): void {
+    this._chart = param.chart;
+    this._series = param.series;
+    this._requestUpdate = param.requestUpdate;
+    this.updateAllViews();
+  }
+
+  detached(): void {
+    this._chart = null;
+    this._series = null;
+    this._requestUpdate = null;
+  }
+
+  paneViews(): readonly IPrimitivePaneView[] {
+    return this._views;
+  }
+
+  setContext(barsTimes: number[], intervalSec: number): void {
+    this._barsTimes = barsTimes;
+    this._intervalSec = intervalSec;
+    this.updateAllViews();
+    this._requestUpdate?.();
+  }
+
+  setDrawings(drawings: ChartDrawing[]): void {
+    this._drawings = drawings;
+    this.updateAllViews();
+    this._requestUpdate?.();
+  }
+
+  setPreview(
+    previewRect: Omit<RectDrawing, "id"> | null,
+    previewHLine: { price: number; color: ChartDrawingColor } | null
+  ): void {
+    this._previewRect = previewRect;
+    this._previewHLine = previewHLine;
+    this.updateAllViews();
+    this._requestUpdate?.();
+  }
+
+  updateAllViews(): void {
+    if (!this._chart || !this._series) {
+      this._renderer.setData([], [], null);
+      return;
+    }
+
+    const rects: RenderedRectItem[] = [];
+    const texts: RenderedTextItem[] = [];
+
+    for (const d of this._drawings) {
+      if (d.type === "rect") {
+        const x1 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec1);
+        const x2 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec2);
+        const y1 = this._series.priceToCoordinate(d.price1);
+        const y2 = this._series.priceToCoordinate(d.price2);
+        if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+          rects.push({ x1, y1: y1 as number, x2, y2: y2 as number, color: d.color });
+        }
+      } else if (d.type === "text") {
+        const x = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec);
+        const y = this._series.priceToCoordinate(d.price);
+        if (x !== null && y !== null) {
+          texts.push({ x, y: y as number, text: d.text, color: d.color });
+        }
+      }
+    }
+
+    if (this._previewRect) {
+      const x1 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, this._previewRect.timeSec1);
+      const x2 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, this._previewRect.timeSec2);
+      const y1 = this._series.priceToCoordinate(this._previewRect.price1);
+      const y2 = this._series.priceToCoordinate(this._previewRect.price2);
+      if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+        rects.push({
+          x1,
+          y1: y1 as number,
+          x2,
+          y2: y2 as number,
+          color: this._previewRect.color,
+          isPreview: true
+        });
+      }
+    }
+
+    let hlinePreview: RenderedHLinePreview | null = null;
+    if (this._previewHLine) {
+      const y = this._series.priceToCoordinate(this._previewHLine.price);
+      if (y !== null) {
+        hlinePreview = {
+          y: y as number,
+          price: this._previewHLine.price,
+          color: this._previewHLine.color
+        };
+      }
+    }
+
+    this._renderer.setData(rects, texts, hlinePreview);
   }
 }

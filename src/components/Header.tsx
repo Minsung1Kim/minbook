@@ -102,8 +102,8 @@ export function Header({
             </span>
           </Link>
 
-          {/* Clean 4-Tab Nav */}
-          <nav className="flex items-center space-x-1">
+          {/* Clean 4-Tab Nav (Desktop) */}
+          <nav className="hidden sm:flex items-center space-x-1">
             <Link
               href="/"
               className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
@@ -298,6 +298,60 @@ export function Header({
           )}
         </div>
       </div>
+
+      {/* Mobile Bottom Navigation Bar (< sm) */}
+      <nav
+        aria-label="Mobile Navigation"
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-50 h-14 bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800/80 px-3 flex items-center justify-around shadow-2xl safe-area-bottom"
+      >
+        <Link
+          href="/"
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded transition-colors ${
+            pathname === "/"
+              ? "text-zinc-100 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <Activity className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] tracking-tight">Brief</span>
+        </Link>
+
+        <Link
+          href="/journal"
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded transition-colors ${
+            pathname.startsWith("/journal")
+              ? "text-zinc-100 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <BookOpen className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] tracking-tight">Journal</span>
+        </Link>
+
+        <Link
+          href="/performance"
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded transition-colors ${
+            pathname.startsWith("/performance")
+              ? "text-zinc-100 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <Target className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] tracking-tight">Audit</span>
+        </Link>
+
+        <Link
+          href="/calendar"
+          className={`flex flex-col items-center justify-center flex-1 py-1 rounded transition-colors ${
+            pathname.startsWith("/calendar")
+              ? "text-zinc-100 font-semibold"
+              : "text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <Clock className="w-4 h-4 mb-0.5" />
+          <span className="text-[10px] tracking-tight">Calendar</span>
+        </Link>
+      </nav>
     </header>
   );
 }

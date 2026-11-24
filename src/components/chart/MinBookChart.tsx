@@ -1052,7 +1052,7 @@ export default function MinBookChart({
         </div>
 
         {/* Right: Layer Toggle Pills */}
-        <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+        <div className="flex items-center overflow-x-auto no-scrollbar gap-1 text-[11px] font-mono py-0.5 max-w-full">
           <button
             onClick={() => toggleLayer("liquidity")}
             className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors ${
@@ -1177,7 +1177,7 @@ export default function MinBookChart({
       </div>
 
       {/* 2. Chart Canvas Container with HUD Overlays */}
-      <div className="relative w-full h-[560px] bg-[#09090b]">
+      <div className="relative w-full h-[380px] sm:h-[480px] md:h-[560px] bg-[#09090b]">
         {/* Top-Right GEX Regime HUD Card */}
         {layers.gex && brief.gex && !allHudsHidden && (
           <div className="absolute top-2.5 right-3 z-10 pointer-events-auto flex flex-col items-end space-y-1 max-w-xs">

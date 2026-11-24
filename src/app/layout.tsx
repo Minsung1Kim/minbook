@@ -33,7 +33,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`dark h-full antialiased ${geistSans.variable} ${geistMono.variable}`}>
-      <body className="min-h-full bg-zinc-950 text-zinc-100 flex flex-col font-sans">
+      <body className="min-h-full bg-zinc-950 text-zinc-100 flex flex-col font-sans pb-16 sm:pb-0">
         <TooltipProvider>
           <TimezoneProvider>{children}</TimezoneProvider>
         </TooltipProvider>

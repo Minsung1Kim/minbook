@@ -646,3 +646,7 @@ All notable changes and architectural decisions are logged here.
   - `npm test`: 17/17 test files and **122/122 tests passing** (including `src/__tests__/revamp_features.test.ts`).
   - `npm run build`: all 21 routes compiled cleanly.
   - Live Supabase verification confirmed `2026-11-24` re-graded accurately (`GRADED_OPEN_WINDOW`, `bias_correct: true`, `chop_warning_correct: true`).
+
+## [2026-11-24] - Login-Only Auth & Quant Math Collapsed by Default
+- **Login-Only Gate (`src/app/login/page.tsx`):** Removed public sign-up option and toggle; users are provisioned manually via Supabase.
+- **Quieter Initial Dashboard (`src/components/Dashboard.tsx`):** Collapsed `showQuantMath` to `false` by default on login so traders see only the bias verdict, chart, bounce areas, and target areas first, with one-click `"Show Quant Math"` on demand.

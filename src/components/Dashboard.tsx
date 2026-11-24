@@ -57,7 +57,7 @@ export function Dashboard() {
 
   const [focusedLevel, setFocusedLevel] = useState<KeyLevel | null>(null);
   const [copiedPriceId, setCopiedPriceId] = useState<string | null>(null);
-  const [showQuantMath, setShowQuantMath] = useState<boolean>(true);
+  const [showQuantMath, setShowQuantMath] = useState<boolean>(false);
 
   useEffect(() => {
     fetch("/api/settings")

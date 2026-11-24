@@ -31,6 +31,7 @@ import {
   Check,
   Pencil,
   KeyRound,
+  ExternalLink,
 } from "lucide-react";
 
 interface StagedAttachment {
@@ -901,19 +902,31 @@ export function ChatWorkspace() {
 
           {/* Setup Notice if GEMINI_API_KEY is not yet configured */}
           {!aiConfigured && (
-            <div className="mx-3 sm:mx-6 mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200 flex items-start space-x-2.5">
-              <KeyRound className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-              <div>
-                <span className="font-semibold">Gemini API key needed:</span> Add a free{" "}
-                <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
-                  GEMINI_API_KEY
-                </code>{" "}
-                from Google AI Studio to your server environment variables (Vercel /{" "}
-                <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
-                  .env.local
-                </code>
-                ) to enable live chat responses.
+            <div className="mx-3 sm:mx-6 mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-start space-x-2.5">
+                <KeyRound className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                <div>
+                  <span className="font-semibold">Free Gemini API key needed:</span>{" "}
+                  Add{" "}
+                  <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
+                    GEMINI_API_KEY
+                  </code>{" "}
+                  to Vercel Environment Variables (or{" "}
+                  <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
+                    .env.local
+                  </code>
+                  ) to enable chat.
+                </div>
               </div>
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 text-amber-200 font-medium text-[11px] transition-colors shrink-0"
+              >
+                <span>Get free key here</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
             </div>
           )}
 

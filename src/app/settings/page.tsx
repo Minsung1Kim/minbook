@@ -119,7 +119,7 @@ export function SettingsPage() {
       maxDailyTrades: 1,
       trailingDrawdownAlert: 1000,
       defaultInstrument: "NQ",
-      notes: "Friend trading profile (1 trade/day)",
+      notes: "Trader risk profile",
       updatedAt: new Date().toISOString()
     };
 
@@ -245,7 +245,7 @@ export function SettingsPage() {
                 <Shield className="w-4 h-4 text-emerald-400" />
                 <span>Risk & Sizing Budget ({name})</span>
               </span>
-              <span className="text-slate-400 text-[11px]">1 Trade / Day Rule</span>
+              <span className="text-slate-400 text-[11px]">Per-Account Guardrails</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -353,7 +353,7 @@ export function SettingsPage() {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-800 rounded px-3 py-2 text-slate-200"
-                placeholder="Personal rules: Do not enter before 9:34 AM. Wait for retrace to VWAP."
+                placeholder="Session rules: e.g. Asia/London/NY preferences, pullback criteria, max trades..."
               />
             </div>
 

@@ -5,6 +5,7 @@ import { computeSessionLevels } from "./levels";
 import { evaluateBiasAndRegime } from "./regime";
 import { generateTacticalPlaybook } from "./playbook";
 import { getCMESessionInfo, getETParts } from "./sessionClock";
+import { getUpcomingSessionNews } from "./economicCalendar";
 import { getMarketGEX } from "./gex";
 import { fetch1mBars, buildFootprintSummary } from "./footprint";
 import { getCalibrationRepository } from "@/lib/calibration/store";
@@ -97,12 +98,9 @@ export async function getOpenBrief(options?: {
     console.warn("GEX / Footprint module warning:", err?.message || err);
   }
 
-  // Check if red/orange folder news scheduled between 9:30 and 10:00 AM ET on target trade date
-  const hasOpenNews = events.some(
-    (e) =>
-      (e.isNearOpenWindow || (e.alert && (e.timeET.includes("09:45") || e.timeET.includes("10:00")))) &&
-      (e.date === targetTradeDate || !e.date)
-  );
+  // Check if red/orange folder news is imminent relative to current session time (next 75m)
+  const hasOpenNews =
+    getUpcomingSessionNews(events, sessionInfo.nowET, targetTradeDate, 75).imminent.length > 0;
 
   // Evaluate bias & chop risk with full volatility surface, macro regime, and dealer GEX tilt
   const bias = evaluateBiasAndRegime(

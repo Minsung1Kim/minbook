@@ -1,4 +1,5 @@
 import { EconomicEvent } from "@/types/market";
+import { getETParts, parseDateStrToETEpochMs } from "./sessionClock";
 
 interface RawFFEvent {
   title: string;
@@ -388,5 +389,62 @@ export function checkTier1NewsBlackout(
   }
 
   return { hasBlackoutAlarm: false };
+}
+
+export interface UpcomingSessionNewsResult {
+  imminent: EconomicEvent[];
+  laterToday: EconomicEvent[];
+}
+
+/**
+ * Evaluates which high/medium impact USD events are actually imminent or still ahead
+ * relative to `nowDate` (avoids stale 09:45/10:00 AM open alerts during afternoon or Asia sessions).
+ */
+export function getUpcomingSessionNews(
+  events: EconomicEvent[],
+  nowDate: Date = new Date(),
+  targetTradeDate?: string,
+  imminentMinutesAhead: number = 75
+): UpcomingSessionNewsResult {
+  if (!events || events.length === 0) {
+    return { imminent: [], laterToday: [] };
+  }
+
+  const nowMs = nowDate.getTime();
+  const etNow = getETParts(nowDate);
+  const effectiveDate = targetTradeDate || etNow.dateStr;
+  const imminent: EconomicEvent[] = [];
+  const laterToday: EconomicEvent[] = [];
+
+  for (const ev of events) {
+    if (ev.country && ev.country !== "USD") continue;
+    const isHighOrMed =
+      ev.folderColor === "RED" ||
+      ev.folderColor === "ORANGE" ||
+      ev.impact === "HIGH" ||
+      ev.impact === "MEDIUM" ||
+      ev.alert;
+    if (!isHighOrMed) continue;
+
+    const evDateStr = ev.date || effectiveDate;
+    if (evDateStr !== etNow.dateStr && evDateStr !== targetTradeDate) continue;
+
+    const parsed = parseEventTimeET(ev.timeET);
+    if (!parsed) continue;
+
+    const evMs = parseDateStrToETEpochMs(evDateStr, parsed.hour, parsed.minute, 0);
+    const diffMins = (evMs - nowMs) / 60000;
+
+    // Skip events whose print happened >10 mins ago (especially if actual is already published)
+    if (diffMins < -10 || (ev.actual && diffMins < 0)) continue;
+
+    if (diffMins <= imminentMinutesAhead) {
+      imminent.push(ev);
+    } else if (evDateStr === etNow.dateStr) {
+      laterToday.push(ev);
+    }
+  }
+
+  return { imminent, laterToday };
 }
 

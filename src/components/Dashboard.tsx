@@ -314,6 +314,10 @@ export function Dashboard() {
                     </span>
 
                     <span className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
+                      {plainBrief.gameplan.sessionLabel}
+                    </span>
+
+                    <span className="px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-400">
                       {plainBrief.scoreSummary}
                     </span>
 
@@ -432,6 +436,9 @@ export function Dashboard() {
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-300">
                     Futures Gameplan
                   </span>
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-zinc-900 text-zinc-400 border border-zinc-800">
+                    {plainBrief.gameplan.sessionLabel} · {plainBrief.gameplan.sessionWindowHuman}
+                  </span>
                   {!showGameplan && (
                     <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                       <span
@@ -512,7 +519,7 @@ export function Dashboard() {
                   {/* Box 3: Key Futures Day-Trading Reminders */}
                   <div className="rounded-lg bg-zinc-950/60 border border-zinc-800/80 p-3 space-y-1.5">
                     <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 block">
-                      Key Futures Notes Today
+                      Key Futures Notes ({plainBrief.gameplan.sessionLabel})
                     </span>
                     <ul className="space-y-1 text-xs">
                       {plainBrief.gameplan.keyTips.map((tip, i) => (

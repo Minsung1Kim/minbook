@@ -26,6 +26,7 @@ import {
 import { evaluateLayer1RiskGates } from "./riskGates";
 import { evaluateLayer2DirectionalScore } from "./directionalScore";
 import { evaluateLTFExecution } from "../execution/ltfExecution";
+import { getUpcomingSessionNews } from "./economicCalendar";
 
 export function generateTacticalPlaybook(
   currentPrice: number,
@@ -95,17 +96,18 @@ export function generateTacticalPlaybook(
     ? "DELAYED FUTURES FEED (10–15m LAG) — USE PRE-OPEN PLAN + LIVE CHART"
     : "";
 
-  // 3. News Buffer Warning for 09:45 AM / 10:00 AM Releases on target trade date
+  // 3. Session-Aware News Buffer Warning for upcoming releases relative to nowET
   let newsBufferWarning: string | undefined;
   if (options?.economicEvents) {
-    const nearOpenReleases = options.economicEvents.filter((ev) => {
-      const isTargetDay = ev.date === targetTradeDate || !ev.date;
-      const t = ev.timeET.toLowerCase();
-      return isTargetDay && (t.includes("9:45") || t.includes("09:45") || t.includes("10:00") || ev.isNearOpenWindow);
-    });
-    if (nearOpenReleases.length > 0) {
-      const evNames = nearOpenReleases.map((e) => `${e.timeET} ${e.event}`).join(", ");
-      newsBufferWarning = `NEWS BUFFER WARNING: High-impact release (${evNames}). Lock in profits or move stops to breakeven before 10:00 AM.`;
+    const upcomingReleases = getUpcomingSessionNews(
+      options.economicEvents,
+      sessionInfo.nowET,
+      targetTradeDate,
+      75
+    ).imminent;
+    if (upcomingReleases.length > 0) {
+      const evNames = upcomingReleases.map((e) => `${e.timeET} ${e.event}`).join(", ");
+      newsBufferWarning = `UPCOMING NEWS RISK: High-impact release (${evNames}). Lock profits or tighten stops ahead of release.`;
     }
   }
 

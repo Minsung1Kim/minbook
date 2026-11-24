@@ -1,5 +1,7 @@
 import { OpenBriefData, KeyLevel } from "../../types/market";
 import { computeLevelVitality } from "../../components/KeyLevelsTable";
+import { getCMESessionInfo, getETParts, ActiveFuturesSession } from "./sessionClock";
+import { getUpcomingSessionNews } from "./economicCalendar";
 
 export type BiasDirectionLabel = "BULLISH" | "BEARISH" | "NO CLEAR EDGE";
 
@@ -25,6 +27,9 @@ export interface ActionableArea {
 }
 
 export interface FuturesGameplan {
+  activeSession: ActiveFuturesSession;
+  sessionLabel: string;
+  sessionWindowHuman: string;
   stopHunt: {
     shouldWait: boolean;
     badge: string;
@@ -75,6 +80,8 @@ function getFriendlyLevelName(shortName: string, name: string): string {
   if (s === "lon low") return "London Session Low";
   if (s === "asia high") return "Asia Session High";
   if (s === "asia low") return "Asia Session Low";
+  if (s === "day high") return "Today's Session High";
+  if (s === "day low") return "Today's Session Low";
   if (s.includes("htf 50")) return "5-Day 50% Pullback";
   if (s.includes("htf 61.8")) return "5-Day 61.8% Deep Pullback";
   if (s.includes("htf 70.5")) return "5-Day 70.5% Extreme Pullback";
@@ -105,10 +112,10 @@ function getBounceReason(shortName: string, direction: BiasDirectionLabel, price
   if (s === "prior val" || s === "prior vah") {
     return "Edge of yesterday's 70% value area; price often reacts on first test.";
   }
-  if (s === "onl" || s === "lon low") {
+  if (s === "onl" || s === "lon low" || s === "asia low" || s === "day low") {
     return "Resting sell stops below this low — watch for a quick sweep and bounce up.";
   }
-  if (s === "onh" || s === "lon high") {
+  if (s === "onh" || s === "lon high" || s === "asia high" || s === "day high") {
     return "Resting buy stops above this high — watch for a quick poke and reject down.";
   }
   if (s.includes("htf 50") || s.includes("htf 61.8")) {
@@ -134,8 +141,12 @@ function getTargetReason(shortName: string, isUpside: boolean): string {
   if (s === "onl") return "Overnight Low — resting sell stops sit below here as a downside magnet.";
   if (s === "pdh") return "Yesterday's High — primary multi-session upside liquidity target.";
   if (s === "pdl") return "Yesterday's Low — primary multi-session downside liquidity target.";
-  if (s === "lon high") return "London High — first European session resistance/magnet overhead.";
-  if (s === "lon low") return "London Low — first European session floor/magnet below.";
+  if (s === "lon high") return "London High — European session resistance/magnet overhead.";
+  if (s === "lon low") return "London Low — European session floor/magnet below.";
+  if (s === "asia high") return "Asia High — overnight Globex ceiling/liquidity magnet overhead.";
+  if (s === "asia low") return "Asia Low — overnight Globex floor/liquidity magnet below.";
+  if (s === "day high") return "Today's Session High — active intraday high & buy-side liquidity target.";
+  if (s === "day low") return "Today's Session Low — active intraday low & sell-side liquidity target.";
   if (s === "prior vah") return "Yesterday's Value Area High — upper fair-value boundary.";
   if (s === "prior val") return "Yesterday's Value Area Low — lower fair-value boundary.";
   if (s === "prior poc") return "Yesterday's Point of Control — high-volume price magnet.";
@@ -157,7 +168,10 @@ function deduplicateAreas(areas: ActionableArea[], minGapPts = 4): ActionableAre
   return kept;
 }
 
-export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief {
+export function buildPlainEnglishBrief(
+  brief: OpenBriefData,
+  overrideNow?: Date
+): PlainEnglishBrief {
   const spot = brief.quote.price;
   const metrics = brief.sessionMetrics;
   const bias = brief.bias;
@@ -168,6 +182,15 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
   const macro = brief.macro.macroRegime ?? bias.macroRegime;
   const gex = brief.gex ?? bias.gex;
   const footprint = brief.footprint;
+
+  const sessionInfo = overrideNow
+    ? getCMESessionInfo(overrideNow)
+    : brief.sessionInfo?.activeSession
+    ? brief.sessionInfo
+    : getCMESessionInfo(brief.sessionInfo?.nowET ? new Date(brief.sessionInfo.nowET) : new Date());
+  const activeSession = sessionInfo.activeSession;
+  const etNow = getETParts(sessionInfo.nowET ? new Date(sessionInfo.nowET) : new Date());
+  const etTotalMins = etNow.hour * 60 + etNow.minute;
 
   // 1. Determine Direction
   let direction: BiasDirectionLabel = "NO CLEAR EDGE";
@@ -194,10 +217,12 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       reasons.push(`Volatility itself is spiking (VVIX ${vol.vvix.toFixed(0)}), making clean trends less reliable.`);
     }
     if (layer1?.reversalVetoActive) {
+      const crowdNoun = activeSession === "ASIA" ? "Asia session" : "Overnight";
+      const midName = activeSession === "ASIA" ? "session midpoint" : "overnight midpoint";
       reasons.push(
         metrics.inventoryPercent >= 70
-          ? `Overnight buyers (${metrics.inventoryPercent}%) are trapped below the overnight midpoint, risking an early flush.`
-          : `Overnight sellers (${100 - metrics.inventoryPercent}%) are trapped above the overnight midpoint, risking a short squeeze.`
+          ? `${crowdNoun} buyers (${metrics.inventoryPercent}%) are trapped below the ${midName}, risking a long liquidation sweep.`
+          : `${crowdNoun} sellers (${100 - metrics.inventoryPercent}%) are trapped above the ${midName}, risking a short squeeze.`
       );
     }
     if (reasons.length === 0) {
@@ -216,7 +241,10 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
     verdictTitle = "Do Not Trade — High Whipsaw Risk";
     verdictSubtitle = `${plainRiskReason} Best move is to stay flat.`;
   } else if (layer1?.reversalVetoActive) {
-    verdictTitle = "Be Careful — Overnight Crowd Is Trapped";
+    verdictTitle =
+      activeSession === "ASIA"
+        ? "Be Careful — Early Session Crowd Is Trapped"
+        : "Be Careful — Overnight Crowd Is Trapped";
     verdictSubtitle = plainRiskReason;
   } else if (direction === "BULLISH") {
     verdictTitle = "Lean Bullish — Look for Dips to Bounce";
@@ -285,11 +313,17 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
     mathDetail: `${diffVwap >= 0 ? "+" : ""}${diffVwap.toFixed(1)} pts vs VWAP (${metrics.sessionVwap.toFixed(1)}) · ${diffPdc >= 0 ? "+" : ""}${diffPdc.toFixed(1)} pts vs PDC (${metrics.pdc.toFixed(1)}) · 5D Trend: ${bias.htfTrend}`
   });
 
-  // Fact 2: Overnight Positioning
+  // Fact 2: Session Positioning (Asia / London / NY RTH aware)
   const inv = metrics.inventoryPercent;
+  const sessionNoun =
+    activeSession === "ASIA"
+      ? "Asia session"
+      : activeSession === "LONDON"
+      ? "Asia + London"
+      : "Overnight Globex";
   quantFacts.push({
     id: "overnight-inventory",
-    label: "Overnight Positioning",
+    label: activeSession === "ASIA" ? "Asia Session Positioning" : "Overnight Positioning",
     status:
       layer1?.reversalVetoActive
         ? "CAUTION"
@@ -300,12 +334,12 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
         : "NEUTRAL",
     headline:
       layer1?.reversalVetoActive
-        ? "Overnight crowd is trapped offside — watch for stop sweep"
+        ? `${sessionNoun} crowd is trapped offside — watch for stop sweep`
         : inv >= 65
-        ? "Overnight buyers controlled most of the session"
+        ? `${sessionNoun} buyers controlled most of the session`
         : inv <= 35
-        ? "Overnight sellers controlled most of the session"
-        : "Overnight session was balanced (two-sided)",
+        ? `${sessionNoun} sellers controlled most of the session`
+        : `${sessionNoun} session is balanced (two-sided)`,
     mathDetail: `${inv}% of Globex candles closed above Yesterday's Close (${metrics.pdc.toFixed(1)}). Range: ${metrics.onl.toFixed(1)}–${metrics.onh.toFixed(1)} (${metrics.overnightRange.toFixed(1)} pts).`
   });
 
@@ -395,26 +429,51 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
     });
   }
 
-  // 6. Build Candidate Pool Including GEX Levels
+  // 6. Build Candidate Pool Including GEX Levels & Active Session High/Low
   const allCandidates: KeyLevel[] = [...brief.keyLevels];
+  const addSyntheticLevel = (
+    id: string,
+    shortName: string,
+    name: string,
+    price: number | undefined,
+    role: KeyLevel["role"]
+  ) => {
+    if (!price || !Number.isFinite(price) || price <= 0) return;
+    if (allCandidates.some((l) => l.id === id || l.shortName.toLowerCase() === shortName.toLowerCase())) {
+      return;
+    }
+    allCandidates.push({
+      id,
+      name,
+      shortName,
+      price,
+      role,
+      distancePoints: Math.round((price - spot) * 10) / 10,
+      distancePercent: Math.round(((price - spot) / spot) * 10000) / 100,
+      timeframe: "INTRADAY",
+      note: name
+    });
+  };
+
+  if (metrics.asiaHigh && metrics.asiaLow) {
+    addSyntheticLevel("lvl-asia-h", "Asia High", "Asia Session High", metrics.asiaHigh, "LIQUIDITY POOL");
+    addSyntheticLevel("lvl-asia-l", "Asia Low", "Asia Session Low", metrics.asiaLow, "LIQUIDITY POOL");
+  }
+  if (
+    (activeSession === "NY_AM" ||
+      activeSession === "NY_LUNCH" ||
+      activeSession === "NY_PM" ||
+      activeSession === "POST_CLOSE") &&
+    brief.quote.high > 0 &&
+    brief.quote.low > 0
+  ) {
+    addSyntheticLevel("lvl-day-high", "Day High", "Today's Session High", brief.quote.high, "LIQUIDITY POOL");
+    addSyntheticLevel("lvl-day-low", "Day Low", "Today's Session Low", brief.quote.low, "LIQUIDITY POOL");
+  }
   if (gex) {
-    const addGexLevel = (id: string, shortName: string, name: string, price: number, role: KeyLevel["role"]) => {
-      if (!price || price <= 0) return;
-      allCandidates.push({
-        id,
-        name,
-        shortName,
-        price,
-        role,
-        distancePoints: Math.round((price - spot) * 10) / 10,
-        distancePercent: Math.round(((price - spot) / spot) * 10000) / 100,
-        timeframe: "INTRADAY",
-        note: name
-      });
-    };
-    addGexLevel("gex-put-wall", "Put Wall", "Options Put Wall", gex.putWallNq, "LIQUIDITY POOL");
-    addGexLevel("gex-call-wall", "Call Wall", "Options Call Wall", gex.callWallNq, "LIQUIDITY POOL");
-    addGexLevel("gex-flip", "Gamma Flip", "Options Gamma Flip", gex.gammaFlipNq, "EQUILIBRIUM");
+    addSyntheticLevel("gex-put-wall", "Put Wall", "Options Put Wall", gex.putWallNq, "LIQUIDITY POOL");
+    addSyntheticLevel("gex-call-wall", "Call Wall", "Options Call Wall", gex.callWallNq, "LIQUIDITY POOL");
+    addSyntheticLevel("gex-flip", "Gamma Flip", "Options Gamma Flip", gex.gammaFlipNq, "EQUILIBRIUM");
   }
 
   const bouncePool: ActionableArea[] = [];
@@ -451,7 +510,11 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       s === "onl" ||
       s === "onh" ||
       s === "lon low" ||
-      s === "lon high";
+      s === "lon high" ||
+      s === "asia low" ||
+      s === "asia high" ||
+      s === "day low" ||
+      s === "day high";
 
     if (isBounceType) {
       // Direction filter for clean bounce areas:
@@ -483,6 +546,10 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       s === "pdl" ||
       s === "lon high" ||
       s === "lon low" ||
+      s === "asia high" ||
+      s === "asia low" ||
+      s === "day high" ||
+      s === "day low" ||
       s === "prior vah" ||
       s === "prior val" ||
       s === "prior poc" ||
@@ -498,7 +565,18 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
       const matchesBearTarget = direction === "BEARISH" && !isUpside;
       const matchesNeutralTarget =
         direction === "NO CLEAR EDGE" &&
-        (s === "onh" || s === "onl" || s === "pdh" || s === "pdl" || s.includes("wall") || s.includes("straddle"));
+        (s === "onh" ||
+          s === "onl" ||
+          s === "pdh" ||
+          s === "pdl" ||
+          s === "asia high" ||
+          s === "asia low" ||
+          s === "lon high" ||
+          s === "lon low" ||
+          s === "day high" ||
+          s === "day low" ||
+          s.includes("wall") ||
+          s.includes("straddle"));
 
       if (matchesBullTarget || matchesBearTarget || matchesNeutralTarget) {
         targetPool.push({
@@ -527,37 +605,90 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
   // Sort targets by closeness (nearest reachable targets first, excluding tiny <5pt noise)
   targetPool.sort((a, b) => a.absDistancePts - b.absDistancePts);
 
-  // 7. Futures Day-Trading Gameplan (Stop Hunt, Stop Loss Placement, Key Tips)
+  // 7. Dynamic Session-Aware Futures Gameplan (Asia, London, NY Pre-Mkt, NY AM, NY Lunch, NY PM, Post-Close)
   const atr15 = metrics.atr15mIntraday || metrics.atrOpen15m || 25;
-  const distToOnh = Math.abs(metrics.onh - spot);
-  const distToOnl = Math.abs(spot - metrics.onl);
-  const nearOvernightExtreme = Math.min(distToOnh, distToOnl) <= Math.max(35, atr15 * 1.5);
+  const sweepCandidates: Array<{ label: string; price: number }> = [];
+
+  if (activeSession === "LONDON") {
+    if (metrics.asiaHigh) sweepCandidates.push({ label: `Asia High (${metrics.asiaHigh.toFixed(1)})`, price: metrics.asiaHigh });
+    if (metrics.asiaLow) sweepCandidates.push({ label: `Asia Low (${metrics.asiaLow.toFixed(1)})`, price: metrics.asiaLow });
+    sweepCandidates.push({ label: `Prior Day High (${metrics.pdh.toFixed(1)})`, price: metrics.pdh });
+    sweepCandidates.push({ label: `Prior Day Low (${metrics.pdl.toFixed(1)})`, price: metrics.pdl });
+  } else if (activeSession === "ASIA") {
+    if (metrics.asiaHigh && Math.abs(metrics.asiaHigh - spot) > 2) {
+      sweepCandidates.push({ label: `Asia High (${metrics.asiaHigh.toFixed(1)})`, price: metrics.asiaHigh });
+    }
+    if (metrics.asiaLow && Math.abs(metrics.asiaLow - spot) > 2) {
+      sweepCandidates.push({ label: `Asia Low (${metrics.asiaLow.toFixed(1)})`, price: metrics.asiaLow });
+    }
+    sweepCandidates.push({ label: `Yesterday's Close (${metrics.pdc.toFixed(1)})`, price: metrics.pdc });
+    sweepCandidates.push({ label: `Prior Day High (${metrics.pdh.toFixed(1)})`, price: metrics.pdh });
+    sweepCandidates.push({ label: `Prior Day Low (${metrics.pdl.toFixed(1)})`, price: metrics.pdl });
+  } else if (activeSession === "NY_LUNCH" || activeSession === "NY_PM" || activeSession === "POST_CLOSE") {
+    if (brief.quote.high > 0) sweepCandidates.push({ label: `Today's Session High (${brief.quote.high.toFixed(1)})`, price: brief.quote.high });
+    if (brief.quote.low > 0) sweepCandidates.push({ label: `Today's Session Low (${brief.quote.low.toFixed(1)})`, price: brief.quote.low });
+    sweepCandidates.push({ label: `Overnight High (${metrics.onh.toFixed(1)})`, price: metrics.onh });
+    sweepCandidates.push({ label: `Overnight Low (${metrics.onl.toFixed(1)})`, price: metrics.onl });
+  } else {
+    sweepCandidates.push({ label: `Overnight High (${metrics.onh.toFixed(1)})`, price: metrics.onh });
+    sweepCandidates.push({ label: `Overnight Low (${metrics.onl.toFixed(1)})`, price: metrics.onl });
+  }
+
+  sweepCandidates.sort((a, b) => Math.abs(a.price - spot) - Math.abs(b.price - spot));
+  const nearestSweep = sweepCandidates[0] || { label: `Overnight High (${metrics.onh.toFixed(1)})`, price: metrics.onh };
+  const nearSweepZone = Math.abs(nearestSweep.price - spot) <= Math.max(35, atr15 * 1.5);
+
   const isVolatileSurface = Boolean(vol?.isNegativeVrp || (vol && vol.termRatio > 1.0) || (vol && vol.vvix >= 110));
   const stopHuntHigh = Boolean(
     plan.trader5Answers?.stopHuntProbability?.includes("HIGH") ||
       layer1?.reversalVetoActive ||
       isVolatileSurface ||
-      nearOvernightExtreme ||
+      nearSweepZone ||
       smtHasDiv
   );
 
-  const nearestSweepLabel =
-    distToOnh <= distToOnl
-      ? `Overnight High (${metrics.onh.toFixed(1)})`
-      : `Overnight Low (${metrics.onl.toFixed(1)})`;
+  const isOpeningBellWindow = activeSession === "NY_PREMARKET" || (etTotalMins >= 9 * 60 + 30 && etTotalMins <= 9 * 60 + 33);
+
+  const buildStopHuntDetail = (): string => {
+    if (stopHuntHigh) {
+      if (smtHasDiv) {
+        return `NQ/ES divergence active. Wait for price to sweep ${nearestSweep.label} and snap back before entering.`;
+      }
+      if (isOpeningBellWindow) {
+        return `Price is near ${nearestSweep.label}${isVolatileSurface ? " in elevated volatility" : ""}. Let the 09:30–09:33 ET opening sweep poke and reject first — don't buy/sell the first spike.`;
+      }
+      if (activeSession === "ASIA") {
+        return `Asia session: price is near ${nearestSweep.label}. Wait for a clear sweep and 5m–15m reclaim/rejection before entering — Globex moves slower with thinner books.`;
+      }
+      if (activeSession === "LONDON") {
+        return `London session: price is near ${nearestSweep.label}. Wait for the European sweep and snap-back inside range rather than chasing the initial spike.`;
+      }
+      if (activeSession === "CME_BREAK" || activeSession === "WEEKEND") {
+        return `Market is currently paused (${sessionInfo.activeSessionLabel}). Watch ${nearestSweep.label} as the first key sweep zone when trading resumes.`;
+      }
+      const sessionDisplay = activeSession === "NY_PM" ? "NY PM" : activeSession === "NY_LUNCH" ? "NY Lunch" : "NY AM";
+      return `${sessionDisplay}: price is near ${nearestSweep.label}${isVolatileSurface ? " in elevated volatility" : ""}. Let price sweep that level and reclaim/reject cleanly on 5m before entering — don't chase spikes.`;
+    }
+
+    if (isOpeningBellWindow) {
+      return "No extreme sweep trap right now, but skip the opening 3 minutes (09:30–09:33 ET) and enter on a clean pullback to VWAP or midpoint.";
+    }
+    if (activeSession === "CME_BREAK" || activeSession === "WEEKEND") {
+      return `Market is between sessions (${sessionInfo.activeSessionCountdown}). Wait for live open and look for clean pullbacks to VWAP or key levels below.`;
+    }
+    return `No extreme sweep trap nearby — wait for a clean pullback to Session VWAP (${metrics.sessionVwap.toFixed(1)}) or one of the key levels below instead of chasing mid-range candles.`;
+  };
 
   const stopHunt: FuturesGameplan["stopHunt"] = stopHuntHigh
     ? {
         shouldWait: true,
         badge: "YES — WAIT FOR STOP HUNT",
-        detail: smtHasDiv
-          ? `NQ/ES divergence active. Wait for price to sweep ${nearestSweepLabel} and snap back before entering.`
-          : `Price is near ${nearestSweepLabel}${isVolatileSurface ? " in elevated volatility" : ""}. Let the 9:30–9:33 AM sweep poke and reject first — don't buy/sell the first spike.`
+        detail: buildStopHuntDetail()
       }
     : {
         shouldWait: false,
         badge: "WAIT FOR PULLBACK",
-        detail: `No extreme sweep trap right now, but still skip the first 3 minutes (09:30–09:33 ET) and enter on a clean pullback to VWAP or midpoint.`
+        detail: buildStopHuntDetail()
       };
 
   const needsExtraSlRoom = Boolean(
@@ -575,17 +706,54 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
         detail: `Volatility is normal (15m ATR ~${atr15.toFixed(0)} pts${gex?.netGammaRegime === "POSITIVE_GAMMA" ? ", +GEX dampening" : ""}). Putting your stop 2–3 pts beyond the sweep/swing wick is enough.`
       };
 
-  const cmePhase = plan.cmePhase || brief.sessionInfo?.phase;
-  const timingTip =
-    cmePhase === "NY_OPEN_WINDOW"
-      ? "Open window live: wait for 09:34–09:48 ET pullback, avoid chasing."
-      : cmePhase === "POST_WINDOW_RECAP"
-      ? "09:30–10:00 ET prime window is closed — watch out for choppy afternoon fakeouts."
-      : "Wait 3 mins after 09:30 ET bell (09:30–09:33) before clicking.";
+  const sessionNoteText = (() => {
+    switch (activeSession) {
+      case "ASIA":
+        return "Asia Session live: thinner liquidity & tighter ranges — fade extremes cleanly or watch sweeps of Asia High/Low & Yesterday's Close.";
+      case "LONDON":
+        return "London Session live: European flow frequently sweeps Asia High/Low before picking pre-NY direction.";
+      case "NY_PREMARKET":
+        return "NY Pre-Market: overnight & London levels are locking in; wait 3 mins past the 09:30 ET bell before clicking.";
+      case "NY_AM":
+        return etTotalMins <= 9 * 60 + 33
+          ? "Opening bell 3-min window (09:30–09:33 ET) — let initial stop sweeps settle before entering."
+          : "NY AM Session live: highest liquidity window — enter on clean VWAP or level pullbacks instead of chasing green/red candles.";
+      case "NY_LUNCH":
+        return "NY Lunch hour: volume drops and mid-range chops — stick to outer session edges or VWAP sweeps.";
+      case "NY_PM":
+        return "NY Afternoon (PM) live: watch intraday swing sweeps, VWAP trend holds, and closing imbalance flow into the bell.";
+      case "POST_CLOSE":
+        return "Post-close settlement window — liquidity thins out ahead of CME maintenance break; use levels to prep Asia.";
+      default:
+        return `Market paused (${sessionInfo.activeSessionCountdown}) — review key levels to plan the upcoming session.`;
+    }
+  })();
 
-  const newsTip = plan.newsBufferWarning
-    ? { label: "News", value: "High-impact release near open — flatten or lock breakeven before it hits.", tone: "rose" as const }
-    : { label: "News", value: "No red-folder US news inside the 09:30–10:00 ET window.", tone: "emerald" as const };
+  const upcomingNews = getUpcomingSessionNews(
+    brief.macro.events || [],
+    sessionInfo.nowET ? new Date(sessionInfo.nowET) : new Date(),
+    brief.targetTradeDate,
+    75
+  );
+
+  const newsTip =
+    upcomingNews.imminent.length > 0
+      ? {
+          label: "News",
+          value: `Upcoming release: ${upcomingNews.imminent[0].timeET} ET ${upcomingNews.imminent[0].event} — flatten or lock breakeven ahead of print.`,
+          tone: "rose" as const
+        }
+      : upcomingNews.laterToday.length > 0
+      ? {
+          label: "News",
+          value: `Later today: ${upcomingNews.laterToday[0].timeET} ET ${upcomingNews.laterToday[0].event}. Session clear until then.`,
+          tone: "amber" as const
+        }
+      : {
+          label: "News",
+          value: "No high-impact US news remaining ahead in this session.",
+          tone: "emerald" as const
+        };
 
   const gexTip = gex
     ? gex.netGammaRegime === "POSITIVE_GAMMA"
@@ -597,14 +765,17 @@ export function buildPlainEnglishBrief(brief: OpenBriefData): PlainEnglishBrief 
     sizeMultiplier === 0
       ? { label: "Risk Rule", value: "Stay flat (0x) — choppy / high-risk session.", tone: "rose" as const }
       : sizeMultiplier === 0.5
-      ? { label: "Risk Rule", value: "Use 0.5x half size and stick to 1 clean setup.", tone: "amber" as const }
-      : { label: "Risk Rule", value: "Standard 1.0x size — 1–2 quality setups max, no revenge trading.", tone: "emerald" as const };
+      ? { label: "Risk Rule", value: "Use 0.5x half size and demand A+ sweep/reclaim confirmation.", tone: "amber" as const }
+      : { label: "Risk Rule", value: "Standard 1.0x size — honor your stop loss and avoid forcing mid-range entries.", tone: "emerald" as const };
 
   const gameplan: FuturesGameplan = {
+    activeSession,
+    sessionLabel: sessionInfo.activeSessionLabel,
+    sessionWindowHuman: sessionInfo.activeSessionWindowHuman,
     stopHunt,
     stopLoss,
     keyTips: [
-      { label: "Timing", value: timingTip, tone: "neutral" },
+      { label: "Session", value: sessionNoteText, tone: "neutral" },
       newsTip,
       gexTip,
       sizeTip

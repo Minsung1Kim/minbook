@@ -21,6 +21,17 @@ export type CMESessionPhase =
 
 export type CMESubPhase = "ASIA" | "LONDON";
 
+export type ActiveFuturesSession =
+  | "ASIA"
+  | "LONDON"
+  | "NY_PREMARKET"
+  | "NY_AM"
+  | "NY_LUNCH"
+  | "NY_PM"
+  | "POST_CLOSE"
+  | "CME_BREAK"
+  | "WEEKEND";
+
 export interface CMESessionInfo {
   nowET: Date;
   currentETDateStr: string; // YYYY-MM-DD
@@ -40,6 +51,12 @@ export interface CMESessionInfo {
   countdownHuman: string;
   isWindowActive: boolean;
   isDeveloping: boolean;
+  // 24/5 Session-Agnostic Fields (Asia, London, NY Pre-Mkt, NY AM, NY Lunch, NY PM, Post-Close)
+  activeSession: ActiveFuturesSession;
+  activeSessionLabel: string;
+  activeSessionWindowHuman: string;
+  activeSessionCountdown: string;
+  isMarketOpen: boolean;
 }
 
 // Full-closure US / CME Equity Futures Holidays (2024–2028)
@@ -351,6 +368,99 @@ export function getCMESessionInfo(
     countdownHuman = `${formatSecondsToCountdown(secondsToNextMilestone)} to 6:00 PM Open`;
   }
 
+  // 4. Dynamic 24/5 Session Classification (Asia, London, NY Pre-Market, NY AM, NY Lunch, NY PM, Post-Close)
+  const formatETTransitionTime = (epochMs: number): string => {
+    return new Date(epochMs).toLocaleTimeString("en-US", {
+      timeZone: timezone,
+      hour12: true,
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  };
+
+  let activeSession: ActiveFuturesSession = "ASIA";
+  let activeSessionLabel = "ASIA SESSION";
+  let activeSessionWindowHuman = "";
+  let activeSessionCountdown = "";
+  let isMarketOpen = true;
+
+  if (isWeekendClosed) {
+    activeSession = "WEEKEND";
+    activeSessionLabel = "WEEKEND CLOSED";
+    activeSessionWindowHuman = `Reopens Sun ${tzConfig.globexOpenStr}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secondsToNextMilestone)} to Sun Open`;
+    isMarketOpen = false;
+  } else if (isDailyBreak) {
+    activeSession = "CME_BREAK";
+    activeSessionLabel = "CME DAILY BREAK";
+    const openMs = parseDateStrToETEpochMs(et.dateStr, 18, 0, 0);
+    activeSessionWindowHuman = `Resumes ${formatETTransitionTime(openMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(Math.max(0, Math.floor((openMs - nowMs) / 1000)))} to Asia Open`;
+    isMarketOpen = false;
+  } else if (totalMins >= 18 * 60 || totalMins < 3 * 60) {
+    activeSession = "ASIA";
+    activeSessionLabel = "ASIA SESSION";
+    const startMs =
+      totalMins >= 18 * 60
+        ? parseDateStrToETEpochMs(et.dateStr, 18, 0, 0)
+        : parseDateStrToETEpochMs(shiftCalendarDays(et.dateStr, -1), 18, 0, 0);
+    const londonMs =
+      totalMins >= 18 * 60
+        ? parseDateStrToETEpochMs(shiftCalendarDays(et.dateStr, 1), 3, 0, 0)
+        : parseDateStrToETEpochMs(et.dateStr, 3, 0, 0);
+    const secToLondon = Math.max(0, Math.floor((londonMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(londonMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToLondon)} to London`;
+  } else if (totalMins < 8 * 60 + 30) {
+    activeSession = "LONDON";
+    activeSessionLabel = "LONDON SESSION";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 3, 0, 0);
+    const nyPreMs = parseDateStrToETEpochMs(et.dateStr, 8, 30, 0);
+    const secToPre = Math.max(0, Math.floor((nyPreMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(nyPreMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToPre)} to NY Pre-Mkt`;
+  } else if (totalMins < 9 * 60 + 30) {
+    activeSession = "NY_PREMARKET";
+    activeSessionLabel = "NY PRE-MARKET";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 8, 30, 0);
+    const openMs = parseDateStrToETEpochMs(et.dateStr, 9, 30, 0);
+    const secToOpen = Math.max(0, Math.floor((openMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(openMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToOpen)} to NY Open`;
+  } else if (totalMins < 12 * 60) {
+    activeSession = "NY_AM";
+    activeSessionLabel = "NY AM SESSION";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 9, 30, 0);
+    const lunchMs = parseDateStrToETEpochMs(et.dateStr, 12, 0, 0);
+    const secToLunch = Math.max(0, Math.floor((lunchMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(lunchMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToLunch)} to NY Lunch`;
+  } else if (totalMins < 13 * 60 + 30) {
+    activeSession = "NY_LUNCH";
+    activeSessionLabel = "NY LUNCH";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 12, 0, 0);
+    const pmMs = parseDateStrToETEpochMs(et.dateStr, 13, 30, 0);
+    const secToPm = Math.max(0, Math.floor((pmMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(pmMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToPm)} to NY PM`;
+  } else if (totalMins < 16 * 60) {
+    activeSession = "NY_PM";
+    activeSessionLabel = "NY PM SESSION";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 13, 30, 0);
+    const closeMs = parseDateStrToETEpochMs(et.dateStr, 16, 0, 0);
+    const secToClose = Math.max(0, Math.floor((closeMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(closeMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToClose)} to ${formatETTransitionTime(closeMs)} Close`;
+  } else {
+    activeSession = "POST_CLOSE";
+    activeSessionLabel = "POST-CLOSE SETTLEMENT";
+    const startMs = parseDateStrToETEpochMs(et.dateStr, 16, 0, 0);
+    const breakMs = parseDateStrToETEpochMs(et.dateStr, 17, 0, 0);
+    const secToBreak = Math.max(0, Math.floor((breakMs - nowMs) / 1000));
+    activeSessionWindowHuman = `${formatETTransitionTime(startMs)}–${formatETTransitionTime(breakMs)} ${tzConfig.code}`;
+    activeSessionCountdown = `${formatSecondsToCountdown(secToBreak)} to CME Break`;
+  }
+
   return {
     nowET: inputDate,
     currentETDateStr: et.dateStr,
@@ -369,6 +479,11 @@ export function getCMESessionInfo(
     secondsToNextMilestone,
     countdownHuman,
     isWindowActive: phase === "NY_OPEN_WINDOW",
-    isDeveloping: phase === "DEVELOPING_OVERNIGHT" || phase === "CME_BREAK_OR_WEEKEND"
+    isDeveloping: phase === "DEVELOPING_OVERNIGHT" || phase === "CME_BREAK_OR_WEEKEND",
+    activeSession,
+    activeSessionLabel,
+    activeSessionWindowHuman,
+    activeSessionCountdown,
+    isMarketOpen
   };
 }

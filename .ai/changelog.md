@@ -673,3 +673,16 @@ All notable changes and architectural decisions are logged here.
   - **Stop Loss Placement**: Recommends `AT THE WICK (+2–3 pts)` vs `GIVE EXTRA ROOM (+5–8 pts past wick)` based on VRP, term structure, GEX, and 15m ATR.
   - **Key Futures Notes Today**: Concise reminders for timing, red-folder news proximity, take-profit style (positive vs negative gamma), and risk sizing.
 - **Minimizable Gameplan & Realistic 15m Swing ATR (`src/components/Dashboard.tsx`, `src/lib/market/plainEnglishBrief.ts`):** Added persistent Minimize/Show toggle for the Futures Gameplan strip and switched 15m swing display to `atr15mIntraday` so outlier opening-bar spikes don't overstate 15m range.
+
+## [2026-11-24] - 24/5 Session-Dynamic Overhaul & Neutral Shared Branding (`TapeBook`)
+- **24/5 Dynamic Futures Sessions (`src/lib/market/sessionClock.ts`, `src/components/Header.tsx`):**
+  - Extended `getCMESessionInfo` with live session detection (`ASIA`, `LONDON`, `NY_PREMARKET`, `NY_AM`, `NY_LUNCH`, `NY_PM`, `POST_CLOSE`, `CME_BREAK`, `WEEKEND`), human session windows, and live countdowns to the next active session transition (localized to ET/CT/PT) while maintaining full backward compatibility.
+  - Updated `Header.tsx` to display `LIVE • NY PM SESSION`, `LIVE • ASIA SESSION`, `LIVE • LONDON SESSION`, etc., with session countdowns instead of showing `"TARGET: 9:30 AM OPEN"` or `"RECAP"` all afternoon/evening.
+- **Session-Aware News & Levels (`src/lib/market/economicCalendar.ts`, `src/lib/market/service.ts`, `src/lib/market/playbook.ts`, `src/lib/market/levels.ts`, `src/components/KeyLevelsTable.tsx`, `src/app/calendar/page.tsx`):**
+  - Added shared `getUpcomingSessionNews` helper so morning news events (like 10:00 AM releases) no longer fire stale `"near open"` alerts at 2:50 PM or during Asia/London.
+  - Added `Asia High` and `Asia Low` into `keyLevels` and `computeLevelVitality`, and added intraday `Day High` / `Day Low` into active NY RTH `Bounce & Targets`.
+  - Updated `/calendar` card #2 from `"Open Window Risk (09:30–10:00)"` to `"Today's Remaining Risk"`.
+- **Dynamic Plain-English Brief & Gameplan (`src/lib/market/plainEnglishBrief.ts`, `src/lib/market/regime.ts`, `src/components/Dashboard.tsx`):**
+  - Replaced hardcoded 9:30–9:33 AM sweep and 10:00 AM window-closed messaging with session-specific guidance (`ASIA`, `LONDON`, `NY_PREMARKET`, `NY_AM`, `NY_LUNCH`, `NY_PM`, `POST_CLOSE`) and appropriate liquidity sweep references (`Asia High/Low` in London, `Today's Session H/L` + `ONH/ONL` in NY PM, `PDC`/`Asia H/L` in Asia).
+- **Neutral Shared Branding for Multi-User Access (`Header.tsx`, `app/login/page.tsx`, `app/layout.tsx`, `app/journal/page.tsx`, `app/settings/page.tsx`):**
+  - Rebranded visible UI copy from personal `"MinBook"` to neutral `"TapeBook"`, updated journal column/call headers (`Model Call That Day` / `Frozen Model Call`), and removed personal 1-trade/day copy locks in `/settings` so friends trading any session can use the terminal cleanly.

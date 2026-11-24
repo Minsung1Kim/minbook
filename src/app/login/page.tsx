@@ -55,7 +55,7 @@ function LoginForm() {
       <div className="text-center mb-6">
         <div className="inline-flex items-center space-x-2 mb-2">
           <span className="font-bold text-xl tracking-tight text-zinc-100">
-            MinBook
+            TapeBook
           </span>
           <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 font-bold">
             NQ / MNQ
@@ -65,7 +65,7 @@ function LoginForm() {
           Sign In to Your Account
         </h1>
         <p className="text-xs text-zinc-500 mt-1 max-w-xs mx-auto">
-          Private access only. Sign in with your assigned credentials.
+          Shared team access. Sign in with your account credentials.
         </p>
       </div>
 

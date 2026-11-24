@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { parsePnlFromText } from "../lib/journal/pnlOverlayReader";
 import { buildPlainEnglishBrief } from "../lib/market/plainEnglishBrief";
+import { getCMESessionInfo } from "../lib/market/sessionClock";
+import { getUpcomingSessionNews } from "../lib/market/economicCalendar";
 import {
   SqliteCalibrationRepository,
   isLegacySyntheticSeedPrediction
@@ -296,6 +298,214 @@ describe("Revamped MinBook Features & Audit Integrity", () => {
       expect(grade).not.toBeNull();
       expect(grade?.biasCorrect).toBe(true);
       expect(grade?.chopWarningCorrect).toBe(true);
+    });
+  });
+
+  describe("4. 24/5 Session-Aware Brief & Dynamic Timing (Asia, London, NY PM)", () => {
+    const baseSampleBrief: OpenBriefData = {
+      tradeDate: "2026-11-24",
+      generatedAt: "2026-11-24T19:50:00.000Z",
+      instrument: "NQ",
+      underlyingAsset: "NQ=F",
+      quote: {
+        symbol: "NQ=F",
+        displaySymbol: "NQ",
+        price: 26240,
+        change: -40,
+        changePercent: -0.15,
+        high: 26390,
+        low: 26120,
+        open: 26280,
+        previousClose: 26280,
+        volume: 210000,
+        timestamp: "2026-11-24T19:50:00.000Z",
+        source: "Yahoo Finance",
+        status: "DELAYED",
+        stalenessSeconds: 900
+      },
+      sessionMetrics: {
+        pdh: 26420,
+        pdl: 26100,
+        pdc: 26280,
+        pdMid: 26260,
+        onh: 26350,
+        onl: 26180,
+        onMid: 26265,
+        asiaHigh: 26310,
+        asiaLow: 26210,
+        sessionVwap: 26270,
+        globexVwap: 26268,
+        priorDayRthVwap: 26240,
+        rthSessionVwap: 26270,
+        vwapCalculationMode: "VOLUME_WEIGHTED",
+        htf50Retrace: 26250,
+        htf618Retrace: 26210,
+        htf705Retrace: 26175,
+        htfImpulseDirection: "BULLISH",
+        htfImpulseHigh: 26450,
+        htfImpulseLow: 26050,
+        expectedMove1SD: 220,
+        expectedMoveStraddle: 175,
+        upper1SD: 26440,
+        lower1SD: 26000,
+        upperStraddle: 26395,
+        lowerStraddle: 26045,
+        overnightRangeConsumedPercent: 48,
+        atr14Daily: 250,
+        atr15mIntraday: 42,
+        atrOpen15m: 686,
+        overnightRange: 170,
+        overnightInventory: "BALANCED",
+        inventoryPercent: 52,
+        openingGap: -40,
+        openingLocation: "INSIDE_LOWER_GLOBEX"
+      },
+      keyLevels: [
+        {
+          id: "lvl-vwap",
+          name: "Session VWAP",
+          shortName: "Session VWAP",
+          price: 26270,
+          role: "EQUILIBRIUM",
+          distancePoints: 30,
+          distancePercent: 0.11,
+          timeframe: "INTRADAY",
+          note: "VWAP"
+        },
+        {
+          id: "lvl-onh",
+          name: "Overnight High",
+          shortName: "ONH",
+          price: 26350,
+          role: "LIQUIDITY POOL",
+          distancePoints: 110,
+          distancePercent: 0.42,
+          timeframe: "GLOBEX",
+          note: "ONH"
+        },
+        {
+          id: "lvl-onl",
+          name: "Overnight Low",
+          shortName: "ONL",
+          price: 26180,
+          role: "LIQUIDITY POOL",
+          distancePoints: -60,
+          distancePercent: -0.23,
+          timeframe: "GLOBEX",
+          note: "ONL"
+        }
+      ],
+      bias: {
+        verdict: "CONTINUATION FAVORED (BEARISH)",
+        confidence: "MODERATE",
+        htfTrend: "BEARISH",
+        chopRisk: "LOW",
+        regimeRiskMultiplier: 1.0,
+        summary: "Bearish pressure below VWAP.",
+        drivers: [],
+        risks: [],
+        idealRetraceZone: { startPrice: 26265, endPrice: 26280, description: "VWAP/PDC" }
+      },
+      tacticalPlan: {
+        cmePhase: "POST_WINDOW_RECAP",
+        sessionPhase: "POST_WINDOW_RECAP",
+        executionSubPhase: "WINDOW_CLOSED",
+        isDelayedFeedWarningActive: false,
+        delayedFeedBannerText: "",
+        singleTradeDirective: "",
+        scenarios: [],
+        retraceAnalysis: {
+          isRetraceProbable: true,
+          likelihoodTier: "MODERATE",
+          factorScorecard: [
+            { factor: "Location", score: -1, impact: "BEARISH", detail: "Below VWAP" },
+            { factor: "SMT", score: 0, impact: "NEUTRAL", detail: "Synced" },
+            { factor: "Macro", score: -1, impact: "BEARISH", detail: "Rates up" },
+            { factor: "Flow", score: -1, impact: "BEARISH", detail: "Sellers" }
+          ],
+          archetype: "OPEN-TEST-DRIVE (HIGH RETRACE PROBABILITY)",
+          retraceType: "DEEP TO VWAP/ON-MID",
+          verdictHeadline: "",
+          explanation: "",
+          expectedPullbackDepthPts: 25,
+          retraceActionAdvice: ""
+        },
+        trader5Answers: {
+          stopHuntProbability: "HIGH (ATR WIDE)"
+        } as any,
+        timelineGuide: {} as any,
+        vwapPlaybook: {} as any
+      },
+      macro: {
+        vix: { symbol: "^VIX", name: "VIX", value: 18, change: 0, changePercent: 0, status: "LIVE", source: "YF", regime: "NORMAL", note: "" },
+        us10y: { symbol: "^TNX", name: "US10Y", value: 4.3, change: 0, changePercent: 0, status: "LIVE", source: "YF", regime: "NORMAL", note: "" },
+        dxy: { symbol: "DX-Y.NYB", name: "DXY", value: 106, change: 0, changePercent: 0, status: "LIVE", source: "YF", regime: "NORMAL", note: "" },
+        megaCaps: [],
+        dealerGammaTilt: { regime: "POSITIVE", source: "DERIVED_HEURISTIC", note: "" },
+        events: [
+          {
+            id: "morning-news",
+            date: "2026-11-24",
+            timeET: "10:00 AM",
+            event: "CB Consumer Confidence",
+            country: "USD",
+            impact: "HIGH",
+            folderColor: "RED",
+            alert: true,
+            isNearOpenWindow: true,
+            notes: "Morning release"
+          }
+        ]
+      },
+      dataSource: {
+        providerName: "Yahoo Finance",
+        quoteStatus: "DELAYED",
+        levelsStatus: "DERIVED",
+        lastUpdated: "2026-11-24T19:50:00Z",
+        cacheExpiresAt: "2026-11-24T19:51:00Z",
+        notice: ""
+      }
+    };
+
+    it("detects 2:50 PM ET as NY_PM and avoids stale morning sweep/window/news text", () => {
+      const twoFiftyPm = new Date("2026-11-24T14:50:00-05:00");
+      const sessionInfo = getCMESessionInfo(twoFiftyPm);
+      expect(sessionInfo.activeSession).toBe("NY_PM");
+      expect(sessionInfo.activeSessionLabel).toBe("NY PM SESSION");
+      expect(sessionInfo.isMarketOpen).toBe(true);
+      expect(sessionInfo.activeSessionCountdown).toContain("Close");
+
+      // 10:00 AM event is 4h50m in the past at 2:50 PM ET -> not imminent
+      const news = getUpcomingSessionNews(baseSampleBrief.macro.events, twoFiftyPm, "2026-11-24", 75);
+      expect(news.imminent.length).toBe(0);
+      expect(news.laterToday.length).toBe(0);
+
+      const out = buildPlainEnglishBrief(baseSampleBrief, twoFiftyPm);
+      expect(out.gameplan.activeSession).toBe("NY_PM");
+      expect(out.gameplan.stopHunt.detail).not.toContain("9:30");
+      expect(out.gameplan.stopLoss.detail).toContain("~42 pts");
+      expect(out.gameplan.keyTips[0].value).toContain("NY Afternoon (PM)");
+      expect(out.gameplan.keyTips[1].value).toContain("No high-impact US news remaining");
+    });
+
+    it("adapts cleanly for Asia (20:20 ET) and London (04:15 ET) sessions", () => {
+      const asiaTime = new Date("2026-11-24T20:20:00-05:00");
+      const asiaSession = getCMESessionInfo(asiaTime);
+      expect(asiaSession.activeSession).toBe("ASIA");
+      expect(asiaSession.activeSessionLabel).toBe("ASIA SESSION");
+      expect(asiaSession.activeSessionCountdown).toContain("London");
+
+      const asiaOut = buildPlainEnglishBrief(baseSampleBrief, asiaTime);
+      expect(asiaOut.gameplan.activeSession).toBe("ASIA");
+      expect(asiaOut.gameplan.stopHunt.detail).not.toContain("9:30");
+      expect(asiaOut.gameplan.keyTips[0].value).toContain("Asia Session live");
+      expect(asiaOut.quantFacts.some((f) => f.label === "Asia Session Positioning")).toBe(true);
+
+      const londonTime = new Date("2026-11-24T04:15:00-05:00");
+      const londonOut = buildPlainEnglishBrief(baseSampleBrief, londonTime);
+      expect(londonOut.gameplan.activeSession).toBe("LONDON");
+      expect(londonOut.gameplan.stopHunt.detail).toContain("London session");
+      expect(londonOut.gameplan.keyTips[0].value).toContain("London Session live");
     });
   });
 });

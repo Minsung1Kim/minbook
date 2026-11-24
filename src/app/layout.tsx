@@ -15,13 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MinBook — Quantitative NY Open Futures Decision Engine",
-  description: "Action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing 1 trade per day on CME Nasdaq-100 (NQ / MNQ).",
-  keywords: ["Futures", "NQ", "MNQ", "Quantitative Trading", "NY Open", "ICT", "SMT", "GEX", "TradingView", "Next.js"],
-  authors: [{ name: "MinBook Team" }],
+  title: "TapeBook — 24/5 Quantitative Futures Bias, Levels & Journal",
+  description: "Session-aware quantitative bias, bounce & target levels, volatility risk gates, and P&L screenshot journal for CME Nasdaq-100 (NQ / MNQ) futures across Asia, London, and NY.",
+  keywords: ["Futures", "NQ", "MNQ", "Quantitative Trading", "Asia", "London", "NY Session", "SMT", "GEX", "TradingView", "Next.js"],
+  authors: [{ name: "TapeBook" }],
   openGraph: {
-    title: "MinBook — Quantitative NY Open Futures Decision Engine",
-    description: "Action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing 1 trade per day on CME Nasdaq-100 (NQ / MNQ).",
+    title: "TapeBook — 24/5 Quantitative Futures Bias, Levels & Journal",
+    description: "Session-aware quantitative bias, bounce & target levels, volatility risk gates, and P&L screenshot journal for CME Nasdaq-100 (NQ / MNQ) futures across Asia, London, and NY.",
     type: "website",
   },
 };

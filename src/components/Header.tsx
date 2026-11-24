@@ -105,11 +105,11 @@ export function Header({
     <>
       <header className="sticky top-0 z-50 h-14 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between gap-4">
-          {/* Left: MinBook Wordmark & Clean Nav */}
+          {/* Left: Wordmark & Clean Nav */}
           <div className="flex items-center space-x-6 shrink-0">
             <Link href="/" className="flex items-center space-x-2 group">
               <span className="font-semibold text-sm tracking-tight text-zinc-100 group-hover:text-white transition-colors">
-                MinBook
+                TapeBook
               </span>
               <span className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
                 NQ
@@ -227,25 +227,36 @@ export function Header({
               </button>
             </div>
 
-            {/* Target Session Pill */}
-            <div className="hidden lg:flex items-center px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-              <span>{sessionInfo?.targetTradeDateFormatted || "TARGET: CME FUTURES"}</span>
+            {/* Active Session Pill */}
+            <div
+              className="hidden lg:flex items-center px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+              title={sessionInfo?.activeSessionWindowHuman || "CME Futures 24/5 Session"}
+            >
+              <span>
+                {sessionInfo
+                  ? `${sessionInfo.isMarketOpen ? "LIVE" : sessionInfo.activeSession === "WEEKEND" ? "CLOSED" : "BREAK"} • ${sessionInfo.activeSessionLabel}`
+                  : "CME FUTURES"}
+              </span>
             </div>
 
-            {/* Live Countdown & Window Indicator */}
+            {/* Live Countdown & Session Indicator */}
             <div className="flex items-center space-x-1.5 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 font-mono text-[11px] tabular-nums text-zinc-300">
               <span
                 className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  isWindowActive
+                  sessionInfo?.activeSession === "NY_AM" ||
+                  sessionInfo?.activeSession === "NY_PM" ||
+                  sessionInfo?.activeSession === "LONDON" ||
+                  sessionInfo?.activeSession === "ASIA"
                     ? "bg-emerald-400 animate-pulse"
-                    : sessionInfo?.phase === "PRE_MARKET_LOCK"
-                    ? "bg-zinc-300"
-                    : sessionInfo?.phase === "DEVELOPING_OVERNIGHT"
+                    : sessionInfo?.isMarketOpen
                     ? "bg-amber-400"
                     : "bg-zinc-500"
                 }`}
               />
-              <span className="font-medium">{sessionInfo?.countdownHuman || "--"}</span>
+              <span className="lg:hidden font-semibold text-zinc-200">
+                {sessionInfo?.activeSession?.replace("_", " ") || "--"} ·
+              </span>
+              <span className="font-medium">{sessionInfo?.activeSessionCountdown || "--"}</span>
             </div>
 
             {/* Subtle Data-Latency Dot */}

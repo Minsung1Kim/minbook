@@ -160,11 +160,11 @@ export function evaluateBiasAndRegime(
   } else if (isAbovePdc && isAboveVwap && isAboveOnMid && htfTrend !== "BEARISH" && chopRisk !== "SEVERE") {
     verdict = "CONTINUATION FAVORED (BULLISH)";
     confidence = overnightAtrRatio >= 0.45 && !layer1.volatilityState.isNegativeVrp ? "HIGH" : "MODERATE";
-    summary = `Bullish continuation favored. Look for a patient retrace into the ${metrics.onMid} - ${metrics.sessionVwap} zone between 9:34 AM and 9:48 AM ET. Invalidation below ${metrics.onl > metrics.pdc ? metrics.pdc : metrics.onl}. Target PDH (${metrics.pdh}) / ONH (${metrics.onh}).`;
+    summary = `Bullish continuation favored. Look for a patient pullback into the ${metrics.onMid} - ${metrics.sessionVwap} zone. Invalidation below ${metrics.onl > metrics.pdc ? metrics.pdc : metrics.onl}. Target PDH (${metrics.pdh}) / ONH (${metrics.onh}).`;
   } else if (!isAbovePdc && !isAboveVwap && !isAboveOnMid && htfTrend !== "BULLISH" && chopRisk !== "SEVERE") {
     verdict = "CONTINUATION FAVORED (BEARISH)";
     confidence = overnightAtrRatio >= 0.45 && !layer1.volatilityState.isNegativeVrp ? "HIGH" : "MODERATE";
-    summary = `Bearish continuation favored. Look for a retrace rally into VWAP (${metrics.sessionVwap}) or PDC (${metrics.pdc}) to stall between 9:34 AM and 9:48 AM ET. Target ONL (${metrics.onl}) / PDL (${metrics.pdl}).`;
+    summary = `Bearish continuation favored. Look for a pullback rally into VWAP (${metrics.sessionVwap}) or PDC (${metrics.pdc}) to stall. Target ONL (${metrics.onl}) / PDL (${metrics.pdl}).`;
   } else if (chopRisk === "SEVERE") {
     verdict = "STAND ASIDE / HIGH VOL";
     regimeRiskMultiplier = 0.0;

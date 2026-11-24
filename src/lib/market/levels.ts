@@ -816,7 +816,7 @@ export function computeSessionLevels(
       price: sessionMetrics.onh,
       role: "LIQUIDITY POOL",
       timeframe: "GLOBEX",
-      note: "Overnight liquidity pool. 9:30 AM open often sweeps or tests this on initial impulse."
+      note: "Overnight liquidity pool. Major upside magnet or sweep-and-reject pivot across London & NY sessions."
     },
     {
       id: "lvl-lon-h",
@@ -825,7 +825,16 @@ export function computeSessionLevels(
       price: sessionMetrics.londonHigh || sessionMetrics.onh,
       role: "RETRACE ZONE",
       timeframe: "INTRADAY",
-      note: "European liquidity pivot (03:00-09:00 ET). Acts as initial resistance or breakout support."
+      note: "European liquidity pivot (03:00–09:00 ET). Acts as initial resistance or breakout support."
+    },
+    {
+      id: "lvl-asia-h",
+      name: "Asia Session High",
+      shortName: "Asia High",
+      price: sessionMetrics.asiaHigh || sessionMetrics.onh,
+      role: "LIQUIDITY POOL",
+      timeframe: "GLOBEX",
+      note: "Asia session high (18:00–03:00 ET). Key sweep target during London open and NY sessions."
     },
     {
       id: "lvl-vwap-rth",
@@ -834,7 +843,7 @@ export function computeSessionLevels(
       price: sessionMetrics.sessionVwap,
       role: "EQUILIBRIUM",
       timeframe: "INTRADAY",
-      note: "Primary institutional fair-value benchmark for 9:34–9:48 AM continuation entries."
+      note: "Primary institutional fair-value benchmark for trend continuation pullbacks across the session."
     },
     {
       id: "lvl-vwap-globex",
@@ -933,7 +942,16 @@ export function computeSessionLevels(
       price: sessionMetrics.londonLow || sessionMetrics.onl,
       role: "LIQUIDITY POOL",
       timeframe: "INTRADAY",
-      note: "European session baseline. Breached by opening retrace often turns into a fakeout sweep."
+      note: "European session baseline. Sweep below often traps sellers before snapping back."
+    },
+    {
+      id: "lvl-asia-l",
+      name: "Asia Session Low",
+      shortName: "Asia Low",
+      price: sessionMetrics.asiaLow || sessionMetrics.onl,
+      role: "LIQUIDITY POOL",
+      timeframe: "GLOBEX",
+      note: "Asia session floor (18:00–03:00 ET). Key sweep zone for London and NY sessions."
     },
     {
       id: "lvl-onl",

@@ -41,8 +41,8 @@ export function computeLevelVitality(level: KeyLevel, currentPrice: number): Ran
     structuralWeight = 82; // Prior Day Volume Profile (VAH / POC / VAL)
   } else if (short === "pdh" || short === "pdl") {
     structuralWeight = 80; // Daily extreme expansion targets
-  } else if (short.includes("lon high") || short.includes("lon low")) {
-    structuralWeight = 70; // European session liquidity pivots
+  } else if (short.includes("lon high") || short.includes("lon low") || short.includes("asia high") || short.includes("asia low")) {
+    structuralWeight = 70; // Regional session liquidity pivots
   } else if (short.includes("htf 50") || short.includes("htf 61.8") || short.includes("htf 70.5") || id.includes("htf-")) {
     structuralWeight = 60; // Demoted 5-day HTF Fib (below PDH/PDL and Volume Profile)
   } else if (level.role === "EXPECTED MOVE") {
@@ -100,9 +100,13 @@ export function computeLevelVitality(level: KeyLevel, currentPrice: number): Ran
   } else if (short === "pdl") {
     traderDirective = "Yesterday's Low — major downside target.";
   } else if (short.includes("lon high")) {
-    traderDirective = "London session high — early morning resistance or breakout target.";
+    traderDirective = "London session high — European resistance or breakout target.";
   } else if (short.includes("lon low")) {
-    traderDirective = "London session low — early morning support or breakdown target.";
+    traderDirective = "London session low — European support or breakdown target.";
+  } else if (short.includes("asia high")) {
+    traderDirective = "Asia session high — Globex ceiling often swept during London or NY sessions.";
+  } else if (short.includes("asia low")) {
+    traderDirective = "Asia session low — Globex floor often swept during London or NY sessions.";
   } else if (level.role === "EXPECTED MOVE") {
     traderDirective = "Options-implied daily move boundary — moves often pause or revert near here.";
   } else {

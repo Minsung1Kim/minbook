@@ -101,11 +101,12 @@ export default function CalendarPage() {
     return upcoming.length > 0 ? upcoming[0] : null;
   }, [events]);
 
-  // Red Folder alert during NY Open window (09:15-10:15 ET)
+  // Remaining high/medium-impact catalysts today
   const openAlerts = useMemo(() => {
     return events.filter(
       (e) =>
-        e.isNearOpenWindow &&
+        e.country === "USD" &&
+        (e.folderColor === "RED" || e.folderColor === "ORANGE") &&
         (e.date === todayStr || !e.date) &&
         !isEventPassed(e.date, e.timeET, !!e.actual)
     );
@@ -205,29 +206,29 @@ export default function CalendarPage() {
               )}
             </div>
 
-            {/* 2. NY Open Window Risk (09:15–10:15) */}
+            {/* 2. Remaining Session News Risk */}
             <div className="p-2.5 rounded bg-zinc-950/70 border border-zinc-800 flex items-center justify-between gap-2 text-xs font-mono">
               <div className="space-y-0.5 min-w-0">
                 <span className="text-zinc-500 text-[11px] uppercase tracking-wider flex items-center space-x-1">
                   <ShieldAlert className="w-3 h-3 text-amber-400" />
-                  <span>Open Window Risk (09:30–10:00)</span>
+                  <span>Today&apos;s Remaining Risk</span>
                 </span>
                 <div className="truncate text-xs">
                   {openAlerts.length > 0 ? (
                     <span className="text-amber-400 font-bold">
-                      {openAlerts.length} release(s) scheduled near open
+                      {openAlerts.length} release(s) still ahead today
                     </span>
                   ) : (
                     <span className="text-emerald-400 font-medium flex items-center space-x-1">
                       <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                      <span>Window clear of red folders</span>
+                      <span>Remaining session clear</span>
                     </span>
                   )}
                 </div>
               </div>
               {openAlerts.length > 0 && (
                 <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
-                  SLIPPAGE RISK
+                  WATCH CLOCK
                 </span>
               )}
             </div>

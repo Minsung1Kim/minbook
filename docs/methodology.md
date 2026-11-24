@@ -1,4 +1,4 @@
-# OpenPulse Quantitative & Algorithmic Architecture (v2.0)
+# MinBook Quantitative & Algorithmic Architecture
 ## Mathematical Specifications, Volatility Surface Models, and Decision Engine Logic
 
 **Document Version:** 2.0.0  
@@ -10,9 +10,9 @@
 
 ## 1. Executive Summary & Strategy Framework
 
-OpenPulse v2.0 is an institutional-grade quantitative briefing and decision system engineered for traders executing exactly **one trade per day on the Nasdaq-100 (`NQ`/`MNQ`) futures contract**. The system isolates high-probability higher-timeframe (HTF) continuation opportunities entering exclusively on a retracement during the **9:30 AM to 10:00 AM Eastern Time (ET) New York cash open window**.
+MinBook is an institutional-grade quantitative briefing and decision system engineered for traders executing exactly **one trade per day on the Nasdaq-100 (`NQ`/`MNQ`) futures contract**. The system isolates high-probability higher-timeframe (HTF) continuation opportunities entering exclusively on a retracement during the **9:30 AM to 10:00 AM Eastern Time (ET) New York cash open window**.
 
-Rather than displaying lagging indicators on top of charting platforms, OpenPulse synthesizes:
+Rather than displaying lagging indicators on top of charting platforms, MinBook synthesizes:
 1. Multi-session reference structures (Globex `[18:00, 09:30)` ET, London `[03:00, 09:00)` ET, Asia, Prior Day).
 2. Institutional fair-value benchmarks (Separate Globex VWAP, Prior Day RTH VWAP, and Session VWAP with TWAP fallback).
 3. Standardized Overnight Inventory Order-Flow Imbalances (0%–100% above PDC).
@@ -29,7 +29,7 @@ flowchart TD
     A["Raw CME Globex Tick / 15m Bars (NQ=F, ES=F)"] --> B["Session Level Engine (levels.ts)"]
     C["Vol Surface (^VXN, ^VIX, ^VIX3M, ^VIX9D, ^VVIX)"] --> D["Volatility Surface & VRP Engine (math.ts)"]
     E["Macro Data (^TNX, DXY)"] --> F["60d Stock-Bond Correlation (math.ts)"]
-    G["Forex Factory US Red/Orange Feed"] --> H["Macro News & Window Buffer (economicCalendar.ts)"]
+    G["Economic Calendar Feed"] --> H["Macro News & Window Buffer (economicCalendar.ts)"]
     
     B --> I["Regime Classifier (regime.ts)"]
     D --> I
@@ -45,7 +45,7 @@ flowchart TD
     J --> N["4. Draws on Liquidity"]
     J --> O["5. Session R:R Plan"]
     
-    K & L & M & N & O --> P["OpenPulse Dashboard"]
+    K & L & M & N & O --> P["MinBook Dashboard"]
     P --> Q["Dynamic MNQ Contract Sizer (sizing.ts)"]
     Q --> R["Execution Window (9:34–9:48 AM ET)"]
     R --> S["Empirical MAE/MFE Journal (/journal)"]
@@ -56,7 +56,7 @@ flowchart TD
 ## 2. Market Data Ingestion & Execution Integrity
 
 ### 2.1 Pre-Market Structural Mode vs. Live Execution Mode
-* **CME 10–15m Latency Standard:** CME Group mandates a 10-to-15 minute exchange delay on all free, unauthenticated web feeds (`NQ=F`, `ES=F`). OpenPulse v2.0 enforces absolute transparency:
+* **CME 10–15m Latency Standard:** CME Group mandates a 10-to-15 minute exchange delay on all free, unauthenticated web feeds (`NQ=F`, `ES=F`). MinBook enforces absolute transparency:
   * When `exchangeDataDelayedBy > 0` during `09:30–10:00 ET`, the app renders a prominent banner:  
     `DELAYED FUTURES FEED (10–15m LAG) — USE PRE-OPEN PLAN + LIVE CHART`.
   * Dynamic unverified live-candle triggers are locked so the trader executes strictly off pre-calculated structural reference levels and their live broker platform.
@@ -85,7 +85,7 @@ $$\mathcal{B}_{\text{globex}} = \{b_t \mid T_t \in [18:00_{d-1}, 09:30_d)\}$$
   $$AsiaH = \max_{t \in \text{Asia}} (H_t), \quad AsiaL = \min_{t \in \text{Asia}} (L_t)$$
 
 ### 3.3 Multi-Anchor VWAP & TWAP Fallback
-VWAP benchmarks institutional volume-weighted fair value. OpenPulse v2.0 segments VWAP anchors cleanly:
+VWAP benchmarks institutional volume-weighted fair value. MinBook segments VWAP anchors cleanly:
 1. **Globex VWAP:** Anchored at 18:00 ET prior evening across $\mathcal{B}_{\text{globex}}$.
 2. **Prior Day RTH VWAP:** Anchored from 09:30 to 16:00 ET of the prior session.
 3. **Session VWAP:** Anchored at 09:30 ET of the active session.
@@ -97,7 +97,7 @@ $$VWAP = \frac{\sum_{t} TypicalPrice_t \cdot V_t}{\sum_{t} V_t}$$
 > **TWAP Fallback Protection:** If $V_t \le 0$ or volume is flat across the feed, the system automatically falls back to Time-Weighted Average Price ($TWAP = \frac{1}{M}\sum TypicalPrice_t$) and explicitly labels the level `TWAP FALLBACK`.
 
 ### 3.4 Higher-Timeframe (HTF) Fibonacci Retracement & Impulse Direction
-OpenPulse v2.0 determines impulse direction by comparing the timestamps of the 5-day swing extremes:
+MinBook determines impulse direction by comparing the timestamps of the 5-day swing extremes:
 $$T_{low} = \text{Timestamp}(\min(\mathcal{D}_{lows})), \quad T_{high} = \text{Timestamp}(\max(\mathcal{D}_{highs}))$$
 $$Range = HTF_{high} - HTF_{low}$$
 
@@ -210,7 +210,7 @@ Eliminates fabricated probabilities in favor of an inspectable scorecard ($+1 / 
 
 ## 6. Dynamic Volatility-Normalized Risk & MNQ Contract Sizing
 
-OpenPulse v2.0 replaces fixed-point assumptions with dynamic contract scaling:
+MinBook replaces fixed-point assumptions with dynamic contract scaling:
 
 $$\text{Adjusted Risk Dollars} = \text{Base Risk Budget} \times \text{Regime Risk Multiplier}$$
 

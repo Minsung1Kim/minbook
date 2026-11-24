@@ -5,7 +5,12 @@ import { UserProfile, TradeLogEntry, JournalAnalytics, SavedDailyBrief, Checklis
 import { OpenBriefData } from "../../types/market";
 
 const DB_DIR = path.join(process.cwd(), "data");
-const DB_PATH = process.env.DATABASE_PATH || path.join(DB_DIR, "openpulse.db");
+const legacyDbPath = path.join(DB_DIR, "openpulse.db");
+const defaultDbPath =
+  fs.existsSync(legacyDbPath) && !fs.existsSync(path.join(DB_DIR, "minbook.db"))
+    ? legacyDbPath
+    : path.join(DB_DIR, "minbook.db");
+const DB_PATH = process.env.DATABASE_PATH || defaultDbPath;
 
 let dbInstance: DatabaseSync | null = null;
 
@@ -75,6 +80,7 @@ export function getDb(): DatabaseSync {
       inventory_percent_snapshot REAL DEFAULT NULL,
       smt_snapshot TEXT DEFAULT '',
       bias_verdict_snapshot TEXT DEFAULT '',
+      session_bars_json TEXT DEFAULT NULL,
       created_at TEXT NOT NULL
     );
 
@@ -111,6 +117,7 @@ export function getDb(): DatabaseSync {
     if (!colNames.has("inventory_percent_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN inventory_percent_snapshot REAL DEFAULT NULL;");
     if (!colNames.has("smt_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN smt_snapshot TEXT DEFAULT '';");
     if (!colNames.has("bias_verdict_snapshot")) db.exec("ALTER TABLE trades ADD COLUMN bias_verdict_snapshot TEXT DEFAULT '';");
+    if (!colNames.has("session_bars_json")) db.exec("ALTER TABLE trades ADD COLUMN session_bars_json TEXT DEFAULT NULL;");
   } catch (err) {
     console.warn("Notice: trades table migration:", err);
   }
@@ -376,6 +383,7 @@ export function getTrades(userId?: string): TradeLogEntry[] {
     inventoryPercentSnapshot: r.inventory_percent_snapshot ?? undefined,
     smtSnapshot: r.smt_snapshot || "",
     biasVerdictSnapshot: r.bias_verdict_snapshot || "",
+    sessionBarsJson: r.session_bars_json ?? undefined,
     createdAt: r.created_at
   }));
 }
@@ -390,8 +398,8 @@ export function addTrade(trade: Omit<TradeLogEntry, "id" | "createdAt">): TradeL
       id, user_id, trade_date, symbol, direction, entry_price, stop_price, target_price,
       exit_price, worst_price, best_price, contracts, planned_risk_dollars, planned_target_dollars, actual_pnl_dollars,
       actual_pnl_r, mae_r, mfe_r, exit_efficiency_percent, stopped_out, entry_time_et, exit_time_et, retrace_level_used, notes,
-      vxn_snapshot, term_ratio_snapshot, vvix_snapshot, vrp_snapshot, inventory_percent_snapshot, smt_snapshot, bias_verdict_snapshot, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      vxn_snapshot, term_ratio_snapshot, vvix_snapshot, vrp_snapshot, inventory_percent_snapshot, smt_snapshot, bias_verdict_snapshot, session_bars_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, trade.userId, trade.tradeDate, trade.symbol, trade.direction,
     trade.entryPrice, trade.stopPrice, trade.targetPrice, trade.exitPrice,
@@ -403,7 +411,7 @@ export function addTrade(trade: Omit<TradeLogEntry, "id" | "createdAt">): TradeL
     trade.retraceLevelUsed, trade.notes,
     trade.vxnSnapshot ?? null, trade.termRatioSnapshot ?? null, trade.vvixSnapshot ?? null,
     trade.vrpSnapshot ?? null, trade.inventoryPercentSnapshot ?? null,
-    trade.smtSnapshot ?? "", trade.biasVerdictSnapshot ?? "", createdAt
+    trade.smtSnapshot ?? "", trade.biasVerdictSnapshot ?? "", trade.sessionBarsJson ?? null, createdAt
   );
 
   return {

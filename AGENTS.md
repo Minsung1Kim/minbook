@@ -8,7 +8,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-## OpenPulse Agent Instructions
+## MinBook Agent Instructions
 - Full project architecture and specifications are documented in `AGENT.md`.
 - All major decisions and verification checks must be recorded in `.ai/changelog.md`.
 - High-contrast dark terminal aesthetic for NY open traders.

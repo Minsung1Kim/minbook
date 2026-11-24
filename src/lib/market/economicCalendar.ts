@@ -96,6 +96,20 @@ const BASELINE_US_EVENTS: EconomicEvent[] = [
   {
     id: "us-news-03",
     date: "2026-11-24",
+    timeET: "09:00 AM",
+    event: "S&P/CS Composite-20 HPI (y/y)",
+    country: "USD",
+    impact: "MEDIUM",
+    folderColor: "ORANGE",
+    forecast: "4.8%",
+    previous: "5.2%",
+    alert: false,
+    isNearOpenWindow: false,
+    notes: "Pre-market 9:00 AM housing valuation data. Low direct impact on open."
+  },
+  {
+    id: "us-news-03b",
+    date: "2026-11-24",
     timeET: "10:00 AM",
     event: "CB Consumer Confidence",
     country: "USD",
@@ -106,6 +120,20 @@ const BASELINE_US_EVENTS: EconomicEvent[] = [
     alert: true,
     isNearOpenWindow: true,
     notes: "10:00 AM milestone: ensure morning continuation stop is moved to breakeven before print."
+  },
+  {
+    id: "us-news-03c",
+    date: "2026-11-24",
+    timeET: "10:00 AM",
+    event: "Richmond Manufacturing Index",
+    country: "USD",
+    impact: "MEDIUM",
+    folderColor: "ORANGE",
+    forecast: "-10",
+    previous: "-14",
+    alert: true,
+    isNearOpenWindow: true,
+    notes: "Regional mid-Atlantic manufacturing index released at 10:00 AM."
   },
   {
     id: "us-news-04",
@@ -180,6 +208,13 @@ const BASELINE_US_EVENTS: EconomicEvent[] = [
     notes: "10:00 AM milestone: lock in profit or trail stop."
   }
 ];
+
+/**
+ * Filter economic events specifically for target trade date
+ */
+export function filterEventsForTradeDate(events: EconomicEvent[], targetTradeDate: string): EconomicEvent[] {
+  return events.filter((e) => e.date === targetTradeDate);
+}
 
 /**
  * Fetch and filter US-only Red and Orange economic calendar releases

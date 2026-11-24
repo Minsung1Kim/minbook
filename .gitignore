@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+*.log
 
 # debug
 npm-debug.log*
@@ -30,16 +31,27 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (strict: ignore all .env except .env.example)
 .env*
 !.env.example
 
-# database
+# databases & local persistence
 data/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
+
+# uploads & media
+uploads/
+.user_uploaded/
+
+# AI assistant artifacts & scratch
+.ai/
+!.ai/changelog.md
+scratch/
 
 # vercel
 .vercel

@@ -4,7 +4,12 @@ import { getCached, setCached, invalidateCache } from "./cache";
 import { computeSessionLevels } from "./levels";
 import { evaluateBiasAndRegime } from "./regime";
 import { generateTacticalPlaybook } from "./playbook";
-import { OpenBriefData } from "@/types/market";
+import { getCMESessionInfo, getETParts } from "./sessionClock";
+import { getMarketGEX } from "./gex";
+import { fetch1mBars, buildFootprintSummary } from "./footprint";
+import { getCalibrationRepository } from "@/lib/calibration/store";
+import { freezePredictionSnapshot, gradePendingPredictions } from "@/lib/calibration/grader";
+import { OpenBriefData, GEXExposureData, FootprintSummary } from "@/types/market";
 import { saveDailyBrief } from "@/lib/db";
 
 export async function getOpenBrief(options?: {
@@ -60,51 +65,83 @@ export async function getOpenBrief(options?: {
     providerNotice = "Notice: Live feed temporarily unreachable or rate-limited. Structured demo session data loaded.";
   }
 
-  // Current trading date in ET
-  const now = new Date();
-  const dateStr = now.toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // YYYY-MM-DD
+  // CME Futures Centralized Session Clock (5:00 PM / 6:00 PM ET Rollover)
+  const sessionInfo = getCMESessionInfo();
+  const targetTradeDate = sessionInfo.targetTradeDate;
 
   // Implied Volatility for Rule of 16 Expected Move
   const ivPct = macro.volatilitySurface?.vxn || macro.vix?.value || 24.0;
 
-  // Compute session levels with SMT divergence and expected move
+  // Compute session levels with SMT divergence, expected move, and target trade date anchoring
   const { sessionMetrics, keyLevels } = computeSessionLevels(
     quote.price,
     dailyBars,
     intradayBars,
     ivPct,
-    macro.esData
+    macro.esData,
+    targetTradeDate
   );
 
-  // Check if red/orange folder news scheduled between 9:30 and 10:00 AM ET today
+  // Free Delayed GEX Engine & Free 1m-Derived Footprint Proxy
+  let gex: GEXExposureData | undefined;
+  let footprint: FootprintSummary | undefined;
+
+  try {
+    const [gexRes, m1Bars] = await Promise.all([
+      getMarketGEX(quote.price, ivPct, options?.forceRefresh),
+      fetch1mBars(symbol === "MNQ" ? "MNQ=F" : "NQ=F")
+    ]);
+    gex = gexRes;
+    footprint = buildFootprintSummary(intradayBars, m1Bars, 900, keyLevels, sessionMetrics);
+  } catch (err: any) {
+    console.warn("GEX / Footprint module warning:", err?.message || err);
+  }
+
+  // Check if red/orange folder news scheduled between 9:30 and 10:00 AM ET on target trade date
   const hasOpenNews = events.some(
     (e) =>
       (e.isNearOpenWindow || (e.alert && (e.timeET.includes("09:45") || e.timeET.includes("10:00")))) &&
-      (e.date === dateStr || !e.date)
+      (e.date === targetTradeDate || !e.date)
   );
 
-  // Evaluate bias & chop risk with full volatility surface & macro regime
+  // Evaluate bias & chop risk with full volatility surface, macro regime, and dealer GEX tilt
   const bias = evaluateBiasAndRegime(
     quote.price,
     sessionMetrics,
     macro.vix,
     hasOpenNews,
     macro.volatilitySurface,
-    macro.macroRegime
+    macro.macroRegime,
+    gex
   );
 
-  // Generate actionable tactical playbook & scenarios with time-decay and delayed feed protection
+  // Resolve calibrated model factor weights
+  let activeFactorWeights: Record<string, number> | undefined = undefined;
+  try {
+    const calibRepo = getCalibrationRepository();
+    const activeRec = await calibRepo.getActiveModelWeights();
+    activeFactorWeights = activeRec.weights;
+  } catch (err) {
+    console.warn("Could not load active calibration weights:", err);
+  }
+
+  // Generate actionable tactical playbook & scenarios with calibrated factor weights, time-decay and delayed feed protection
   const tacticalPlan = generateTacticalPlaybook(quote.price, sessionMetrics, bias, {
     isDelayed: quote.status === "DELAYED",
     qqqProxyQuote: macro.qqqProxyQuote,
-    economicEvents: events
+    economicEvents: events,
+    sessionInfo,
+    factorWeights: activeFactorWeights
   });
 
   const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "10", 10);
   const cacheExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
   const briefData: OpenBriefData = {
-    tradeDate: dateStr,
+    tradeDate: targetTradeDate,
+    targetTradeDate,
+    priorTradeDate: sessionInfo.priorTradeDate,
+    sessionInfo,
     generatedAt: new Date().toISOString(),
     instrument: symbol,
     underlyingAsset: quote.symbol,
@@ -121,7 +158,13 @@ export async function getOpenBrief(options?: {
       macroRegime: macro.macroRegime,
       megaCaps: macro.megaCaps,
       events,
-      dealerGammaTilt: macro.dealerGammaTilt
+      dealerGammaTilt: gex
+        ? {
+            regime: `${gex.netGammaRegime} (Flip: ${gex.gammaFlipNq} • CallWall: ${gex.callWallNq})`,
+            source: "DERIVED_HEURISTIC" as const,
+            note: gex.disclaimer
+          }
+        : macro.dealerGammaTilt
     },
     dataSource: {
       providerName: providerUsed,
@@ -130,7 +173,10 @@ export async function getOpenBrief(options?: {
       lastUpdated: quote.timestamp,
       cacheExpiresAt,
       notice: providerNotice
-    }
+    },
+    intradayBars,
+    gex,
+    footprint
   };
 
   // Cache in-memory
@@ -139,14 +185,44 @@ export async function getOpenBrief(options?: {
   // Persist snapshot to SQLite daily_briefs asynchronously
   try {
     saveDailyBrief({
-      tradeDate: dateStr,
+      tradeDate: targetTradeDate,
       symbol,
       data: briefData,
       notes: bias.summary,
-      createdBy: "openpulse-engine"
+      createdBy: "minbook-engine"
     });
   } catch (err) {
     console.error("Could not persist daily brief to SQLite:", err);
+  }
+
+  // Automatic Calibration Pipeline:
+  // 1. Auto-freeze immutable pre-market prediction snapshot (09:15–10:00 ET)
+  try {
+    const etParts = getETParts(new Date());
+    const timeMins = etParts.hour * 60 + etParts.minute;
+    if (
+      (sessionInfo.phase === "PRE_MARKET_LOCK" && timeMins >= 555) ||
+      sessionInfo.phase === "NY_OPEN_WINDOW"
+    ) {
+      freezePredictionSnapshot(briefData).catch((e) =>
+        console.warn("Auto-freeze prediction notice:", e?.message || e)
+      );
+    }
+  } catch (err) {
+    console.warn("Auto-freeze check error:", err);
+  }
+
+  // 2. Auto-grade pending sessions after 10:20 ET or during post-window / recap phases
+  try {
+    const etParts = getETParts(new Date());
+    const timeMins = etParts.hour * 60 + etParts.minute;
+    if (timeMins >= 620 || sessionInfo.phase === "POST_WINDOW_RECAP" || sessionInfo.phase === "CME_BREAK_OR_WEEKEND") {
+      gradePendingPredictions().catch((e) =>
+        console.warn("Auto-grade pending notice:", e?.message || e)
+      );
+    }
+  } catch (err) {
+    console.warn("Auto-grade check error:", err);
   }
 
   return briefData;

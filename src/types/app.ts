@@ -46,6 +46,7 @@ export interface TradeLogEntry {
   inventoryPercentSnapshot?: number;
   smtSnapshot?: string;
   biasVerdictSnapshot?: string;
+  sessionBarsJson?: string;
   createdAt: string;
 }
 

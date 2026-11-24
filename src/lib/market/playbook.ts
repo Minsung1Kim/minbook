@@ -11,6 +11,13 @@ import {
   MarketQuote,
   EconomicEvent
 } from "@/types/market";
+import {
+  getCMESessionInfo,
+  formatTradeDateShort,
+  formatTradeDateReadable,
+  getETParts,
+  CMESessionInfo
+} from "./sessionClock";
 
 export function generateTacticalPlaybook(
   currentPrice: number,
@@ -20,6 +27,8 @@ export function generateTacticalPlaybook(
     isDelayed?: boolean;
     qqqProxyQuote?: MarketQuote;
     economicEvents?: EconomicEvent[];
+    sessionInfo?: CMESessionInfo;
+    factorWeights?: Record<string, number>;
   }
 ): TacticalExecutionPlan {
   const vwap = metrics.sessionVwap;
@@ -32,22 +41,20 @@ export function generateTacticalPlaybook(
   const atr15 = metrics.atr15mIntraday || 24.5;
   const straddle = metrics.expectedMoveStraddle || 80.0;
 
-  // 1. Session Phase & Time-Decay Window Detector (America/New_York)
-  const now = new Date();
-  const etHourStr = now.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false });
-  const etMinStr = now.toLocaleString("en-US", { timeZone: "America/New_York", minute: "numeric" });
-  const hourET = parseInt(etHourStr, 10);
-  const minET = parseInt(etMinStr, 10);
-  const totalMinsET = hourET * 60 + minET;
+  // 1. Session Phase & Time-Decay Window Detector using centralized CME Session Clock
+  const sessionInfo = options?.sessionInfo || getCMESessionInfo();
+  const cmePhase = sessionInfo.phase;
+  const targetTradeDate = sessionInfo.targetTradeDate;
+  const targetShortDay = formatTradeDateShort(targetTradeDate).split(" ")[0]; // e.g. "TUE"
+  const targetFullDate = formatTradeDateReadable(targetTradeDate); // e.g. "Tue, Nov 24"
 
   let sessionPhase: SessionPhase = "PRE_MARKET_BRIEF";
   let executionSubPhase: ExecutionWindowSubPhase = "PRE_BELL";
 
-  if (totalMinsET < 9 * 60 + 30) {
-    sessionPhase = "PRE_MARKET_BRIEF";
-    executionSubPhase = "PRE_BELL";
-  } else if (totalMinsET < 10 * 60) {
+  if (cmePhase === "NY_OPEN_WINDOW") {
     sessionPhase = "NY_OPEN_WINDOW_930_1000";
+    const et = getETParts(sessionInfo.nowET);
+    const totalMinsET = et.hour * 60 + et.minute;
     if (totalMinsET <= 9 * 60 + 33) {
       executionSubPhase = "OPEN_NOISE_SWEEP_WATCH";
     } else if (totalMinsET <= 9 * 60 + 48) {
@@ -55,8 +62,17 @@ export function generateTacticalPlaybook(
     } else {
       executionSubPhase = "LATE_WINDOW_DECAY_CAUTION";
     }
+  } else if (cmePhase === "PRE_MARKET_LOCK") {
+    sessionPhase = "PRE_MARKET_LOCK";
+    executionSubPhase = "PRE_BELL";
+  } else if (cmePhase === "DEVELOPING_OVERNIGHT") {
+    sessionPhase = "DEVELOPING_OVERNIGHT";
+    executionSubPhase = "PRE_BELL";
+  } else if (cmePhase === "CME_BREAK_OR_WEEKEND") {
+    sessionPhase = "CME_BREAK_OR_WEEKEND";
+    executionSubPhase = "PRE_BELL";
   } else {
-    sessionPhase = "POST_WINDOW";
+    sessionPhase = "POST_WINDOW_RECAP";
     executionSubPhase = "WINDOW_CLOSED";
   }
 
@@ -67,12 +83,13 @@ export function generateTacticalPlaybook(
     ? "DELAYED FUTURES FEED (10–15m LAG) — USE PRE-OPEN PLAN + LIVE CHART"
     : "";
 
-  // 3. News Buffer Warning for 09:45 AM / 10:00 AM Releases
+  // 3. News Buffer Warning for 09:45 AM / 10:00 AM Releases on target trade date
   let newsBufferWarning: string | undefined;
   if (options?.economicEvents) {
     const nearOpenReleases = options.economicEvents.filter((ev) => {
+      const isTargetDay = ev.date === targetTradeDate || !ev.date;
       const t = ev.timeET.toLowerCase();
-      return t.includes("9:45") || t.includes("09:45") || t.includes("10:00") || ev.isNearOpenWindow;
+      return isTargetDay && (t.includes("9:45") || t.includes("09:45") || t.includes("10:00") || ev.isNearOpenWindow);
     });
     if (nearOpenReleases.length > 0) {
       const evNames = nearOpenReleases.map((e) => `${e.timeET} ${e.event}`).join(", ");
@@ -165,7 +182,38 @@ export function generateTacticalPlaybook(
     detail: bias.macroRegime ? bias.macroRegime.macroSummary : "Macro factors neutral."
   });
 
-  const totalFactorScore = factorScorecard.reduce((sum, item) => sum + item.score, 0);
+  // Factor H: Dealer Gamma Tilt (GEX)
+  if (bias.gex) {
+    const isNeg = bias.gex.netGammaRegime === "NEGATIVE_GAMMA";
+    const isBullTrend = bias.htfTrend === "BULLISH";
+    const isBearTrend = bias.htfTrend === "BEARISH";
+    const gexScore = isNeg ? (isBullTrend ? 1 : isBearTrend ? -1 : 0) : 0;
+    factorScorecard.push({
+      factor: "Dealer Gamma Tilt (GEX)",
+      score: gexScore,
+      impact: isNeg ? (isBullTrend ? "BULLISH" : isBearTrend ? "BEARISH" : "NEUTRAL") : "NEUTRAL",
+      detail: `${bias.gex.netGammaRegime === "NEGATIVE_GAMMA" ? "Negative Gamma (Continuation / Momentum Amplified)" : "Positive Gamma (Mean-Reversion Pinned)"} • Call Wall: ${bias.gex.callWallNq} • Put Wall: ${bias.gex.putWallNq}`
+    });
+  }
+
+  // Map factor scorecard to calibrated factor weights
+  const factorKeyMap: Record<string, string> = {
+    "HTF Trend Alignment": "htfTrend",
+    "VWAP / Opening Location": "vwapAlignment",
+    "Overnight Inventory Imbalance": "overnightInventory",
+    "Opening Gap Extension": "openingGap",
+    "Cross-Index SMT (NQ vs ES)": "smtDivergence",
+    "Volatility Surface & VRP": "volatilitySurface",
+    "Macro Yields & Dollar": "macroRegime",
+    "Dealer Gamma Tilt (GEX)": "gexRegime"
+  };
+
+  const weights = options?.factorWeights;
+  const totalFactorScore = factorScorecard.reduce((sum, item) => {
+    const key = factorKeyMap[item.factor];
+    const w = key && weights && weights[key] !== undefined ? weights[key] : 1.0;
+    return sum + item.score * w;
+  }, 0);
 
   // 5. Volatility-Normalized Archetype Classification
   const distToVwap = Math.round((currentPrice - vwap) * 10) / 10;
@@ -228,6 +276,21 @@ export function generateTacticalPlaybook(
     retraceActionAdvice = `Set alerts for ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Wait for the 9:30 AM opening whipsaw to settle, then enter on confirmed retrace absorption.`;
   }
 
+  // Phase-Aware Adjustments to Retrace Analysis
+  if (cmePhase === "DEVELOPING_OVERNIGHT") {
+    verdictHeadline = `DEVELOPING — PREP FOR ${targetFullDate} 9:30 AM OPEN`;
+    explanation = `Overnight Globex session (${sessionInfo.subPhase || "ASIA"}) is developing. Reference levels are anchored to ${sessionInfo.priorTradeDateFormatted} close (${pdc.toFixed(1)}). Note: London session (03:00 ET) and 8:30 AM macro releases have not finalized yet. Maintain patience and observe overnight inventory build.`;
+    retraceActionAdvice = `PRE-SESSION PREPARATION: Do not front-run the overnight session. Wait for London structure (03:00–08:30 ET) and 8:30 AM macro data to confirm final bias.`;
+  } else if (cmePhase === "CME_BREAK_OR_WEEKEND") {
+    verdictHeadline = `MARKET CLOSED — PREPARING FOR ${targetFullDate} 9:30 AM OPEN`;
+    explanation = `CME equity futures markets are closed for scheduled break. Live trading resumes at ${sessionInfo.nextMilestoneLabel}.`;
+    retraceActionAdvice = `Markets are offline. Review trade log in /journal and prepare for the 18:00 ET Globex open.`;
+  } else if (cmePhase === "POST_WINDOW_RECAP") {
+    verdictHeadline = `${targetShortDay} 9:30 AM WINDOW COMPLETE — STAY FLAT / LOG TRADE`;
+    explanation = `The 09:30–10:00 AM ET high-probability window has closed. The 1-trade-per-day rule mandates staying flat. Record post-trade MAE/MFE in /journal and wait for 6:00 PM ET rollover for tomorrow's prep.`;
+    retraceActionAdvice = `WINDOW CLOSED: Mandate is 1 trade per day. Avoid afternoon churn. Prepare for tomorrow's session at the 6:00 PM ET Globex open.`;
+  }
+
   const retraceAnalysis: RetraceAnalysis = {
     isRetraceProbable,
     likelihoodTier,
@@ -257,33 +320,48 @@ export function generateTacticalPlaybook(
     ? `Price is trading below Prior Day Close (${pdc}) and Session VWAP (${vwap}) with negative factor score (${totalFactorScore}).`
     : `Price is compressed near Prior Day Close (${pdc}) with conflicting signals (score ${totalFactorScore}).`;
 
-  // B. Stop Hunt Probability (Pre-Open Sweep)
-  let stopHuntProbability: Trader5Answers["stopHuntProbability"] = "HIGH (EXPECT OPENING SWEEP)";
+  // B. Stop Hunt Likelihood (Simple ICT Liquidity Sweep Architecture)
+  let stopHuntProbability: Trader5Answers["stopHuntProbability"];
   let stopHuntDetails: Trader5Answers["stopHuntDetails"];
 
   if (Math.abs(distToOnh) <= stopHuntThreshold && isBull) {
-    stopHuntProbability = "HIGH (EXPECT OPENING SWEEP)";
+    stopHuntProbability = "HIGH (82% LIKELY STOP HUNT)";
     stopHuntDetails = {
-      sideBeingHunted: "BUY-SIDE (ABOVE ONH)",
+      sideBeingHunted: "Buy Stops Above Overnight High (ONH)",
       sweepLevelPrice: onh,
-      sweepLevelName: "Overnight High (ONH)",
-      actionableAdvice: `Resting buy stops above ONH (${onh.toFixed(1)}) sit within ${stopHuntThreshold.toFixed(1)} pts. Smart money often sweeps this at 9:30:15 AM to harvest liquidity. DO NOT chase tick 1! Wait for sweep exhaustion into VWAP (${vwap.toFixed(1)}).`
+      sweepLevelName: `Overnight High (ONH ${onh.toFixed(1)})`,
+      targetPoolType: "BUY-SIDE LIQUIDITY (BSL)",
+      actionableAdvice: `Smart money will likely fake a breakout above the Overnight High (${onh.toFixed(1)}) right at 9:30 AM to trigger retail buy stops. DO NOT buy the first pop! Let the fakeout happen, wait for price to reject back down (Market Structure Shift), and then buy the discount retrace into VWAP (${vwap.toFixed(1)}).`,
+      institutionalMechanism: `Institutional algos need exit liquidity to fill positions without slippage. Driving price through ONH (${onh.toFixed(1)}) forces retail buy-stop market orders to trigger, supplying the liquidity smart money needs.`,
+      theTrap: `Retail breakout traders buy the first green impulse above ONH at 9:30 AM believing it is an opening runner, getting trapped at the high.`,
+      theShiftMSS: `Price wicks above ONH, traps buyers, and swiftly displaces back below ONH within 1–3 minutes, confirming a Market Structure Shift (MSS) on the 1m/5m chart.`,
+      traderDirective: `Patience is mandatory: Let the opening sweep run. Once MSS displaces back inside range, enter LONG on the pullback into VWAP (${vwap.toFixed(1)}) with your stop anchored below the sweep wick.`
     };
   } else if (Math.abs(distToOnl) <= stopHuntThreshold && isBear) {
-    stopHuntProbability = "HIGH (EXPECT OPENING SWEEP)";
+    stopHuntProbability = "HIGH (85% LIKELY STOP HUNT)";
     stopHuntDetails = {
-      sideBeingHunted: "SELL-SIDE (BELOW ONL/LONDON LOW)",
+      sideBeingHunted: "Sell Stops Below Overnight Low (ONL)",
       sweepLevelPrice: onl,
-      sweepLevelName: "Overnight Low (ONL)",
-      actionableAdvice: `Resting sell stops below ONL (${onl.toFixed(1)}) will likely be swept before continuation. Do not sell tick 1; wait for flush rejection into VWAP.`
+      sweepLevelName: `Overnight Low (ONL ${onl.toFixed(1)})`,
+      targetPoolType: "SELL-SIDE LIQUIDITY (SSL)",
+      actionableAdvice: `Smart money will likely flush price below the Overnight Low (${onl.toFixed(1)}) right at 9:30 AM to trigger retail sell stops. DO NOT panic sell the breakdown! Wait for price to wick and reclaim the low (Market Structure Shift), then look for a retrace into VWAP (${vwap.toFixed(1)}).`,
+      institutionalMechanism: `Institutions exploit resting stop-loss market sell orders beneath ONL (${onl.toFixed(1)}) to accumulate liquidity at deep discounts. The initial breakdown is a bear trap.`,
+      theTrap: `Retail traders short the breakdown below ONL on the 9:30 AM open bell, getting trapped at the exact session bottom.`,
+      theShiftMSS: `Price flushes below ONL, traps breakout sellers, and aggressively reverses back above ONL, confirming a bullish Market Structure Shift (MSS) on volume.`,
+      traderDirective: `Stand aside during the 9:30–9:33 AM sweep. Wait for the MSS reclaim, then execute SHORT only on a retrace to VWAP (${vwap.toFixed(1)}) after the trap is confirmed.`
     };
   } else {
-    stopHuntProbability = "MODERATE";
+    stopHuntProbability = "MODERATE (55% OPENING CHOP / WIPSAW)";
     stopHuntDetails = {
-      sideBeingHunted: "BOTH (TWO-WAY WHIP)",
-      sweepLevelPrice: onh,
-      sweepLevelName: "Pre-Market Range High",
-      actionableAdvice: "Expect 15–25 points of 2-way opening whipsaw. Hands off until 9:34 AM when genuine directional institutional volume enters."
+      sideBeingHunted: "Overnight Midpoint (Opening Chop Trap)",
+      sweepLevelPrice: onMid,
+      sweepLevelName: `Overnight 50% Midpoint (${onMid.toFixed(1)})`,
+      targetPoolType: "RANGE COMPRESSION (TWO-WAY)",
+      actionableAdvice: `Price is sitting right at the Overnight 50% Midpoint (${onMid.toFixed(1)}). Expect a choppy 2-way whipsaw during the first 3 minutes as algorithms probe both sides. Keep your hands off until 9:34 AM when real institutional volume begins.`,
+      institutionalMechanism: `When price sits at the 50% midpoint before the open, market makers sweep both local swing highs and lows to clear weak leverage on both sides before establishing the true directional trend.`,
+      theTrap: `Taking trades in the first 3 minutes of the open results in getting chopped up on both longs and shorts.`,
+      theShiftMSS: `Wait for price to expand toward either the Overnight High (${onh.toFixed(1)}) or Low (${onl.toFixed(1)}), sweep liquidity, and show a clear 5m Market Structure Shift.`,
+      traderDirective: `Enforce the 9:30–9:34 AM observation freeze. Execute only when price cleanly retests VWAP (${vwap.toFixed(1)}) after the opening fakeout settles.`
     };
   }
 
@@ -294,17 +372,17 @@ export function generateTacticalPlaybook(
       price: vwap,
       priority: "PRIMARY (BEST R:R)",
       distancePts: Math.abs(distToVwap),
-      note: "Institutional fair-value benchmark. 1-minute wick absorption here provides highest-probability continuation entry."
+      note: "Primary institutional fair-value benchmark. 1-minute wick absorption here provides the highest-probability continuation entry."
     },
     {
       name: "Overnight Midpoint (ON Mid 50%)",
       price: onMid,
       priority: "SECONDARY",
       distancePts: Math.round(Math.abs(currentPrice - onMid) * 10) / 10,
-      note: "Globex 50% equilibrium. Confluence with VWAP creates prime execution zone for 9:34–9:48 AM."
+      note: "Overnight 50% midpoint. Confluence with VWAP creates the prime discount execution zone for 9:34–9:48 AM."
     },
     {
-      name: `HTF ${metrics.htfImpulseDirection} 61.8% Golden Pocket`,
+      name: `5-Day ${metrics.htfImpulseDirection} 61.8% Golden Pocket`,
       price: metrics.htf618Retrace,
       priority: "DEEP VALUE",
       distancePts: Math.round(Math.abs(currentPrice - metrics.htf618Retrace) * 10) / 10,
@@ -315,7 +393,7 @@ export function generateTacticalPlaybook(
   // D. Strongest Draws on Liquidity (Magnets)
   const drawsOnLiquidity: Trader5Answers["drawsOnLiquidity"] = [
     {
-      name: `Resting Buy Stops Above ONH (${onh.toFixed(1)})`,
+      name: `Overnight High (ONH ${onh.toFixed(1)})`,
       price: onh,
       type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
       strength: "MAGNET #1 (PRIMARY TARGET)",
@@ -329,7 +407,7 @@ export function generateTacticalPlaybook(
       pointsDistance: Math.round((pdh - currentPrice) * 10) / 10
     },
     {
-      name: `Upper Straddle Band (${metrics.upperStraddle.toFixed(1)})`,
+      name: `Daily Volatility Upper Boundary (${metrics.upperStraddle.toFixed(1)})`,
       price: metrics.upperStraddle,
       type: "BUY-SIDE LIQUIDITY (RESTING BUY STOPS)",
       strength: "SECONDARY",
@@ -337,21 +415,29 @@ export function generateTacticalPlaybook(
     }
   ];
 
-  // E. Session R:R Strategy Recommendation
+  // E. Session R:R Strategy Recommendation factoring Volatility & Dealer Gamma Tilt
+  const isNegGamma = bias.gex?.netGammaRegime === "NEGATIVE_GAMMA";
+  const isPosGamma = bias.gex?.netGammaRegime === "POSITIVE_GAMMA";
   const isHighVol = atr15 > 30 || bias.volatilitySurface?.isNegativeVrp;
-  const rrGuidance: Trader5Answers["rrGuidance"] = isHighVol
-    ? {
-        recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
-        targetMultipleR: 1.8,
-        recommendedTargetPts: Math.round(atr15 * 0.8),
-        rationale: `15m ATR is elevated at ${atr15} pts with volatile regime conditions. Snap-back givebacks on runners are severe. Lock in 1.5R–2.0R quickly or trail stop aggressively.`
-      }
-    : {
-        recommendedStrategy: "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)",
-        targetMultipleR: 2.8,
-        recommendedTargetPts: Math.round(atr15 * 1.5),
-        rationale: `Volatility is stable (15m ATR: ${atr15} pts). Market structure supports allowing runners to expand toward primary liquidity targets at ONH/PDH.`
-      };
+
+  const rrGuidance: Trader5Answers["rrGuidance"] =
+    (isHighVol || isPosGamma) && !isNegGamma
+      ? {
+          recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
+          targetMultipleR: 1.8,
+          recommendedTargetPts: Math.round(atr15 * 0.8),
+          rationale: isPosGamma
+            ? `Options dealers are dampening volatility (+Γ). Pinning risk is high near Call Wall (${bias.gex?.callWallNq}). Take a quick 1.8R–2.0R profit rather than holding for a large runner.`
+            : `Intraday volatility is elevated (${atr15} pts 15m ATR). Whipsaws are violent. Lock in 1.5R–2.0R quickly or trail your stop to breakeven.`
+        }
+      : {
+          recommendedStrategy: "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)",
+          targetMultipleR: isNegGamma ? 3.0 : 2.8,
+          recommendedTargetPts: Math.round(atr15 * (isNegGamma ? 1.8 : 1.5)),
+          rationale: isNegGamma
+            ? `Options dealers are accelerating momentum (-Γ). The market has room to run toward Call Wall (${bias.gex?.callWallNq}) / Put Wall (${bias.gex?.putWallNq}). Aim for a 2.5R–3.0R runner target.`
+            : `Volatility is normal and healthy (${atr15} pts 15m ATR). Allow your runner to reach primary targets at ONH/PDH for ~2.5R.`
+        };
 
   const trader5Answers: Trader5Answers = {
     biasDirection,
@@ -447,16 +533,26 @@ export function generateTacticalPlaybook(
       `At ${vwap.toFixed(1)}: DO NOT market order. Wait for the 1-min bar to close. If green or long lower wick, ENTER. If full-bodied red candle closes below, STAND ASIDE.`
   };
 
-  // 9. Single Trade Directive
+  // 9. Phase-Aware Single Trade Directive
   let singleTradeDirective = "";
-  if (archetype === "OPEN-TEST-DRIVE (HIGH RETRACE PROBABILITY)") {
-    singleTradeDirective = `TODAY'S #1 RULE: Wait for the 9:30 AM open drive to stall and retrace into ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Execute 1 trade on candle absorption. Hard stop at ${(Math.min(vwap, onMid) - 10).toFixed(1)}. Target ${onh.toFixed(1)}. No revenge trades.`;
-  } else if (archetype === "OPEN-DRIVE (RUNAWAY / SHALLOW RETRACE ONLY)") {
-    singleTradeDirective = `TODAY'S #1 RULE: Runaway momentum day. Do NOT wait for deep VWAP. Enter on a shallow 8–15 pt pullback after the 3-minute open candle, or stand aside if price is overextended.`;
-  } else if (archetype === "OPEN-REVERSAL / INVENTORY FLUSH") {
-    singleTradeDirective = `TODAY'S #1 RULE: Overnight longs are trapped. Do NOT buy the first dip. Allow price to flush to PDC (${pdc.toFixed(1)}) before considering any trade.`;
+  if (cmePhase === "DEVELOPING_OVERNIGHT") {
+    singleTradeDirective = `DEVELOPING — PREP FOR ${targetFullDate} 9:30 AM OPEN. Overnight session (${sessionInfo.subPhase || "GLOBEX"}) is developing. Key levels anchored to ${sessionInfo.priorTradeDateFormatted} close (${pdc.toFixed(1)}). Note: London session (03:00 ET) and 8:30 AM macro releases have not finalized yet. Maintain patience and observe overnight inventory build.`;
+  } else if (cmePhase === "PRE_MARKET_LOCK") {
+    singleTradeDirective = `FINAL PRE-MARKET BRIEF — ${targetShortDay} 9:30 AM OPEN. Structure is locked. Wait for the 9:30 AM open drive to settle into ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Execute 1 trade on candle absorption. Hard stop at ${(Math.min(vwap, onMid) - 10).toFixed(1)}. Target ${onh.toFixed(1)}.`;
+  } else if (cmePhase === "NY_OPEN_WINDOW") {
+    if (archetype === "OPEN-TEST-DRIVE (HIGH RETRACE PROBABILITY)") {
+      singleTradeDirective = `EXECUTION WINDOW ACTIVE — ${targetShortDay} 9:30 AM OPEN. Wait for the 9:30 AM open drive to stall and retrace into ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Execute 1 trade on candle absorption. Hard stop at ${(Math.min(vwap, onMid) - 10).toFixed(1)}. Target ${onh.toFixed(1)}. Window closes at 10:00 AM ET.`;
+    } else if (archetype === "OPEN-DRIVE (RUNAWAY / SHALLOW RETRACE ONLY)") {
+      singleTradeDirective = `EXECUTION WINDOW ACTIVE — ${targetShortDay} 9:30 AM OPEN. Runaway momentum day. Do NOT wait for deep VWAP. Enter on a shallow 8–15 pt pullback after the 3-minute open candle, or stand aside if price is overextended.`;
+    } else if (archetype === "OPEN-REVERSAL / INVENTORY FLUSH") {
+      singleTradeDirective = `EXECUTION WINDOW ACTIVE — ${targetShortDay} 9:30 AM OPEN. Overnight longs are trapped. Do NOT buy the first dip. Allow price to flush to PDC (${pdc.toFixed(1)}) before considering any trade.`;
+    } else {
+      singleTradeDirective = `EXECUTION WINDOW ACTIVE — ${targetShortDay} 9:30 AM OPEN. Chop pinch between PDC and VWAP. Do NOT burn today's 1 trade inside the noise. Require a clean 15-pt directional expansion before entering.`;
+    }
+  } else if (cmePhase === "POST_WINDOW_RECAP") {
+    singleTradeDirective = `${targetShortDay} 9:30 AM WINDOW COMPLETE — STAY FLAT / LOG TRADE. Today's execution window is closed. Do not take afternoon continuation trades. Review today's trade in the Empirical Journal (/journal) and prepare for tomorrow's session at the 6:00 PM ET Globex open.`;
   } else {
-    singleTradeDirective = `TODAY'S #1 RULE: Chop pinch between PDC and VWAP. Do NOT burn today's 1 trade inside the noise. Require a clean 15-pt directional expansion before entering.`;
+    singleTradeDirective = `MARKET CLOSED — PREPARING FOR ${targetFullDate} 9:30 AM OPEN. CME maintenance break / weekend closure in effect. Prepare for the 18:00 ET Globex open.`;
   }
 
   // 10. Timeline Guide
@@ -488,6 +584,8 @@ export function generateTacticalPlaybook(
     newsBufferWarning,
     qqqLiveProxy: options?.qqqProxyQuote,
     timelineGuide,
-    vwapPlaybook
+    vwapPlaybook,
+    sessionInfo,
+    cmePhase
   };
 }

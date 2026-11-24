@@ -1,6 +1,15 @@
+import type { CMESessionInfo, CMESessionPhase } from "@/lib/market/sessionClock";
+
 export type DataStatus = "LIVE" | "DELAYED" | "DERIVED" | "MANUAL INPUT" | "SAMPLE";
 
-export type SessionPhase = "PRE_MARKET_BRIEF" | "NY_OPEN_WINDOW_930_1000" | "POST_WINDOW";
+export type SessionPhase =
+  | "PRE_MARKET_BRIEF"
+  | "DEVELOPING_OVERNIGHT"
+  | "PRE_MARKET_LOCK"
+  | "NY_OPEN_WINDOW_930_1000"
+  | "POST_WINDOW"
+  | "POST_WINDOW_RECAP"
+  | "CME_BREAK_OR_WEEKEND";
 
 export type ExecutionWindowSubPhase =
   | "PRE_BELL"
@@ -8,6 +17,63 @@ export type ExecutionWindowSubPhase =
   | "PRIME_RETRACE_WINDOW"
   | "LATE_WINDOW_DECAY_CAUTION"
   | "WINDOW_CLOSED";
+
+export interface GammaStrike {
+  strike: number;
+  strikeNq: number;
+  callGex: number;
+  putGex: number;
+  netGex: number;
+  isCallWall?: boolean;
+  isPutWall?: boolean;
+  isGammaFlip?: boolean;
+}
+
+export interface GEXExposureData {
+  netGammaRegime: "POSITIVE_GAMMA" | "NEGATIVE_GAMMA";
+  totalNetGex: number; // in $
+  totalCallGex: number;
+  totalPutGex: number;
+  zeroDteNetGex: number;
+  gammaFlipNq: number;
+  callWallNq: number;
+  putWallNq: number;
+  topGammaStrikes: GammaStrike[];
+  underlyingPrice: number; // QQQ or NDX spot
+  nqSpotPrice: number;
+  basisRatio: number;
+  source: "CBOE_NDX_DELAYED" | "CBOE_QQQ_DELAYED" | "YF_QQQ_MODEL_BS" | "SAMPLE_FALLBACK";
+  disclaimer: "DELAYED OI-BASED GEX ESTIMATE (NOT LIVE DEALER INVENTORY)";
+  lastUpdated: string;
+}
+
+export type FootprintSignalType = "ABS_BUY" | "ABS_SELL" | "IMP_BUY" | "IMP_SELL" | "CVD_DIV_BULL" | "CVD_DIV_BEAR";
+
+export interface CandleFootprintData {
+  timeSec: number;
+  candleNetDelta: number;
+  totalVolume: number;
+  deltaRatio: number;
+  cvd: number;
+  candlePocPrice: number;
+  signal?: FootprintSignalType;
+  signalLabel?: string;
+  signalColor?: string;
+}
+
+export interface FootprintSummary {
+  bars: CandleFootprintData[];
+  sessionCvd: number;
+  rthCvd: number;
+  disclaimer: "Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)";
+  lastUpdated: string;
+}
+
+export interface SMTSwingPoint {
+  timeSec: number; // Unix seconds
+  price: number;
+  label: string; // e.g. "LL", "HL", "HH", "LH"
+}
 
 export interface SMTDivergence {
   hasDivergence: boolean;
@@ -17,11 +83,23 @@ export interface SMTDivergence {
     | "BULLISH_SMT (ES SWEPT LOW, NQ HELD)"
     | "BEARISH_SMT (ES SWEPT HIGH, NQ HELD)"
     | "NONE (SYNCED)";
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  leadingAsset: "ES" | "NQ" | "NEUTRAL";
+  sweptAsset: "NQ" | "ES" | "NONE";
+  nqPrice: number;
+  esPrice: number;
   nqHigh: number;
   nqLow: number;
   esHigh: number;
   esLow: number;
+  nqMadeNewHigh?: boolean;
+  nqMadeNewLow?: boolean;
+  esMadeNewHigh?: boolean;
+  esMadeNewLow?: boolean;
+  nqSwingPoints?: [SMTSwingPoint, SMTSwingPoint]; // Point 1 and Point 2 connecting the dotted line
   notes: string;
+  institutionalMechanism: string;
+  mssTriggerInstruction: string;
 }
 
 export interface VolatilitySurface {
@@ -144,6 +222,9 @@ export interface SessionMetrics {
     | "INSIDE_LOWER_GLOBEX"
     | "BELOW_ONL";
   smtDivergence?: SMTDivergence;
+  targetTradeDate?: string;
+  priorTradeDate?: string;
+  globexStatus?: "INITIALIZING" | "ACTIVE" | "FINALIZED";
 }
 
 export type BiasVerdict =
@@ -170,6 +251,7 @@ export interface BiasRegime {
   risks: string[];
   volatilitySurface?: VolatilitySurface;
   macroRegime?: MacroRegimeState;
+  gex?: GEXExposureData;
   idealRetraceZone: {
     startPrice: number;
     endPrice: number;
@@ -215,12 +297,17 @@ export interface Trader5Answers {
   biasDirection: "BULLISH CONTINUATION" | "BEARISH CONTINUATION" | "CHOP / NEUTRAL";
   biasConfidence: "HIGH" | "MODERATE" | "LOW";
   biasReason: string;
-  stopHuntProbability: "HIGH (EXPECT OPENING SWEEP)" | "MODERATE" | "LOW (DIRECT DRIVE)";
+  stopHuntProbability: "HIGH (EXPECT OPENING SWEEP)" | "MODERATE" | "LOW (DIRECT DRIVE)" | string;
   stopHuntDetails: {
-    sideBeingHunted: "BUY-SIDE (ABOVE ONH)" | "SELL-SIDE (BELOW ONL/LONDON LOW)" | "BOTH (TWO-WAY WHIP)";
+    sideBeingHunted: "BUY-SIDE (ABOVE ONH)" | "SELL-SIDE (BELOW ONL/LONDON LOW)" | "BOTH (TWO-WAY WHIP)" | string;
     sweepLevelPrice: number;
     sweepLevelName: string;
     actionableAdvice: string;
+    targetPoolType?: "BUY-SIDE LIQUIDITY (BSL)" | "SELL-SIDE LIQUIDITY (SSL)" | "RANGE COMPRESSION (TWO-WAY)";
+    institutionalMechanism?: string;
+    theTrap?: string;
+    theShiftMSS?: string;
+    traderDirective?: string;
   };
   retraceLevels: Array<{
     name: string;
@@ -267,6 +354,8 @@ export interface TacticalExecutionPlan {
     tradeVerdict: string;
     actionIfTested: string;
   };
+  sessionInfo?: CMESessionInfo;
+  cmePhase?: CMESessionPhase;
 }
 
 export interface MacroIndicator {
@@ -300,6 +389,9 @@ export interface EconomicEvent {
 
 export interface OpenBriefData {
   tradeDate: string; // YYYY-MM-DD
+  targetTradeDate?: string;
+  priorTradeDate?: string;
+  sessionInfo?: CMESessionInfo;
   generatedAt: string;
   instrument: "NQ" | "MNQ";
   underlyingAsset: string;
@@ -335,4 +427,7 @@ export interface OpenBriefData {
     cacheExpiresAt: string;
     notice: string;
   };
+  intradayBars?: OHLCVBar[];
+  gex?: GEXExposureData;
+  footprint?: FootprintSummary;
 }

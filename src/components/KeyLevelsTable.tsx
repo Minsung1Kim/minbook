@@ -1,204 +1,289 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  Layers,
-  Copy,
-  Check,
-  Share2
-} from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { Copy, Check, ArrowUpDown, Target, Zap, Crosshair } from "lucide-react";
 import { KeyLevel, LevelRole } from "@/types/market";
 
 interface KeyLevelsTableProps {
   levels: KeyLevel[];
   currentPrice: number;
+  focusedLevelId?: string | null;
+  onSelectLevel?: (level: KeyLevel) => void;
 }
 
-export function KeyLevelsTable({ levels, currentPrice }: KeyLevelsTableProps) {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
+interface RankedLevel extends KeyLevel {
+  distance: number;
+  proximityScore: number;
+  structuralWeight: number;
+  hitProbability: number;
+  hitStatus: "TAP IMMINENT" | "HIGH HIT PROB" | "MODERATE HIT PROB" | "EXPANSION MAGNET" | "OUTER BOUNDARY";
+  statusColor: string;
+  traderDirective: string;
+}
 
-  const handleCopyLevel = (lvl: KeyLevel) => {
+function computeLevelVitality(level: KeyLevel, currentPrice: number): RankedLevel {
+  const distance = Math.abs(level.price - currentPrice);
+
+  // 1. Institutional Structural Weight (Hierarchy of Importance)
+  let structuralWeight = 40;
+  const id = level.id.toLowerCase();
+  const short = level.shortName.toLowerCase();
+
+  if (short.includes("vwap") || id.includes("vwap")) {
+    structuralWeight = 100; // #1 Institutional execution benchmark
+  } else if (short === "onh" || short === "onl" || id.includes("onh") || id.includes("onl")) {
+    structuralWeight = 95; // Primary overnight liquidity pools
+  } else if (short === "pdc" || id.includes("pdc")) {
+    structuralWeight = 90; // Prior day inventory line-in-the-sand
+  } else if (short === "on mid" || id.includes("on-mid")) {
+    structuralWeight = 85; // 50% overnight equilibrium retrace
+  } else if (short.includes("htf 50") || short.includes("htf 61.8")) {
+    structuralWeight = 78; // Higher timeframe structural Fibonacci
+  } else if (short.includes("lon high") || short.includes("lon low")) {
+    structuralWeight = 72; // European session liquidity pivots
+  } else if (short === "pdh" || short === "pdl") {
+    structuralWeight = 68; // Daily extreme expansion targets
+  } else if (level.role === "EXPECTED MOVE") {
+    structuralWeight = 30; // Outer daily implied volatility bands
+  }
+
+  // 2. Mathematical Proximity Score (0 to 100)
+  // Closer levels have exponentially higher likelihood of being touched in 09:30-10:00
+  const proximityScore = Math.max(5, Math.min(100, Math.round(100 - (distance / 160) * 100)));
+
+  // 3. Composite Hit Probability % (calibrated 10% to 96%)
+  // Heavy weighting on proximity (65%) + structural gravity (35%)
+  const compositeScore = Math.round(proximityScore * 0.65 + structuralWeight * 0.35);
+  const hitProbability = Math.max(10, Math.min(96, compositeScore));
+
+  // 4. Hit Status Tag
+  let hitStatus: "TAP IMMINENT" | "HIGH HIT PROB" | "MODERATE HIT PROB" | "EXPANSION MAGNET" | "OUTER BOUNDARY";
+  let statusColor = "text-zinc-400 bg-zinc-800/80 border-zinc-700/80";
+
+  if (distance <= 8) {
+    hitStatus = "TAP IMMINENT";
+    statusColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+  } else if (hitProbability >= 72) {
+    hitStatus = "HIGH HIT PROB";
+    statusColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+  } else if (hitProbability >= 48) {
+    hitStatus = "MODERATE HIT PROB";
+    statusColor = "text-sky-400 bg-sky-500/10 border-sky-500/20";
+  } else if (hitProbability >= 30) {
+    hitStatus = "EXPANSION MAGNET";
+    statusColor = "text-zinc-300 bg-zinc-800/80 border-zinc-700/80";
+  } else {
+    hitStatus = "OUTER BOUNDARY";
+    statusColor = "text-zinc-500 bg-zinc-900 border-zinc-800";
+  }
+
+  // 5. Plain English Day Trader Directive
+  let traderDirective = "";
+  if (short.includes("vwap")) {
+    traderDirective = "Primary institutional fair value benchmark. Look for 9:34 AM retrace bounce or clean displacement.";
+  } else if (short === "onh") {
+    traderDirective = "Buy-Side Liquidity pool (BSL). Watch for stop sweep fakeout or breakout continuation.";
+  } else if (short === "onl") {
+    traderDirective = "Sell-Side Liquidity pool (SSL). Watch for stop sweep spring or breakdown expansion.";
+  } else if (short === "pdc") {
+    traderDirective = "Prior Day Settlement Close. Buyers holding above = net long inventory in control.";
+  } else if (short === "on mid") {
+    traderDirective = "Overnight 50% Midpoint. Prime discount entry zone for continuation long setups.";
+  } else if (short.includes("htf 50")) {
+    traderDirective = "5-day 50% Midpoint. Major multi-day pivot for trend continuation.";
+  } else if (short.includes("htf 61.8")) {
+    traderDirective = "Golden Pocket discount. Deepest viable retrace before trend structure breaks.";
+  } else if (short === "pdh") {
+    traderDirective = "Prior Day High. Secondary expansion target for bullish trend day runners.";
+  } else if (short === "pdl") {
+    traderDirective = "Prior Day Low. Secondary expansion target for bearish trend day runners.";
+  } else if (short.includes("lon high")) {
+    traderDirective = "European session peak. Acts as opening pre-market resistance or breakout flip.";
+  } else if (short.includes("lon low")) {
+    traderDirective = "European session floor. Acts as opening pre-market support or liquidity trap.";
+  } else if (level.role === "EXPECTED MOVE") {
+    traderDirective = "Daily implied volatility boundary. High probability of mean-reversion if touched.";
+  } else {
+    traderDirective = level.note;
+  }
+
+  return {
+    ...level,
+    distance,
+    proximityScore,
+    structuralWeight,
+    hitProbability,
+    hitStatus,
+    statusColor,
+    traderDirective
+  };
+}
+
+export function KeyLevelsTable({
+  levels,
+  currentPrice,
+  focusedLevelId,
+  onSelectLevel,
+}: KeyLevelsTableProps) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<"VITALITY" | "LADDER">("VITALITY");
+
+  // Rank and sort levels
+  const rankedLevels = useMemo(() => {
+    const list = levels.map((lvl) => computeLevelVitality(lvl, currentPrice));
+
+    if (sortMode === "VITALITY") {
+      // Sort primarily by hit probability descending, secondary by proximity
+      return list.sort((a, b) => {
+        if (b.hitProbability !== a.hitProbability) {
+          return b.hitProbability - a.hitProbability;
+        }
+        return a.distance - b.distance;
+      });
+    }
+
+    // Default ladder view: Price descending (High to Low)
+    return list.sort((a, b) => b.price - a.price);
+  }, [levels, currentPrice, sortMode]);
+
+  const handleCopyLevel = (e: React.MouseEvent, lvl: KeyLevel) => {
+    e.stopPropagation();
     navigator.clipboard.writeText(`${lvl.price.toFixed(2)}`);
     setCopiedId(lvl.id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleExportAll = (format: "tradingview" | "ninjatrader" | "text") => {
-    let text = "";
-    if (format === "tradingview") {
-      text = levels.map((l) => `${l.shortName}: ${l.price.toFixed(2)}`).join("\n");
-    } else if (format === "ninjatrader") {
-      text = levels.map((l) => `${l.price.toFixed(2)},${l.shortName}`).join("\n");
-    } else {
-      text = `OpenPulse NQ Key Levels (Current Price: ${currentPrice.toFixed(2)}):\n` +
-        levels.map((l) => `• ${l.shortName.padEnd(12)} ${l.price.toFixed(2).padStart(9)} (${l.distancePoints >= 0 ? "+" : ""}${l.distancePoints.toFixed(1)} pts) - [${l.role}]`).join("\n");
-    }
-
-    navigator.clipboard.writeText(text);
-    setExportNotice(`Copied all levels (${format})!`);
-    setTimeout(() => setExportNotice(null), 2500);
-  };
-
-  const getRoleBadge = (role: LevelRole) => {
-    switch (role) {
-      case "LIQUIDITY POOL":
-        return "border-slate-700 text-rose-300 bg-slate-900";
-      case "RETRACE ZONE":
-        return "border-slate-700 text-cyan-300 bg-slate-900";
-      case "EQUILIBRIUM":
-        return "border-slate-700 text-amber-300 bg-slate-900";
-      case "MAGNET":
-        return "border-slate-700 text-slate-300 bg-slate-900";
-      case "INVALIDATION":
-        return "border-rose-800 text-rose-400 bg-rose-950/20";
-      case "EXPECTED MOVE":
-        return "border-purple-800 text-purple-300 bg-purple-950/20";
-      default:
-        return "border-slate-700 text-slate-300 bg-slate-900";
-    }
+    setTimeout(() => setCopiedId(null), 1500);
   };
 
   return (
-    <div className="rounded-lg bg-[#0f1624] border border-slate-800 overflow-hidden">
-      {/* Header Bar */}
-      <div className="px-5 py-3.5 border-b border-slate-800 bg-slate-900/50 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-2.5">
-          <Layers className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold tracking-tight text-white">
-            Reference Levels
-          </h2>
-          <span className="text-xs text-slate-500">
-            ({levels.length} levels keyed to session)
+    <div className="rounded-lg bg-zinc-900/70 border border-zinc-800/80 overflow-hidden font-sans">
+      {/* Table Header & View Switcher */}
+      <div className="px-3.5 py-2.5 border-b border-zinc-800/80 bg-zinc-950/60 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+        <div className="flex items-center space-x-2">
+          <span className="font-semibold text-zinc-300 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
+            <Target className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Key Reference Levels</span>
+          </span>
+          <span className="text-[11px] text-zinc-500 tabular-nums">
+            NQ: {currentPrice.toFixed(2)}
           </span>
         </div>
 
-        {/* Copy / Export Buttons */}
-        <div className="flex items-center space-x-2 text-xs">
-          {exportNotice && (
-            <span className="text-emerald-400 text-xs font-medium">
-              {exportNotice}
-            </span>
-          )}
-
+        {/* Sort Mode Segmented Switcher */}
+        <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-[11px]">
           <button
-            onClick={() => handleExportAll("tradingview")}
-            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center space-x-1"
-            title="Copy as TradingView levels list"
+            onClick={() => setSortMode("VITALITY")}
+            className={`px-2 py-0.5 rounded transition-colors flex items-center space-x-1 ${
+              sortMode === "VITALITY"
+                ? "bg-zinc-800 text-zinc-100 font-semibold shadow-sm"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+            title="Sort by most vital and most likely to get hit today"
           >
-            <Copy className="w-3 h-3 text-cyan-400" />
-            <span>TradingView</span>
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span>Most Vital (Hit Likelihood)</span>
           </button>
-
           <button
-            onClick={() => handleExportAll("ninjatrader")}
-            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center space-x-1"
-            title="Copy as NinjaTrader price levels"
+            onClick={() => setSortMode("LADDER")}
+            className={`px-2 py-0.5 rounded transition-colors flex items-center space-x-1 ${
+              sortMode === "LADDER"
+                ? "bg-zinc-800 text-zinc-100 font-semibold shadow-sm"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+            title="Sort by price descending (High to Low ladder)"
           >
-            <Copy className="w-3 h-3 text-emerald-400" />
-            <span>NT8</span>
-          </button>
-
-          <button
-            onClick={() => handleExportAll("text")}
-            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors flex items-center space-x-1"
-            title="Copy formatted text memo"
-          >
-            <Share2 className="w-3 h-3 text-slate-400" />
-            <span>Text</span>
+            <ArrowUpDown className="w-3 h-3" />
+            <span>Price Ladder</span>
           </button>
         </div>
       </div>
 
-      {/* Levels Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-slate-900/80 text-slate-400 border-b border-slate-800 font-medium">
+      {/* Monospace Tight Table */}
+      <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
+        <table className="w-full text-left text-xs font-mono">
+          <thead className="bg-zinc-950/80 text-zinc-400 text-[11px] uppercase tracking-wider border-b border-zinc-800/80 sticky top-0 z-10">
             <tr>
-              <th className="py-2.5 px-4">Level</th>
-              <th className="py-2.5 px-3">Role</th>
-              <th className="py-2.5 px-4 text-right">Price</th>
-              <th className="py-2.5 px-4 text-right">Distance (pts)</th>
-              <th className="py-2.5 px-4 text-right">Distance (%)</th>
-              <th className="py-2.5 px-4 hidden md:table-cell">Context</th>
-              <th className="py-2.5 px-3 text-center w-12">Copy</th>
+              <th className="py-2 px-3 w-10 text-center">#</th>
+              <th className="py-2 px-3">Level & Meaning</th>
+              <th className="py-2 px-2.5 text-right w-28">Price</th>
+              <th className="py-2 px-2.5 text-right w-24">Dist</th>
+              <th className="py-2 px-2.5 w-36 text-center">Hit Likelihood</th>
+              <th className="py-2 px-2 text-center w-8"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60 font-sans">
-            {levels.map((lvl) => {
-              const isAbove = lvl.distancePoints >= 0;
-              const isVeryClose = Math.abs(lvl.distancePoints) <= 12;
+          <tbody className="divide-y divide-zinc-800/60 tabular-nums">
+            {rankedLevels.map((lvl, idx) => {
+              const dist = lvl.price - currentPrice;
+              const isAbove = dist >= 0;
+              const isFocused = focusedLevelId === lvl.id;
               const isCopied = copiedId === lvl.id;
+              const isImminent = Math.abs(dist) <= 8;
 
               return (
                 <tr
                   key={lvl.id}
-                  className={`hover:bg-slate-800/30 transition-colors ${
-                    isVeryClose ? "bg-cyan-950/20 font-medium" : ""
+                  onClick={() => onSelectLevel?.(lvl)}
+                  className={`hover:bg-zinc-800/50 transition-colors cursor-pointer group ${
+                    isFocused
+                      ? "bg-zinc-800 text-zinc-100 font-semibold"
+                      : isImminent
+                      ? "bg-amber-500/5"
+                      : ""
                   }`}
+                  title="Click to highlight level on chart canvas"
                 >
-                  {/* Name */}
-                  <td className="py-2.5 px-4">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-slate-100 font-mono">
-                        {lvl.shortName}
-                      </span>
-                      <span className="text-[11px] text-slate-400 hidden sm:inline">
-                        {lvl.name}
-                      </span>
+                  {/* Rank */}
+                  <td className="py-2.5 px-3 text-center text-zinc-500 text-[11px] font-mono">
+                    {sortMode === "VITALITY" ? `${idx + 1}` : "—"}
+                  </td>
+
+                  {/* Level Name & Plain English Directive */}
+                  <td className="py-2.5 px-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-bold text-zinc-100 text-xs">
+                          {lvl.shortName}
+                        </span>
+                        <span className="text-[11px] text-zinc-500 font-sans">
+                          • {lvl.role}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 font-sans leading-tight line-clamp-1 group-hover:line-clamp-none transition-all">
+                        {lvl.traderDirective}
+                      </p>
                     </div>
                   </td>
 
-                  {/* Role Badge */}
-                  <td className="py-2.5 px-3">
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${getRoleBadge(
-                        lvl.role
-                      )}`}
-                    >
-                      {lvl.role}
-                    </span>
-                  </td>
-
                   {/* Price */}
-                  <td className="py-2.5 px-4 text-right font-mono tabular-nums font-semibold text-slate-100">
+                  <td className="py-2.5 px-2.5 text-right text-zinc-100 font-semibold text-xs whitespace-nowrap">
                     {lvl.price.toFixed(2)}
                   </td>
 
-                  {/* Distance in Points */}
-                  <td className="py-2.5 px-4 text-right font-mono tabular-nums">
-                    <span
-                      className={`font-semibold ${
-                        isAbove ? "text-emerald-400" : "text-rose-400"
-                      }`}
-                    >
-                      {isAbove ? "+" : ""}
-                      {lvl.distancePoints.toFixed(1)}
-                    </span>
-                    {isVeryClose && (
-                      <span className="ml-1 text-[9px] px-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/80 font-sans">
-                        NEAR
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Distance % */}
-                  <td className="py-2.5 px-4 text-right text-slate-400 font-mono tabular-nums">
+                  {/* Distance */}
+                  <td
+                    className={`py-2.5 px-2.5 text-right font-medium text-xs whitespace-nowrap ${
+                      isAbove ? "text-emerald-400" : "text-rose-400"
+                    }`}
+                  >
                     {isAbove ? "+" : ""}
-                    {lvl.distancePercent.toFixed(2)}%
+                    {dist.toFixed(1)} pts
                   </td>
 
-                  {/* Note */}
-                  <td className="py-2.5 px-4 text-slate-400 hidden md:table-cell text-xs max-w-xs truncate" title={lvl.note}>
-                    {lvl.note}
+                  {/* Hit Likelihood Badge */}
+                  <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${lvl.statusColor}`}
+                    >
+                      {lvl.hitStatus === "TAP IMMINENT"
+                        ? "TAP IMMINENT"
+                        : `${lvl.hitProbability}% · ${lvl.hitStatus.split(" ")[0]}`}
+                    </span>
                   </td>
 
                   {/* Copy Button */}
-                  <td className="py-2.5 px-3 text-center">
+                  <td className="py-2.5 px-2 text-center">
                     <button
-                      onClick={() => handleCopyLevel(lvl)}
-                      className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
-                      title="Copy price"
+                      onClick={(e) => handleCopyLevel(e, lvl)}
+                      className="p-1 rounded text-zinc-500 hover:text-zinc-200 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      title="Copy exact price"
                     >
                       {isCopied ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -213,25 +298,8 @@ export function KeyLevelsTable({ levels, currentPrice }: KeyLevelsTableProps) {
           </tbody>
         </table>
       </div>
-
-      {/* Footer Legend */}
-      <div className="px-5 py-2.5 bg-slate-900/40 border-t border-slate-800 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center space-x-4">
-          <span className="flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>Above current price</span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
-            <span>Below current price</span>
-          </span>
-          <span className="flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            <span>Near: Within 12 pts</span>
-          </span>
-        </div>
-        <span className="text-slate-500">Sorted high to low</span>
-      </div>
     </div>
   );
 }
+
+export default KeyLevelsTable;

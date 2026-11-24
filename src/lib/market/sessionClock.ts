@@ -1,0 +1,374 @@
+import { SupportedTimezone, getTimezoneConfig } from "./timezone";
+
+/**
+ * CME Futures Centralized Session Clock & Rollover Utility
+ * Strictly configured for America/New_York (ET) and CME equity index futures (NQ / MNQ / ES).
+ * Supports viewing in US East (ET), US Central (CT), and US West (PT).
+ *
+ * CME Rollover Rules:
+ * - Mon–Thu 00:00–16:59 ET: targetTradeDate = today (skips holidays)
+ * - Mon–Thu 17:00–23:59 ET: targetTradeDate = next trading day (skips holidays)
+ * - Fri 00:00–16:59 ET: targetTradeDate = today (Friday)
+ * - Fri 17:00 ET through Sun 23:59 ET: targetTradeDate = upcoming Monday (skips holidays)
+ */
+
+export type CMESessionPhase =
+  | "CME_BREAK_OR_WEEKEND"
+  | "DEVELOPING_OVERNIGHT"
+  | "PRE_MARKET_LOCK"
+  | "NY_OPEN_WINDOW"
+  | "POST_WINDOW_RECAP";
+
+export type CMESubPhase = "ASIA" | "LONDON";
+
+export interface CMESessionInfo {
+  nowET: Date;
+  currentETDateStr: string; // YYYY-MM-DD
+  currentETTimeStr: string; // HH:MM:SS
+  dayOfWeekET: "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+  targetTradeDate: string; // YYYY-MM-DD
+  priorTradeDate: string; // YYYY-MM-DD
+  targetTradeDateFormatted: string; // e.g. "TARGET: TUE NOV 24 • 9:30 AM ET OPEN"
+  priorTradeDateFormatted: string; // e.g. "Mon, Nov 23"
+  phase: CMESessionPhase;
+  subPhase?: CMESubPhase;
+  statusBadge: "DEVELOPING" | "FINALIZED" | "ACTIVE" | "RECAP" | "MAINTENANCE" | "WEEKEND";
+  phaseTitle: string;
+  nextMilestoneLabel: string;
+  secondsToTargetOpen: number; // Seconds until 09:30:00 ET of targetTradeDate
+  secondsToNextMilestone: number;
+  countdownHuman: string;
+  isWindowActive: boolean;
+  isDeveloping: boolean;
+}
+
+// Full-closure US / CME Equity Futures Holidays (2024–2028)
+const CME_FULL_HOLIDAYS = new Set([
+  // 2024
+  "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-11-28", "2024-12-25",
+  // 2025
+  "2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25",
+  // 2026
+  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+  // 2027
+  "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+  // 2028
+  "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19", "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25"
+]);
+
+export function isCMEHoliday(dateStr: string): boolean {
+  return CME_FULL_HOLIDAYS.has(dateStr);
+}
+
+export function shiftCalendarDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
+  const year = dt.getUTCFullYear();
+  const month = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(dt.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function isTradingDay(dateStr: string): boolean {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const dayOfWeek = dt.getUTCDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Sun, Sat
+  return !isCMEHoliday(dateStr);
+}
+
+export function getNextTradingDay(dateStr: string): string {
+  let cur = dateStr;
+  while (true) {
+    cur = shiftCalendarDays(cur, 1);
+    if (isTradingDay(cur)) return cur;
+  }
+}
+
+export function getPriorTradingDay(dateStr: string): string {
+  let cur = dateStr;
+  while (true) {
+    cur = shiftCalendarDays(cur, -1);
+    if (isTradingDay(cur)) return cur;
+  }
+}
+
+export interface ETParts {
+  year: number;
+  month: number;
+  day: number;
+  weekday: "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+  hour: number;
+  minute: number;
+  second: number;
+  dateStr: string;
+  timeStr: string;
+}
+
+export function getETParts(d: Date = new Date()): ETParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(d);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const weekday = get("weekday") as "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+
+  return {
+    year: parseInt(get("year"), 10),
+    month: parseInt(get("month"), 10),
+    day: parseInt(get("day"), 10),
+    weekday,
+    hour: parseInt(get("hour"), 10),
+    minute: parseInt(get("minute"), 10),
+    second: parseInt(get("second"), 10),
+    dateStr: `${get("year")}-${get("month")}-${get("day")}`,
+    timeStr: `${get("hour")}:${get("minute")}:${get("second")}`
+  };
+}
+
+/**
+ * Given a calendar date YYYY-MM-DD and ET hour/min/sec, computes the exact UTC epoch ms.
+ * DST-safe for America/New_York.
+ */
+export function getETEpochMs(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  min: number,
+  sec: number = 0
+): number {
+  const guess = Date.UTC(year, month - 1, day, hour, min, sec);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hourCycle: "h23"
+  }).formatToParts(new Date(guess));
+
+  const getVal = (type: string) => parseInt(parts.find((p) => p.type === type)?.value || "0", 10);
+  const asET = Date.UTC(
+    getVal("year"),
+    getVal("month") - 1,
+    getVal("day"),
+    getVal("hour"),
+    getVal("minute"),
+    getVal("second")
+  );
+  const offset = asET - guess;
+  return guess - offset;
+}
+
+export function parseDateStrToETEpochMs(dateStr: string, hour: number, min: number, sec: number = 0): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return getETEpochMs(y, m, d, hour, min, sec);
+}
+
+/**
+ * Format date string into human-friendly representation
+ * e.g. "2026-11-24" -> "TUE NOV 24"
+ */
+export function formatTradeDateShort(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const weekday = dt.toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short" }).toUpperCase();
+  const month = dt.toLocaleDateString("en-US", { timeZone: "UTC", month: "short" }).toUpperCase();
+  return `${weekday} ${month} ${d}`;
+}
+
+/**
+ * Format date string into "Tue, Nov 24"
+ */
+export function formatTradeDateReadable(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const weekday = dt.toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short" });
+  const month = dt.toLocaleDateString("en-US", { timeZone: "UTC", month: "short" });
+  return `${weekday}, ${month} ${d}`;
+}
+
+export function formatSecondsToCountdown(seconds: number): string {
+  if (seconds <= 0) return "0s";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${h}h ${m}m`;
+  }
+  if (m > 0) {
+    return `${m}m ${s}s`;
+  }
+  return `${s}s`;
+}
+
+/**
+ * Central pure CME Session Clock evaluator.
+ */
+export function getCMESessionInfo(
+  inputDate: Date = new Date(),
+  timezone: SupportedTimezone = "America/New_York"
+): CMESessionInfo {
+  const nowMs = inputDate.getTime();
+  const et = getETParts(inputDate);
+  const totalMins = et.hour * 60 + et.minute;
+  const tzConfig = getTimezoneConfig(timezone);
+
+  // 1. Determine Target Trade Date
+  let targetTradeDate = et.dateStr;
+  if (et.weekday === "Fri") {
+    if (totalMins >= 17 * 60) {
+      targetTradeDate = getNextTradingDay(et.dateStr);
+    } else {
+      targetTradeDate = isTradingDay(et.dateStr) ? et.dateStr : getNextTradingDay(et.dateStr);
+    }
+  } else if (et.weekday === "Sat" || et.weekday === "Sun") {
+    targetTradeDate = getNextTradingDay(et.dateStr);
+  } else {
+    // Mon - Thu
+    if (totalMins >= 17 * 60) {
+      targetTradeDate = getNextTradingDay(et.dateStr);
+    } else {
+      targetTradeDate = isTradingDay(et.dateStr) ? et.dateStr : getNextTradingDay(et.dateStr);
+    }
+  }
+
+  // 2. Determine Prior Trade Date
+  const priorTradeDate = getPriorTradingDay(targetTradeDate);
+
+  // 3. Evaluate Session Phase & Sub-phase
+  let phase: CMESessionPhase = "DEVELOPING_OVERNIGHT";
+  let subPhase: CMESubPhase | undefined;
+  let statusBadge: CMESessionInfo["statusBadge"] = "DEVELOPING";
+  let phaseTitle = "";
+  let nextMilestoneLabel = "";
+  let secondsToNextMilestone = 0;
+
+  const isWeekendClosed =
+    (et.weekday === "Fri" && totalMins >= 17 * 60) ||
+    et.weekday === "Sat" ||
+    (et.weekday === "Sun" && totalMins < 18 * 60);
+
+  const isDailyBreak =
+    (et.weekday === "Mon" || et.weekday === "Tue" || et.weekday === "Wed" || et.weekday === "Thu") &&
+    totalMins >= 17 * 60 &&
+    totalMins < 18 * 60;
+
+  const targetOpenMs = parseDateStrToETEpochMs(targetTradeDate, 9, 30, 0);
+  const targetWindowCloseMs = parseDateStrToETEpochMs(targetTradeDate, 10, 0, 0);
+  const secondsToTargetOpen = Math.max(0, Math.floor((targetOpenMs - nowMs) / 1000));
+
+  const targetShort = formatTradeDateShort(targetTradeDate);
+  const targetReadable = formatTradeDateReadable(targetTradeDate);
+  const targetTradeDateFormatted = `TARGET: ${targetShort} • ${tzConfig.openTimeStr} ${tzConfig.code} OPEN`;
+  const priorTradeDateFormatted = formatTradeDateReadable(priorTradeDate);
+
+  if (isWeekendClosed || isDailyBreak) {
+    phase = "CME_BREAK_OR_WEEKEND";
+    statusBadge = isWeekendClosed ? "WEEKEND" : "MAINTENANCE";
+    phaseTitle = `MARKET CLOSED — PREPARING FOR ${targetReadable} ${tzConfig.openTimeStr} ${tzConfig.code} OPEN`;
+
+    // Next milestone is Globex Open
+    let nextGlobexOpenMs: number;
+    if (isDailyBreak) {
+      nextGlobexOpenMs = parseDateStrToETEpochMs(et.dateStr, 18, 0, 0);
+      nextMilestoneLabel = `${tzConfig.globexOpenStr} Globex Open`;
+    } else {
+      // Find Sunday 18:00 ET
+      let cur = et.dateStr;
+      while (getETParts(new Date(parseDateStrToETEpochMs(cur, 12, 0, 0))).weekday !== "Sun") {
+        cur = shiftCalendarDays(cur, 1);
+      }
+      nextGlobexOpenMs = parseDateStrToETEpochMs(cur, 18, 0, 0);
+      nextMilestoneLabel = `Sun ${tzConfig.globexOpenStr} Globex Open`;
+    }
+    secondsToNextMilestone = Math.max(0, Math.floor((nextGlobexOpenMs - nowMs) / 1000));
+  } else if (
+    (et.weekday === "Sun" && totalMins >= 18 * 60) ||
+    ((et.weekday === "Mon" || et.weekday === "Tue" || et.weekday === "Wed" || et.weekday === "Thu") &&
+      (totalMins >= 18 * 60 || totalMins < 8 * 60 + 30)) ||
+    (et.weekday === "Fri" && totalMins < 8 * 60 + 30)
+  ) {
+    phase = "DEVELOPING_OVERNIGHT";
+    statusBadge = "DEVELOPING";
+    subPhase = totalMins >= 18 * 60 || totalMins < 3 * 60 ? "ASIA" : "LONDON";
+    phaseTitle = `DEVELOPING — PREP FOR ${targetReadable} ${tzConfig.openTimeStr} ${tzConfig.code} OPEN`;
+    nextMilestoneLabel = `${tzConfig.openTimeStr} ${tzConfig.code} Open`;
+    secondsToNextMilestone = secondsToTargetOpen;
+  } else if (
+    (et.weekday === "Mon" || et.weekday === "Tue" || et.weekday === "Wed" || et.weekday === "Thu" || et.weekday === "Fri") &&
+    totalMins >= 8 * 60 + 30 &&
+    totalMins < 9 * 60 + 30
+  ) {
+    phase = "PRE_MARKET_LOCK";
+    statusBadge = "FINALIZED";
+    phaseTitle = `FINAL PRE-MARKET BRIEF — ${targetShort.split(" ")[0]} ${tzConfig.openTimeStr} ${tzConfig.code} OPEN`;
+    nextMilestoneLabel = `${tzConfig.openTimeStr} ${tzConfig.code} Open Bell`;
+    secondsToNextMilestone = secondsToTargetOpen;
+  } else if (
+    (et.weekday === "Mon" || et.weekday === "Tue" || et.weekday === "Wed" || et.weekday === "Thu" || et.weekday === "Fri") &&
+    totalMins >= 9 * 60 + 30 &&
+    totalMins < 10 * 60
+  ) {
+    phase = "NY_OPEN_WINDOW";
+    statusBadge = "ACTIVE";
+    phaseTitle = `NY OPEN WINDOW ACTIVE — ${targetShort.split(" ")[0]} ${tzConfig.openTimeStr} ${tzConfig.code} OPEN`;
+    nextMilestoneLabel = `${tzConfig.windowCloseStr} ${tzConfig.code} Window Close`;
+    secondsToNextMilestone = Math.max(0, Math.floor((targetWindowCloseMs - nowMs) / 1000));
+  } else {
+    // 10:00–16:59 ET
+    phase = "POST_WINDOW_RECAP";
+    statusBadge = "RECAP";
+    phaseTitle = `${targetShort.split(" ")[0]} ${tzConfig.openTimeStr} WINDOW COMPLETE — STAY FLAT / LOG TRADE`;
+    // Countdown to Globex rollover
+    const rolloverMs = parseDateStrToETEpochMs(et.dateStr, 18, 0, 0);
+    nextMilestoneLabel = `${tzConfig.globexOpenStr} Globex Rollover`;
+    secondsToNextMilestone = Math.max(0, Math.floor((rolloverMs - nowMs) / 1000));
+  }
+
+  // Human countdown text for status bar
+  let countdownHuman = "";
+  if (phase === "NY_OPEN_WINDOW") {
+    countdownHuman = `${formatSecondsToCountdown(secondsToNextMilestone)} left in Window`;
+  } else if (phase === "PRE_MARKET_LOCK") {
+    countdownHuman = `${formatSecondsToCountdown(secondsToTargetOpen)} to Open`;
+  } else if (phase === "DEVELOPING_OVERNIGHT") {
+    countdownHuman = `${formatSecondsToCountdown(secondsToTargetOpen)} to Open`;
+  } else if (phase === "POST_WINDOW_RECAP") {
+    countdownHuman = `${formatSecondsToCountdown(secondsToNextMilestone)} to 6:00 PM Rollover`;
+  } else {
+    countdownHuman = `${formatSecondsToCountdown(secondsToNextMilestone)} to 6:00 PM Open`;
+  }
+
+  return {
+    nowET: inputDate,
+    currentETDateStr: et.dateStr,
+    currentETTimeStr: et.timeStr,
+    dayOfWeekET: et.weekday,
+    targetTradeDate,
+    priorTradeDate,
+    targetTradeDateFormatted,
+    priorTradeDateFormatted,
+    phase,
+    subPhase,
+    statusBadge,
+    phaseTitle,
+    nextMilestoneLabel,
+    secondsToTargetOpen,
+    secondsToNextMilestone,
+    countdownHuman,
+    isWindowActive: phase === "NY_OPEN_WINDOW",
+    isDeveloping: phase === "DEVELOPING_OVERNIGHT" || phase === "CME_BREAK_OR_WEEKEND"
+  };
+}

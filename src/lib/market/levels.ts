@@ -1,5 +1,146 @@
-import { OHLCVBar, KeyLevel, SessionMetrics, SMTDivergence } from "@/types/market";
+import { OHLCVBar, KeyLevel, SessionMetrics, SMTDivergence, SMTSwingPoint } from "@/types/market";
 import { computeHTFFibonacci, computeExpectedMove } from "./math";
+import {
+  getCMESessionInfo,
+  shiftCalendarDays,
+  parseDateStrToETEpochMs
+} from "./sessionClock";
+
+export function extractNQSwingPoints(
+  intradayBars: OHLCVBar[] | undefined,
+  currentPrice: number,
+  type: "BULLISH_LL" | "BULLISH_HL" | "BEARISH_HH" | "BEARISH_LH",
+  onh: number,
+  onl: number
+): [SMTSwingPoint, SMTSwingPoint] | undefined {
+  if (!intradayBars || intradayBars.length === 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const t1 = nowSec - 1800;
+    const t2 = nowSec;
+    if (type === "BULLISH_LL") {
+      return [
+        { timeSec: t1, price: Math.round(onl * 100) / 100, label: "Prior Low" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Sweep Low (LL)" }
+      ];
+    }
+    if (type === "BULLISH_HL") {
+      return [
+        { timeSec: t1, price: Math.round(onl * 100) / 100, label: "Prior Low" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Higher Low (HL)" }
+      ];
+    }
+    if (type === "BEARISH_HH") {
+      return [
+        { timeSec: t1, price: Math.round(onh * 100) / 100, label: "Prior High" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Sweep High (HH)" }
+      ];
+    }
+    return [
+      { timeSec: t1, price: Math.round(onh * 100) / 100, label: "Prior High" },
+      { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Lower High (LH)" }
+    ];
+  }
+
+  const lastBar = intradayBars[intradayBars.length - 1];
+  const nowSec = Math.floor(new Date(lastBar.timestamp).getTime() / 1000);
+
+  if (intradayBars.length === 1) {
+    const t1 = nowSec - 1800;
+    const t2 = nowSec;
+    if (type === "BULLISH_LL") {
+      return [
+        { timeSec: t1, price: Math.round(onl * 100) / 100, label: "Prior Low" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Sweep Low (LL)" }
+      ];
+    }
+    if (type === "BULLISH_HL") {
+      return [
+        { timeSec: t1, price: Math.round(onl * 100) / 100, label: "Prior Low" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Higher Low (HL)" }
+      ];
+    }
+    if (type === "BEARISH_HH") {
+      return [
+        { timeSec: t1, price: Math.round(onh * 100) / 100, label: "Prior High" },
+        { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Sweep High (HH)" }
+      ];
+    }
+    return [
+      { timeSec: t1, price: Math.round(onh * 100) / 100, label: "Prior High" },
+      { timeSec: t2, price: Math.round(currentPrice * 100) / 100, label: "Lower High (LH)" }
+    ];
+  }
+
+  if (type === "BULLISH_LL") {
+    let minBar = intradayBars[0];
+    for (let i = 0; i < intradayBars.length - 1; i++) {
+      if (intradayBars[i].low < minBar.low) {
+        minBar = intradayBars[i];
+      }
+    }
+    const t1 = Math.floor(new Date(minBar.timestamp).getTime() / 1000);
+    const p1 = Math.round(minBar.low * 100) / 100;
+    const t2 = nowSec > t1 ? nowSec : t1 + 900;
+    const p2 = Math.min(p1 - 4, Math.round(currentPrice * 100) / 100);
+    return [
+      { timeSec: t1, price: p1, label: "Prior Low" },
+      { timeSec: t2, price: p2, label: "Sweep Low (LL)" }
+    ];
+  }
+
+  if (type === "BULLISH_HL") {
+    let minBar = intradayBars[0];
+    for (let i = 0; i < intradayBars.length - 1; i++) {
+      if (intradayBars[i].low < minBar.low) {
+        minBar = intradayBars[i];
+      }
+    }
+    const t1 = Math.floor(new Date(minBar.timestamp).getTime() / 1000);
+    const p1 = Math.round(minBar.low * 100) / 100;
+    const t2 = nowSec > t1 ? nowSec : t1 + 900;
+    const p2 = Math.max(p1 + 4, Math.round(currentPrice * 100) / 100);
+    return [
+      { timeSec: t1, price: p1, label: "Prior Low" },
+      { timeSec: t2, price: p2, label: "Higher Low (HL)" }
+    ];
+  }
+
+  if (type === "BEARISH_HH") {
+    let maxBar = intradayBars[0];
+    for (let i = 0; i < intradayBars.length - 1; i++) {
+      if (intradayBars[i].high > maxBar.high) {
+        maxBar = intradayBars[i];
+      }
+    }
+    const t1 = Math.floor(new Date(maxBar.timestamp).getTime() / 1000);
+    const p1 = Math.round(maxBar.high * 100) / 100;
+    const t2 = nowSec > t1 ? nowSec : t1 + 900;
+    const p2 = Math.max(p1 + 4, Math.round(currentPrice * 100) / 100);
+    return [
+      { timeSec: t1, price: p1, label: "Prior High" },
+      { timeSec: t2, price: p2, label: "Sweep High (HH)" }
+    ];
+  }
+
+  if (type === "BEARISH_LH") {
+    let maxBar = intradayBars[0];
+    for (let i = 0; i < intradayBars.length - 1; i++) {
+      if (intradayBars[i].high > maxBar.high) {
+        maxBar = intradayBars[i];
+      }
+    }
+    const t1 = Math.floor(new Date(maxBar.timestamp).getTime() / 1000);
+    const p1 = Math.round(maxBar.high * 100) / 100;
+    const t2 = nowSec > t1 ? nowSec : t1 + 900;
+    const p2 = Math.min(p1 - 4, Math.round(currentPrice * 100) / 100);
+    return [
+      { timeSec: t1, price: p1, label: "Prior High" },
+      { timeSec: t2, price: p2, label: "Lower High (LH)" }
+    ];
+  }
+
+  return undefined;
+}
 
 export interface SMTInputData {
   quote?: { price: number };
@@ -7,30 +148,64 @@ export interface SMTInputData {
   intradayBars?: OHLCVBar[];
 }
 
+export function getBarDateET(timestamp: string): string {
+  const match = timestamp.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) {
+    // For ISO strings that represent midnight UTC (common in daily bars, e.g. "2026-11-24T00:00:00"),
+    // or plain date strings ("2026-11-24"), the date portion itself is the calendar trade date.
+    if (timestamp.length === 10 || timestamp.includes("T00:00:00")) {
+      return match[1];
+    }
+  }
+  const dt = new Date(timestamp);
+  if (isNaN(dt.getTime())) {
+    return match ? match[1] : "";
+  }
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(dt);
+}
+
 export function computeSessionLevels(
   currentPrice: number,
   dailyBars: OHLCVBar[],
   intradayBars: OHLCVBar[],
   ivPct: number = 24.0,
-  esData?: SMTInputData
+  esData?: SMTInputData,
+  targetDateInput?: string
 ): { sessionMetrics: SessionMetrics; keyLevels: KeyLevel[] } {
+  // Resolve CME session clock context
+  const sessionInfo = getCMESessionInfo();
+  const targetTradeDate = targetDateInput || sessionInfo.targetTradeDate;
+  const priorTradeDate = sessionInfo.priorTradeDate;
+
   // 1. Calculate Daily ATR(14) and Prior Day levels
   let pdh = currentPrice + 60;
   let pdl = currentPrice - 60;
   let pdc = currentPrice - 15;
   let atr14Daily = 160;
 
-  if (dailyBars.length >= 2) {
-    const priorDay = dailyBars[dailyBars.length - 2];
+  // Explicitly match daily bars strictly completed before targetTradeDate.
+  // This prevents in-progress evening Globex daily candles from corrupting PDH/PDL/PDC.
+  const eligiblePriorBars = dailyBars.filter((b) => {
+    const barDate = getBarDateET(b.timestamp);
+    return barDate < targetTradeDate;
+  });
+
+  if (eligiblePriorBars.length > 0) {
+    const priorDay = eligiblePriorBars[eligiblePriorBars.length - 1];
     pdh = priorDay.high;
     pdl = priorDay.low;
     pdc = priorDay.close;
 
-    // Calculate ATR 14
+    // Calculate ATR 14 using completed daily bars up to priorDay
     const trs: number[] = [];
-    for (let i = 1; i < dailyBars.length; i++) {
-      const prevClose = dailyBars[i - 1].close;
-      const b = dailyBars[i];
+    for (let i = 1; i < eligiblePriorBars.length; i++) {
+      const prevClose = eligiblePriorBars[i - 1].close;
+      const b = eligiblePriorBars[i];
       const tr = Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose));
       trs.push(tr);
     }
@@ -38,6 +213,11 @@ export function computeSessionLevels(
     if (recentTrs.length > 0) {
       atr14Daily = Math.round((recentTrs.reduce((a, b) => a + b, 0) / recentTrs.length) * 10) / 10;
     }
+  } else if (dailyBars.length > 0) {
+    const priorDay = dailyBars[0];
+    pdh = priorDay.high;
+    pdl = priorDay.low;
+    pdc = priorDay.close;
   }
 
   const pdMid = Math.round(((pdh + pdl) / 2) * 100) / 100;
@@ -55,7 +235,17 @@ export function computeSessionLevels(
     ? Math.round((recentIntradayTrs.reduce((a, b) => a + b, 0) / recentIntradayTrs.length) * 10) / 10
     : 24.5;
 
-  // 3. Parse Intraday bars for Globex ([18:00, 09:30) ET), London ([03:00, 09:00) ET), Asia, and VWAPs
+  // 3. Anchor Overnight Globex Strictly to targetTradeDate
+  // Preceding calendar day 18:00 ET to targetTradeDate 09:30 ET
+  const precedingDateStr = shiftCalendarDays(targetTradeDate, -1);
+  const globexStartMs = parseDateStrToETEpochMs(precedingDateStr, 18, 0, 0);
+  const globexEndMs = parseDateStrToETEpochMs(targetTradeDate, 9, 30, 0);
+  const rthStartMs = parseDateStrToETEpochMs(targetTradeDate, 9, 30, 0);
+  const rthEndMs = parseDateStrToETEpochMs(targetTradeDate, 16, 0, 0);
+  const lonStartMs = parseDateStrToETEpochMs(targetTradeDate, 3, 0, 0);
+  const lonEndMs = parseDateStrToETEpochMs(targetTradeDate, 9, 0, 0);
+  const asiaEndMs = lonStartMs;
+
   let onh = currentPrice + 35;
   let onl = currentPrice - 40;
   let londonHigh = currentPrice + 25;
@@ -73,83 +263,93 @@ export function computeSessionLevels(
   let rthTwapSum = 0;
   let rthBarCount = 0;
 
-  let priorRthVwapSumPV = 0;
-  let priorRthVwapSumV = 0;
-
   let abovePdcBars = 0;
   let totalOvernightBars = 0;
-
   let hasRealVolume = false;
 
-  if (intradayBars.length > 0) {
-    const globexHighs: number[] = [];
-    const globexLows: number[] = [];
-    const lonHighs: number[] = [];
-    const lonLows: number[] = [];
-    const asiaHighs: number[] = [];
-    const asiaLows: number[] = [];
+  const globexHighs: number[] = [];
+  const globexLows: number[] = [];
+  const lonHighs: number[] = [];
+  const lonLows: number[] = [];
+  const asiaHighs: number[] = [];
+  const asiaLows: number[] = [];
 
-    // Analyze the last ~48 bars (12 hours of 15m bars covering entire Globex session)
-    const recentBars = intradayBars.slice(-48);
+  for (const b of intradayBars) {
+    const bMs = new Date(b.timestamp).getTime();
+    if (isNaN(bMs)) continue;
 
-    for (const b of recentBars) {
-      const dt = new Date(b.timestamp);
-      const hourStr = dt.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false });
-      const minStr = dt.toLocaleString("en-US", { timeZone: "America/New_York", minute: "numeric" });
-      const hourET = parseInt(hourStr, 10);
-      const minET = parseInt(minStr, 10);
+    const typPrice = (b.high + b.low + b.close) / 3;
+    const vol = typeof b.volume === "number" && b.volume > 0 ? b.volume : 0;
+    if (vol > 10) hasRealVolume = true;
 
-      const typPrice = (b.high + b.low + b.close) / 3;
-      const vol = typeof b.volume === "number" && b.volume > 0 ? b.volume : 0;
-      if (vol > 10) hasRealVolume = true;
-
-      // Globex window strictly [18:00, 09:30) ET
-      const isGlobex = hourET >= 18 || hourET < 9 || (hourET === 9 && minET < 30);
-      const isRTH = (hourET === 9 && minET >= 30) || (hourET >= 10 && hourET < 16);
-
-      if (isGlobex) {
-        globexHighs.push(b.high);
-        globexLows.push(b.low);
-        totalOvernightBars++;
-        if (b.close >= pdc) {
-          abovePdcBars++;
-        }
-
-        globexVwapSumPV += typPrice * vol;
-        globexVwapSumV += vol;
-        globexTwapSum += typPrice;
-        globexBarCount++;
+    // Globex window strictly [globexStartMs, globexEndMs)
+    if (bMs >= globexStartMs && bMs < globexEndMs) {
+      globexHighs.push(b.high);
+      globexLows.push(b.low);
+      totalOvernightBars++;
+      if (b.close >= pdc) {
+        abovePdcBars++;
       }
 
-      if (isRTH) {
-        rthVwapSumPV += typPrice * vol;
-        rthVwapSumV += vol;
-        rthTwapSum += typPrice;
-        rthBarCount++;
-      }
+      globexVwapSumPV += typPrice * vol;
+      globexVwapSumV += vol;
+      globexTwapSum += typPrice;
+      globexBarCount++;
 
-      // London session: approx 03:00 - 09:00 ET
-      if (hourET >= 3 && hourET < 9) {
-        lonHighs.push(b.high);
-        lonLows.push(b.low);
-      }
-
-      // Asia session: approx 18:00 - 03:00 ET
-      if (hourET >= 18 || hourET < 3) {
+      // Asia session: [globexStartMs, asiaEndMs)
+      if (bMs < asiaEndMs) {
         asiaHighs.push(b.high);
         asiaLows.push(b.low);
       }
+
+      // London session: [lonStartMs, lonEndMs)
+      if (bMs >= lonStartMs && bMs < lonEndMs) {
+        lonHighs.push(b.high);
+        lonLows.push(b.low);
+      }
     }
 
-    if (globexHighs.length > 0) onh = Math.max(...globexHighs);
-    if (globexLows.length > 0) onl = Math.min(...globexLows);
+    // RTH window strictly [rthStartMs, rthEndMs)
+    if (bMs >= rthStartMs && bMs < rthEndMs) {
+      rthVwapSumPV += typPrice * vol;
+      rthVwapSumV += vol;
+      rthTwapSum += typPrice;
+      rthBarCount++;
+    }
+  }
+
+  // Early-Globex Guard (18:00–18:30 ET):
+  // If fewer than 2 Globex bars exist yet for the new session, return INITIALIZING state
+  let globexStatus: SessionMetrics["globexStatus"] = "ACTIVE";
+  if (globexBarCount < 2) {
+    globexStatus = "INITIALIZING";
+    if (globexHighs.length === 1) {
+      onh = globexHighs[0];
+      onl = globexLows[0];
+    } else {
+      onh = Math.round((currentPrice + 20) * 100) / 100;
+      onl = Math.round((currentPrice - 20) * 100) / 100;
+    }
+    londonHigh = onh;
+    londonLow = onl;
+    asiaHigh = onh;
+    asiaLow = onl;
+  } else {
+    onh = Math.max(...globexHighs);
+    onl = Math.min(...globexLows);
     if (lonHighs.length > 0) {
       londonHigh = Math.max(...lonHighs);
       londonLow = Math.min(...lonLows);
+    } else {
+      londonHigh = onh;
+      londonLow = onl;
     }
     if (asiaHighs.length > 0) {
       asiaHigh = Math.max(...asiaHighs);
       asiaLow = Math.min(...asiaLows);
+    } else {
+      asiaHigh = onh;
+      asiaLow = onl;
     }
   }
 
@@ -176,7 +376,7 @@ export function computeSessionLevels(
   const sessionVwap = rthBarCount > 0 ? rthSessionVwap : globexVwap;
 
   // 4. Higher-Timeframe (HTF) Fibonacci Retracement & Impulse Direction
-  const htfFib = computeHTFFibonacci(dailyBars);
+  const htfFib = computeHTFFibonacci(eligiblePriorBars.length > 0 ? eligiblePriorBars : dailyBars);
 
   // 5. Implied Expected Move Bands (Rule of 16 + Straddle Proxy)
   const expectedMove = computeExpectedMove(pdc, ivPct);
@@ -187,7 +387,7 @@ export function computeSessionLevels(
 
   // 6. Standardized Overnight Inventory (% of Globex bars closing above PDC)
   const inventoryPercent =
-    totalOvernightBars > 0 ? Math.round((abovePdcBars / totalOvernightBars) * 100) : 50;
+    totalOvernightBars >= 2 ? Math.round((abovePdcBars / totalOvernightBars) * 100) : 50;
 
   let overnightInventory: SessionMetrics["overnightInventory"] = "BALANCED";
   if (inventoryPercent >= 70) overnightInventory = "BULLISH_IMBALANCE";
@@ -220,53 +420,117 @@ export function computeSessionLevels(
       smtDivergence = {
         hasDivergence: true,
         divergenceType: "BULLISH_SMT (NQ SWEPT LOW, ES HELD)",
-        nqHigh: onh,
-        nqLow: onl,
-        esHigh: esOnh,
-        esLow: esOnl,
-        notes: "NQ swept Globex low while ES held above its low. Classic smart-money accumulation divergence."
+        direction: "BULLISH",
+        leadingAsset: "ES",
+        sweptAsset: "NQ",
+        nqPrice: Math.round(currentPrice * 100) / 100,
+        esPrice: Math.round(esPrice * 100) / 100,
+        nqHigh: Math.round(onh * 100) / 100,
+        nqLow: Math.round(onl * 100) / 100,
+        esHigh: Math.round(esOnh * 100) / 100,
+        esLow: Math.round(esOnl * 100) / 100,
+        nqMadeNewLow: true,
+        esMadeNewLow: false,
+        nqSwingPoints: extractNQSwingPoints(intradayBars, currentPrice, "BULLISH_LL", onh, onl),
+        notes: "NQ swept sell stops below overnight low while ES held a higher low. Classic Smart Money accumulation divergence indicating hidden strength.",
+        institutionalMechanism: "Institutional algos ran retail sell stops below NQ overnight low to engineer liquidity, while ES buyers actively defended support. The disagreement signals a bear trap rather than genuine downside momentum.",
+        mssTriggerInstruction: "Look for a 1m/5m Market Structure Shift (MSS) displacement above recent swing high on NQ. Execute LONG on the subsequent retrace into Session VWAP / Discount with invalidation below the sweep wick."
       };
     } else if (!nqSweptLow && esSweptLow) {
       smtDivergence = {
         hasDivergence: true,
         divergenceType: "BULLISH_SMT (ES SWEPT LOW, NQ HELD)",
-        nqHigh: onh,
-        nqLow: onl,
-        esHigh: esOnh,
-        esLow: esOnl,
-        notes: "ES flushed below its overnight low while NQ held higher. Indicates relative tech leadership."
+        direction: "BULLISH",
+        leadingAsset: "NQ",
+        sweptAsset: "ES",
+        nqPrice: Math.round(currentPrice * 100) / 100,
+        esPrice: Math.round(esPrice * 100) / 100,
+        nqHigh: Math.round(onh * 100) / 100,
+        nqLow: Math.round(onl * 100) / 100,
+        esHigh: Math.round(esOnh * 100) / 100,
+        esLow: Math.round(esOnl * 100) / 100,
+        nqMadeNewLow: false,
+        esMadeNewLow: true,
+        nqSwingPoints: extractNQSwingPoints(intradayBars, currentPrice, "BULLISH_HL", onh, onl),
+        notes: "ES flushed below its overnight low while NQ held a higher low. Indicates relative Nasdaq/tech strength and institutional accumulation.",
+        institutionalMechanism: "Broader market (ES) triggered stop runs while large-cap tech (NQ) was quietly accumulated. Disagreement confirms ES low is a liquidity harvest.",
+        mssTriggerInstruction: "Wait for ES to reclaim its sweep level and NQ to print an MSS. Enter LONG on NQ (the stronger asset) targeting overnight highs."
       };
     } else if (nqSweptHigh && !esSweptHigh && esPrice > 0) {
       smtDivergence = {
         hasDivergence: true,
         divergenceType: "BEARISH_SMT (NQ SWEPT HIGH, ES HELD)",
-        nqHigh: onh,
-        nqLow: onl,
-        esHigh: esOnh,
-        esLow: esOnl,
-        notes: "NQ swept overnight high while ES failed to make a new high. Warning of liquidity sweep trap."
+        direction: "BEARISH",
+        leadingAsset: "ES",
+        sweptAsset: "NQ",
+        nqPrice: Math.round(currentPrice * 100) / 100,
+        esPrice: Math.round(esPrice * 100) / 100,
+        nqHigh: Math.round(onh * 100) / 100,
+        nqLow: Math.round(onl * 100) / 100,
+        esHigh: Math.round(esOnh * 100) / 100,
+        esLow: Math.round(esOnl * 100) / 100,
+        nqMadeNewHigh: true,
+        esMadeNewHigh: false,
+        nqSwingPoints: extractNQSwingPoints(intradayBars, currentPrice, "BEARISH_HH", onh, onl),
+        notes: "NQ swept buy stops above overnight high while ES failed to reach its high (lower high). Signals institutional exhaustion and a bull trap.",
+        institutionalMechanism: "Algos triggered retail breakout buy stops above NQ overnight high to unload inventory, while ES failed to participate. The non-confirmation warns of immediate upward exhaustion.",
+        mssTriggerInstruction: "Wait for NQ to reject back below ONH with a 1m/5m Market Structure Shift (MSS) displacement downward. Execute SHORT on the retrace to VWAP with invalidation above the sweep wick."
       };
     } else if (!nqSweptHigh && esSweptHigh) {
       smtDivergence = {
         hasDivergence: true,
         divergenceType: "BEARISH_SMT (ES SWEPT HIGH, NQ HELD)",
-        nqHigh: onh,
-        nqLow: onl,
-        esHigh: esOnh,
-        esLow: esOnl,
-        notes: "ES pushed to new high while NQ lagged. Warns of selective distribution."
+        direction: "BEARISH",
+        leadingAsset: "NQ",
+        sweptAsset: "ES",
+        nqPrice: Math.round(currentPrice * 100) / 100,
+        esPrice: Math.round(esPrice * 100) / 100,
+        nqHigh: Math.round(onh * 100) / 100,
+        nqLow: Math.round(onl * 100) / 100,
+        esHigh: Math.round(esOnh * 100) / 100,
+        esLow: Math.round(esOnl * 100) / 100,
+        nqMadeNewHigh: false,
+        esMadeNewHigh: true,
+        nqSwingPoints: extractNQSwingPoints(intradayBars, currentPrice, "BEARISH_LH", onh, onl),
+        notes: "ES pushed to new highs while NQ lagged and printed a lower high. Warns of selective distribution and impending market rollover.",
+        institutionalMechanism: "ES pushed to harvest liquidity while tech (NQ) showed underlying selling pressure. Disagreement signals the ES breakout is a bull trap.",
+        mssTriggerInstruction: "Wait for ES to fail the high and NQ to break 1m/5m swing low structure (MSS). Enter SHORT on NQ targeting VWAP / PDC."
       };
     } else {
       smtDivergence = {
         hasDivergence: false,
         divergenceType: "NONE (SYNCED)",
-        nqHigh: onh,
-        nqLow: onl,
-        esHigh: esOnh,
-        esLow: esOnl,
-        notes: "NQ and ES are moving in sync with no cross-index divergence."
+        direction: "NEUTRAL",
+        leadingAsset: "NEUTRAL",
+        sweptAsset: "NONE",
+        nqPrice: Math.round(currentPrice * 100) / 100,
+        esPrice: Math.round(esPrice * 100) / 100,
+        nqHigh: Math.round(onh * 100) / 100,
+        nqLow: Math.round(onl * 100) / 100,
+        esHigh: Math.round(esOnh * 100) / 100,
+        esLow: Math.round(esOnl * 100) / 100,
+        notes: "NQ and ES are moving in sync with no cross-index divergence. Key swing points confirmed by both assets.",
+        institutionalMechanism: "Both correlated indices confirm key swing points. No institutional manipulation or divergence trap detected.",
+        mssTriggerInstruction: "Trade in the direction of the dominant session trend, prioritizing standard VWAP retrace continuations."
       };
     }
+  } else {
+    smtDivergence = {
+      hasDivergence: false,
+      divergenceType: "NONE (SYNCED)",
+      direction: "NEUTRAL",
+      leadingAsset: "NEUTRAL",
+      sweptAsset: "NONE",
+      nqPrice: Math.round(currentPrice * 100) / 100,
+      esPrice: 0,
+      nqHigh: Math.round(onh * 100) / 100,
+      nqLow: Math.round(onl * 100) / 100,
+      esHigh: 0,
+      esLow: 0,
+      notes: "ES live data feed currently synchronizing. SMT correlation tracking active.",
+      institutionalMechanism: "Normal market synchronization.",
+      mssTriggerInstruction: "Trade standard NQ market structure and VWAP retrace."
+    };
   }
 
   const sessionMetrics: SessionMetrics = {
@@ -306,7 +570,10 @@ export function computeSessionLevels(
     inventoryPercent,
     openingGap,
     openingLocation,
-    smtDivergence
+    smtDivergence,
+    targetTradeDate,
+    priorTradeDate,
+    globexStatus
   };
 
   // Compile Key Levels list
@@ -376,12 +643,12 @@ export function computeSessionLevels(
     },
     {
       id: "lvl-on-mid",
-      name: "Overnight Midpoint (50% Equilibrium)",
+      name: "Overnight 50% Midpoint",
       shortName: "ON Mid",
       price: sessionMetrics.onMid,
       role: "RETRACE ZONE",
       timeframe: "GLOBEX",
-      note: "Globex 50% equilibrium. Ideal discount zone for bullish continuation retrace."
+      note: "Overnight 50% midpoint. Prime discount zone for bullish continuation retrace entries."
     },
     {
       id: "lvl-pdc",
@@ -390,7 +657,7 @@ export function computeSessionLevels(
       price: sessionMetrics.pdc,
       role: "MAGNET",
       timeframe: "DAILY",
-      note: "Prior day close. Inventory line-in-the-sand; buyers holding above indicates net long inventory."
+      note: "Prior day close. Buyers holding above indicates net long inventory in control."
     },
     {
       id: "lvl-pd-mid",
@@ -399,16 +666,16 @@ export function computeSessionLevels(
       price: sessionMetrics.pdMid,
       role: "EQUILIBRIUM",
       timeframe: "DAILY",
-      note: "Full day 50% equilibrium level from previous regular trading session."
+      note: "Prior day 50% midpoint from previous regular trading session."
     },
     {
       id: "lvl-htf-50",
-      name: `HTF ${htfFib.impulseDirection} 50% Equilibrium`,
+      name: `HTF ${htfFib.impulseDirection} 50% Midpoint`,
       shortName: "HTF 50%",
       price: sessionMetrics.htf50Retrace,
       role: "RETRACE ZONE",
       timeframe: "HTF",
-      note: `Trailing 5-day ${htfFib.impulseDirection.toLowerCase()} impulse equilibrium (${htfFib.swingLow} to ${htfFib.swingHigh}).`
+      note: `Trailing 5-day ${htfFib.impulseDirection.toLowerCase()} impulse 50% level (${htfFib.swingLow} to ${htfFib.swingHigh}).`
     },
     {
       id: "lvl-htf-618",

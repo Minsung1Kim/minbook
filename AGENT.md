@@ -1,13 +1,12 @@
-# AGENT.md - OpenPulse Architecture & Operational Guide (v2.0)
+# AGENT.md - MinBook Architecture & Operational Guide (v2.0)
 
 ## Overview
-**OpenPulse** is an action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing **1 trade per day on NQ / MNQ** (higher-timeframe continuation on retraces between 9:30 AM and 10:00 AM ET).
+**MinBook** is an action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing **1 trade per day on NQ / MNQ** (higher-timeframe continuation on retraces between 9:30 AM and 10:00 AM ET).
 
 ## Core Principles & Strategy Model
-- **No Fluff / No Generic Calculators:** Traders do not need simple static level lists they can look up in seconds. They need concrete conditional solutions:
-  - *Is a retrace probable today?* (Open-Test-Drive vs Runaway Open Drive vs Inventory Flush vs Chop Pinch with inspectable Factor Scorecards).
-  - *What does it mean if price tests VWAP?* (Absorption confirmation vs Trapped longs panic-selling).
-  - *Where is the structural trap?* (Why buying the first tick of the open or blindly buying red candles fails).
+- **Primary Mission:** MinBook exists to equip discretionary futures traders with institutionally and scientifically proven quantitative models to validate their directional bias, locate precision stop loss / invalidation levels, identify opening stop hunts, and target realistic expansion targets on NQ / MNQ.
+- **Actionable Execution Over Fluff:** Streamlined to 4 essential, high-impact sections (Directive & Bias Banner, Interactive Market Structure Chart, The 5 Core Trader Answers, and US Economic News). Calculator clutter, generic sliders, and redundant checklist drilldowns are purged.
+- **Free Price Exploration:** The chart crosshair moves freely across price and time (`CrosshairMode.Normal`) without snapping to candle close, allowing traders to observe price levels, calculate distances, and plan exact stop losses.
 - **Single Trade Focus:** Strictly 1 trade per day.
 - **Entry Window:** 9:34 AM – 9:48 AM ET (letting the initial 1–3 min opening whipsaw exhaust, executing on retrace absorption).
 - **Execution Blueprint:** Concrete triggers:
@@ -29,24 +28,133 @@
   - **Variance Risk Premium (VRP):** `VRP = VXN - RealizedVol_YZ_20d`. Flags negative VRP (`RV > IV`) as tail-risk / stop-run dislocation.
   - **Rule of 16 Expected Move:** Daily 1-SD move and Expected Straddle (`~0.7979x`).
   - **Directional MAE/MFE & Exit Efficiency:** Proper directional formula for LONG and SHORT trades.
+- **Centralized CME Session Clock (`src/lib/market/sessionClock.ts`):**
+  - Operates strictly on the CME Futures Trade Date (5:00 PM / 6:00 PM ET rollover) rather than calendar midnight.
+  - State machine covering 5 phases: `CME_BREAK_OR_WEEKEND`, `DEVELOPING_OVERNIGHT` (with `ASIA` 18:00–02:59 and `LONDON` 03:00–08:29 sub-phases), `PRE_MARKET_LOCK` (08:30–09:29), `NY_OPEN_WINDOW` (09:30–09:59), and `POST_WINDOW_RECAP` (10:00–16:59).
+  - DST-safe UTC epoch conversions in `America/New_York` timezone.
+  - Full-closure CME holiday skip calendar (2024–2028).
 - **Session Levels Engine (`src/lib/market/levels.ts`):**
-  - Globex session strictly `[18:00, 09:30)` ET.
+  - **Deterministic Prior Day Selection:** Explicitly matches daily bars completed strictly before `targetTradeDate` (`barDate < targetTradeDate`) rather than blind array indexing (`dailyBars[len - 2]`), preventing in-progress evening Globex candles from corrupting `PDH`, `PDL`, `PDC`, and `pdMid`.
+  - **Globex Session Anchoring:** Intraday bars sliced strictly from `18:00 ET` of preceding calendar day to `09:30 ET` of `targetTradeDate`.
+  - **Early-Globex Guard:** Returns `globexStatus: "INITIALIZING"` when fewer than 2 Globex bars exist, defaulting overnight inventory to 50% ("BALANCED") without zero-division or state contamination.
   - Separate VWAP anchors: Globex VWAP (18:00), Prior Day RTH VWAP, RTH Session VWAP (09:30), with `TWAP FALLBACK` when volume is absent.
   - Daily Expected Move and Straddle bands in Key Levels table.
   - Cross-Index SMT Divergence (`NQ=F` vs `ES=F`) across session highs and lows.
   - Standardized Overnight Inventory: `% of Globex bars closing above PDC` (0%–100%).
+- **Free Delayed Dealer Gamma (GEX) Engine (`src/lib/market/gex.ts`):**
+  - Zero-cost market structure module computing dealer gamma exposure across the Nasdaq-100 option surface.
+  - **Primary Data Source:** Cboe delayed options JSON feed (`cdn.cboe.com/api/global/delayed_quotes/options/_NDX.json` and `QQQ.json`) with 15-minute server-side TTL caching.
+  - **Resilient Fallback:** Automated fallback to `yahoo-finance2` `options('QQQ')` across the nearest 3 expirations with server-side Black-Scholes Gamma ($\Gamma = \frac{N'(d_1)}{S \cdot \sigma \cdot \sqrt{T}}$, clamped $T \ge 1/252$, IV substituted with `^VXN/100` if zero).
+  - **Public-Chain Convention:** $\text{CallGEX} = +\Gamma \cdot \text{CallOI} \cdot 100 \cdot S^2 \cdot 0.01$ and $\text{PutGEX} = -\Gamma \cdot \text{PutOI} \cdot 100 \cdot S^2 \cdot 0.01$.
+  - **NQ Basis Translation:** Translates `gammaFlipNq` (cumulative zero crossing), `callWallNq` (highest positive Call GEX strike), and `putWallNq` (most negative Put GEX strike) into `NQ=F` points using the live basis ratio ($NQ / Spot$).
+  - **Scorecard Factor H Integration:** Integrated into `regime.ts` and `playbook.ts` strictly as an environmental tilt: `NEGATIVE_GAMMA` supports wider runner expansion (2.5R–3.0R) and warns of volatile sweeps; `POSITIVE_GAMMA` warns of range dampening and chop, favoring tighter targets (1.8R–2.2R).
+  - **Transparent Labeling:** Displays badge `DELAYED OI-BASED GEX ESTIMATE (NOT LIVE DEALER INVENTORY)`.
+- **Free 1m-Derived Footprint & Absorption Engine (`src/lib/market/footprint.ts`):**
+  - Zero-cost order-flow proxy ingesting delayed 1m OHLCV bars for `NQ=F` via Yahoo Finance (15-second TTL cache).
+  - **Intrabar Delta & Volume Profiling:** Computes Close Location Value ($\text{CLV} = \frac{(C - L) - (H - C)}{H - L} \in [-1, +1]$), candle delta ($\text{Volume} \cdot \text{CLV}$), delta ratio ($\Delta / V$), and POC price bucketed into 2.5 pt price bins.
+  - **Dual Cumulative Volume Delta (CVD):** Tracks session CVD (resets at 18:00 ET Globex open) and RTH CVD (resets at 09:30 ET NY open).
+  - **Automated Structural Markers:**
+    - `ABS BUY` / `ABS SELL`: Passive absorption detected when volume $\ge 1.8 \times \text{avgVol20}$, candle body ratio $\le 0.35$, wick ratio $\ge 0.40$, within $0.5 \times \text{ATR}_{15m}$ of key support/resistance levels.
+    - `IMP+` / `IMP-`: Aggressive initiative sweep detected when volume $\ge 1.5 \times \text{avgVol20}$ and $|\text{deltaRatio}| \ge 0.65$.
+    - `CVD DIV ▼` / `CVD DIV ▲`: Multi-bar CVD divergence detected over trailing 6–12 bars (higher high in price with lower high in CVD, or lower low in price with higher low in CVD).
+  - **Transparent Labeling:** Series marker tooltip and summary disclaimer: `Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)`.
 - **Macro Regime Engine (`src/lib/market/regime.ts`):**
   - Full Volatility Surface: `^VXN`, `^VIX`, `^VIX3M`, `^VIX9D`, `^VIX1D`, `^VVIX`.
   - Term Structure Ratio (`VIX / VIX3M`): Backwardation (>1.0) vs Contango (<0.95).
   - Rolling 60-day Pearson correlation between NQ and 10Y Yield (`^TNX`): Inflation/Rate-Sensitive vs Growth-Scare.
   - Dynamic Regime Risk Multiplier: `1.0x` (normal), `0.5x` (backwardation / negative VRP / VVIX >= 110 / elevated shock), `0.0x` (stand aside).
+- **Dedicated Economic Calendar Tab (`/calendar` & `src/app/calendar/page.tsx`):**
+  - Standalone top-level tab in `Header.tsx` replacing Forex Factory for NQ/MNQ futures day traders.
+  - Live feed ingestion via `/api/calendar` pulling official Forex Factory delayed JSON feed with 2-hour TTL cache.
+  - Next release countdown milestone banner with impact badges and NY Open Window (09:15–10:15 ET) red folder warnings.
+  - Multi-timezone synchronization (ET / CT / PT) with automatic strikethrough styling for completed releases.
+  - Quantitative market impact notes for each catalyst detailing direct mechanistic impact on NQ futures (yields, multiples, volatility).
+- **Key Reference Levels Resorted by Vitality & Hit Likelihood (`src/components/KeyLevelsTable.tsx`):**
+  - Resorted primarily by an institutional **Hit Likelihood & Structural Vitality** algorithm:
+    - Combines mathematical proximity to spot price with institutional structural gravity:
+      - Tier 1: `Session VWAP` (100), `ONH/ONL` (95), `PDC` (90), `ON Mid` (85).
+      - Tier 2: `HTF 50%/61.8%` (78), `London Extremes` (72), `PDH/PDL` (68).
+      - Tier 3: `Daily Straddle` & `1-SD Bounds` (30).
+  - Categorizes levels into actionable badges: `TAP IMMINENT` (<= 8 pts away), `HIGH HIT PROB` (72%+), `MODERATE HIT PROB` (48%+), `EXPANSION MAGNET` (30%+), or `OUTER BOUNDARY`.
+  - Displays 1-line plain English day trader directives for each level, demystifying quant market structure.
+  - Allows quick toggle between `"Most Vital (Hit Likelihood)"` (default) and `"Price Ladder"` (High to Low).
+- **Interactive Market Structure Chart (`src/components/chart/MinBookChart.tsx` & `primitives.ts`):**
+  - **Clean & Quiet by Default:** All indicator overlay layers (`liquidity`, `retrace`, `vwap`, `zones`, `subSessions`, `volatility`, `gex`, `footprint`, `smt`) and floating HUDs (`allHudsHidden: true`) initialize to hidden/off by default, providing traders an unobstructed pure candlestick chart on first view.
+  - One-click toggles in the header toolbar allow turning on any indicator or HUD on demand.
+  - **TradingView Lightweight Charts v5:** Built as a `'use client'` component dynamically imported via `next/dynamic` (`ssr: false`).
+  - **Strict v5 Compliance:** Zero deprecated v4 methods; uses `chart.addSeries(CandlestickSeries, ...)`, `chart.addSeries(LineSeries, ...)`, and `createSeriesMarkers(series, markers)`.
+  - **Data Hygiene:** Intraday bar timestamps sanitized to strictly ascending, deduplicated Unix seconds (`Math.floor(ms / 1000)`). Markers sorted ascending by timestamp.
+  - **Eastern Time Formatting:** Native `America/New_York` (ET) formatting configured via `localization.timeFormatter` and `timeScale.tickMarkFormatter`.
+  - **Dynamic Timeframe Switcher:** Seamless switching between `15m` (default) and `5m` intervals via `/api/market-data/chart`.
+  - **Running Cumulative VWAP/TWAP:** Plotted as a distinct gold/amber line series, labeled `TWAP` when volume is unavailable.
+  - **Categorized Key Level Price Lines:** Liquidity/Targets (`PDH`, `PDL`, `ONH`, `ONL`), Retrace Anchors (`PDC`, `ON Mid`, `HTF 50% EQ`, `HTF 61.8% GP`), Sub-Sessions (`LonH`, `LonL`, `AsiaH`, `AsiaL`), Volatility Bands (Straddle, 1-SD), and GEX Levels (`γ FLIP`, `CALL WALL`, `PUT WALL`). Cleanly toggled via pills with `removePriceLine` deduplication.
+  - **Footprint & SMT Series Markers:** Overlays `09:30 OPEN`, `ABS BUY`, `ABS SELL`, `IMP+`, `IMP-`, `CVD DIV`, and `SMT BULL ▲` / `SMT BEAR ▼` divergence markers directly on candlestick bars.
+  - **Window Minimization & Clean Canvas Mode:** Individual minimize (`-`) / expand (`+`) buttons for the Top-Right GEX Regime card, Top-Left OHLC strip, and Planning Mode box, alongside a master `"Minimize All Windows" / "Show Windows"` button in the toolbar providing an unobstructed view of price structure.
+  - **Custom Canvas Primitives (`ISeriesPrimitive`):**
+    - `VerticalTimeHighlightPrimitive`: Shading for 09:30–10:00 ET NY Open Retrace Window and subtle tint for Globex overnight.
+    - `HorizontalRetraceZonePrimitive`: Soft translucent band for the directional ideal retrace zone and HTF 50%–61.8% Golden Pocket.
+  - **HUD & Interactive Safety:** Live crosshair OHLC overlay with delta and %, nearest liquidity magnet and retrace level distance indicators, delay latency badge, top-right GEX regime card (+Γ/-Γ, Flip, Call/Put Walls, 0DTE Net, basis ratio), bottom CVD & SMT status readouts, `Charts by TradingView` attribution link, and click-to-focus synchronization with the Key Levels table.
+- **SMT Dotted Trendline Overlay (`src/lib/market/levels.ts` & `src/components/chart/MinBookChart.tsx`):**
+  - Monitors real-time swing-point non-confirmation between correlated futures contracts (`NQ=F` and `ES=F`).
+  - **Bullish SMT:** When one asset makes a lower low while the other holds a higher low, a dotted trendline (`LineSeries` with `lineStyle: LineStyle.Dotted`, emerald `#34d399`) connects NQ's prior swing low to the swept swing low directly across candles on the chart canvas, accompanied by series markers (`NQ Prior Low` and `BULL SMT (ES Leads)`).
+  - **Bearish SMT:** When one asset makes a higher high while the other holds a lower high, a dotted trendline (rose `#f43f5e`) connects NQ's prior swing high to the swept swing high across candles on the chart canvas, accompanied by series markers (`NQ Prior High` and `BEAR SMT (ES Leads)`).
+  - Standalone card clutter removed in favor of direct chart visualization.
+- **Multi-Timezone Engine (`src/lib/market/timezone.ts` & `src/context/TimezoneContext.tsx`):**
+  - Full support for US East (`America/New_York`, ET), US Central (`America/Chicago`, CT), and US West (`America/Los_Angeles`, PT) with client-side persistence in `localStorage`.
+  - Header segmented switcher (`[ ET | CT | PT ]`) synchronously updates:
+    - Top bar live digital clock (`HH:MM:SS [ET|CT|PT]`).
+    - Session phase banners and open window countdown (`09:30 ET` / `08:30 CT` / `06:30 PT`).
+    - Chart x-axis timescale and crosshair hover tooltips (`localization.timeFormatter` and `timeScale.tickMarkFormatter`).
+    - Economic calendar release times in `EconomicNewsCard`.
+    - Dashboard exchange tick status and bottom chart summary strip.
+- **AI Quant Prediction Forefront & Simplified ICT Playbook (`src/lib/market/playbook.ts` & `src/components/Dashboard.tsx`):**
+  - **Forefront Placement:** Elevated the AI Prediction Command Card to the very top of the dashboard, presenting the direction, stop hunt forecast, and cheat sheet levels (entry, stop, target) directly in plain sight.
+  - **Playbook in Front of Levels:** Set `Playbook` as the primary, default active tab in the workspace side panel (`defaultValue="playbook"`).
+  - **Natural ICT Terminology:** Confusing phrases purged across the entire app:
+    - `"Globex equilibrium"` $\rightarrow$ **`Overnight 50% Midpoint (Discount Retrace Zone)`**.
+    - `"Two-way wick probe"` $\rightarrow$ **`Opening Chop & Stop Hunt Trap`**.
+    - `"Institutional sweep risk"` $\rightarrow$ **`Likely Stop Hunt`**.
+    - `"BSL/SSL pools"` $\rightarrow$ **`Buy Stops Above ONH / Sell Stops Below ONL`**.
+  - Quantified 3-step execution rules: (1) The Fakeout, (2) Reversal Confirmation (MSS), (3) Exactly What You Do.
 - **Position Sizing Engine (`src/lib/risk/sizing.ts`):**
   - Dynamic MNQ contract count scaling based on dollar risk budget, prop drawdown, and regime multipliers. Stop-too-tight warning if stop < 0.5x 15m ATR.
+  - **Detailed Risk Plan & Round-Trip Fees:** Computes gross vs net risk and profit, round-trip commission fees (`$1.24/rt MNQ`, `$4.50/rt NQ`), net R:R, drawdown risk %, and stop-too-tight threshold warnings.
+- **Interactive Click-to-Size & Visual R:R Box (`src/components/chart/RiskBoxPrimitive.ts` & `MinBookChart.tsx`):**
+  - Custom Lightweight Charts v5 `ISeriesPrimitive<Time>` overlay rendering red translucent Risk Zone (`Entry` to `Stop`) and green translucent Reward Zone (`Entry` to `Target`) directly on the canvas.
+  - Interactive 2-click chart flow: Click 1 sets entry price (auto-snaps to nearest key level/GEX strike within 3.5 pts); Click 2 sets stop loss, infers `LONG` / `SHORT`, calculates position size and net R:R. Optional Click 3 or preset R buttons (`2.0R`, `2.2R`, `2.5R`, `3.0R`) adjust target.
+  - Planning HUD card: Displays entry, stop, target, recommended MNQ/NQ contracts, fees, gross vs net P&L, stop-too-tight warnings, and `"Send Plan to AI Journal"` button pre-populating the journal draft.
+- **Visual Trade Replay Player in AI Journal (`src/components/journal/TradeReplayChart.tsx` & `src/app/journal/page.tsx`):**
+  - Expandable trade rows in `/journal` render an interactive session replay over that session's frozen levels (`08:30–10:30 ET` bars).
+  - Markers: Entry arrow (`LONG`/`SHORT`), Exit flag (`$ P&L`, `R`), MAE pin (`MAE -X.XXR` on worst candle), MFE pin (`MFE +X.XXR` on peak candle).
+  - Scrubber controls: `Reset to 08:30 AM`, `Step -1 Bar`, `Play / Pause` (`1x` / `2x`), `Step +1 Bar`, `Show Full Session`, and timeline range slider.
+  - Live HUD: Running unrealized P&L in points, `$`, and `R` from entry to exit with phase badges (`PRE-ENTRY`, `TRADE ACTIVE`, `TRADE CLOSED`).
+  - SQLite Persistence: Automatically saves `session_bars_json` on new trade submission; includes deterministic synthetic bar generator for historical trades ensuring permanent offline replayability.
 - **Empirical Journal (`src/app/journal/` & `src/lib/db/`):**
   - Database schema migrated to store directional MAE, MFE, exit efficiency, and complete regime snapshot.
   - 50-trade sample calibration gate.
-- **Persistence:** Node 24 native SQLite (`node:sqlite`) database (`data/openpulse.db`).
+- **Persistence:** Node 24 native SQLite (`node:sqlite`) database (`data/minbook.db`).
+- **Self-Recording Prediction Archive, Auto-Grader & Self-Improvement Engine (`src/lib/calibration/`):**
+  - **Repository Abstraction (`store.ts`):** Clean `ICalibrationRepository` interface abstracting SQLite tables (`daily_predictions`, `prediction_grades`, `model_weights_history`) to guarantee 1-file Supabase migration readiness.
+  - **Immutable Pre-Market Freezing (`grader.ts`):** Automatically freezes pre-market prediction snapshots (`daily_predictions`) between 09:15–09:29 ET (or on first request during pre-market/open window). Once saved, snapshots are strictly immutable with zero hindsight bias.
+  - **Deterministic 09:30–10:00 Auto-Grader (`grader.ts`):** Evaluates actual NQ intraday candles after 10:20 ET (accounting for CME 15-min feed delay):
+    - Directional Bias Hit: Expansion of $\ge 0.75 \times \text{ATR}_{15m}$ before invalidating $1.00 \times \text{ATR}_{15m}$ stop.
+    - Retrace Tapping: Actual touch of predicted VWAP, ON Mid, PDC, HTF 50%, or HTF 61.8%.
+    - Stop-Hunt Verification: Confirmation of price sweeping target level and closing back inside range.
+    - Liquidity Magnet Hit: Reaching Magnet #1 (`ONH`/`ONL`) or Magnet #2 (`PDH`/`PDL`).
+    - Brier Calibration Score: $(p - y)^2$ based on confidence tier ($0.80$ High, $0.65$ Mod, $0.50$ Low).
+  - **Self-Improvement Calibration Engine (`optimizer.ts`):**
+    - **Factor Attribution Tracker:** Calculates hit rate, lift vs baseline ($\text{WinRate} - \text{Baseline}$), and performance split by volatility regime for all 8 quantitative factors.
+    - **Safe Walk-Forward Guardrail ($N \ge 30$):** Keeps live weights locked until $N \ge 30$ graded sessions. At $N \ge 30$, runs chronological 70/30 in-sample vs out-of-sample time-split walk-forward optimization with bounded weights ($[0.2, 2.4]$). Only surfaces proposed updates if out-of-sample accuracy or Brier score strictly improves on the held-out 30% test set.
+  - **System Self-Audit UI (`/performance`):** Dedicated dashboard displaying overall hit rates, factor attribution leaderboard, proposed weight update diffs, model version history & rollback, and filterable pre-market archive vs actual outcome table.
+  - **AI Journal Bot Cross-Linkage (`/journal`):** Cross-checks trader trade entries against MinBook's frozen calls and grades to diagnose root cause (e.g. *"MinBook called the direction right and tapped VWAP, but you entered early"* vs *"MinBook misread a negative-VRP chop day"*).
 
 ## Testing & Verification
-- Unit test suite configured via `vitest` covering Fibonacci impulse, Garman-Klass & Yang-Zhang volatility, directional MAE/MFE, and MNQ/NQ position sizing.
+- **Institutional UI/UX Visual Architecture:**
+  - Designed for modern institutional trading desks inspired by Linear and Raycast (dark neutral `#09090b` canvas, `#111113` surface, `border-zinc-800/80` hairline borders).
+  - Built on standardized shadcn/ui primitives (`card`, `tabs`, `table`, `badge`, `button`, `sheet`, `separator`, `tooltip`, `switch`).
+  - Strict semantic color palette: Emerald (Bull/Profit/GO), Crimson/Rose (Bear/Loss/Risk), Amber (Caution/Delayed/SMT Warning), Neutral Zincs/Whites for structural elements.
+  - Number precision with Geist Mono `tabular-nums` on all prices, points, deltas, and R-multiples.
+  - Zero AI visual slop (no rainbow card headers, gradient glows, drop-shadow soup, or purple AI palettes).
+  - 11px functional text floor across all interactive and content-bearing UI elements.
+- Unit test suite configured via `vitest` covering CME session clock rollover, phase state machine, holiday handling, deterministic prior-day slicing, early-Globex guards, Fibonacci impulse, Garman-Klass & Yang-Zhang volatility, directional MAE/MFE, MNQ/NQ position sizing, detailed risk plan and fee deduction, timestamp sanitization, cumulative VWAP/TWAP, Black-Scholes gamma calculation, GEX strike accumulation, zero-crossing gamma flip, basis translation, Close Location Value (CLV), intrabar delta & POC binning, absorption markers, multi-bar CVD divergence, SMT cross-index divergence detection, SMT swing point extraction & dotted trendlines, immutable pre-market snapshot locking, deterministic 09:30–10:00 grading math, walk-forward weight bounds, and US East/Central/West multi-timezone engine (**71/71 tests passing** across 12 test suites).
 - Verification command: `npm test` and `npm run build`.

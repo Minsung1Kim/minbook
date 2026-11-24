@@ -4,7 +4,8 @@ import {
   BiasVerdict,
   MacroIndicator,
   VolatilitySurface,
-  MacroRegimeState
+  MacroRegimeState,
+  GEXExposureData
 } from "@/types/market";
 
 export function evaluateBiasAndRegime(
@@ -13,11 +14,25 @@ export function evaluateBiasAndRegime(
   vix?: MacroIndicator,
   hasRedFolderNewsAroundOpen?: boolean,
   volatilitySurface?: VolatilitySurface,
-  macroRegime?: MacroRegimeState
+  macroRegime?: MacroRegimeState,
+  gex?: GEXExposureData
 ): BiasRegime {
   const drivers: string[] = [];
   const risks: string[] = [];
   let regimeRiskMultiplier: 1.0 | 0.5 | 0.0 = 1.0;
+
+  // 0. Dealer Gamma Exposure (GEX Tilt) - Strictly a regime tilt, never deterministic
+  if (gex) {
+    if (gex.netGammaRegime === "NEGATIVE_GAMMA") {
+      drivers.push(
+        `DEALER GEX TILT: Negative Gamma (<$0). Market makers hedge with market direction, amplifying momentum, expanding candle wicks, and supporting HTF continuation runners (2.5R–3.0R). Expect sharper stop sweeps.`
+      );
+    } else {
+      risks.push(
+        `DEALER GEX TILT: Positive Gamma (+$${(gex.totalNetGex / 1e6).toFixed(0)}M). Market makers hedge counter-trend, dampening volatility and pinning price into mean-reversion chop. Tighter targets (1.8R–2.2R) favored; beware pinning near Call Wall (${gex.callWallNq}) or Put Wall (${gex.putWallNq}).`
+      );
+    }
+  }
 
   // 1. Higher-Timeframe (HTF) Trend
   const isAbovePdc = currentPrice > metrics.pdc;
@@ -241,6 +256,7 @@ export function evaluateBiasAndRegime(
     risks,
     volatilitySurface,
     macroRegime,
+    gex,
     idealRetraceZone
   };
 }

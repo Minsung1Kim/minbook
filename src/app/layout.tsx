@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { TimezoneProvider } from "@/context/TimezoneContext";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,8 +15,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenPulse | NQ Pre-Market & NY Open Briefing",
-  description: "Pre-market & NY open bias, key-levels, and stop-risk briefing for futures traders (1 trade/day NQ continuation retrace specialist)",
+  title: "MinBook — Quantitative NY Open Futures Decision Engine",
+  description: "Action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing 1 trade per day on CME Nasdaq-100 (NQ / MNQ).",
+  keywords: ["Futures", "NQ", "MNQ", "Quantitative Trading", "NY Open", "ICT", "SMT", "GEX", "TradingView", "Next.js"],
+  authors: [{ name: "MinBook Team" }],
+  openGraph: {
+    title: "MinBook — Quantitative NY Open Futures Decision Engine",
+    description: "Action-first quantitative pre-market & NY open decision engine engineered specifically for futures traders executing 1 trade per day on CME Nasdaq-100 (NQ / MNQ).",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -23,9 +32,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark h-full antialiased">
-      <body className="min-h-full bg-[#090d16] text-slate-100 flex flex-col font-sans">
-        {children}
+    <html lang="en" className={`dark h-full antialiased ${geistSans.variable} ${geistMono.variable}`}>
+      <body className="min-h-full bg-zinc-950 text-zinc-100 flex flex-col font-sans">
+        <TooltipProvider>
+          <TimezoneProvider>{children}</TimezoneProvider>
+        </TooltipProvider>
       </body>
     </html>
   );

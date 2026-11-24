@@ -103,8 +103,8 @@ export function Header({
 
   return (
     <>
-      <header className="sticky top-0 z-50 h-14 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between gap-4">
+      <header className="sticky top-0 z-50 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 transition-colors">
+        <div className="max-w-[1640px] mx-auto px-3 sm:px-5 lg:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
           {/* Left: Wordmark & Clean Nav */}
           <div className="flex items-center space-x-6 shrink-0">
             <Link href="/" className="flex items-center space-x-2 group">
@@ -322,6 +322,61 @@ export function Header({
                 </Link>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Mobile / Small-Tablet Quick Control Bar (< md) so NQ/MNQ & Timezone are always reachable */}
+        <div className="md:hidden border-t border-zinc-800/60 bg-zinc-950/95 px-3 sm:px-5 py-1.5 flex items-center justify-between gap-2 text-[11px] font-mono">
+          <div className="flex items-center space-x-1.5 min-w-0">
+            <span className="text-zinc-400 truncate">
+              {sessionInfo
+                ? `${sessionInfo.isMarketOpen ? "LIVE" : sessionInfo.activeSession === "WEEKEND" ? "CLOSED" : "BREAK"} • ${sessionInfo.activeSessionLabel}`
+                : "CME FUTURES"}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <div className="flex sm:hidden items-center p-0.5 rounded bg-zinc-900 border border-zinc-800">
+              <button
+                onClick={() => onSelectInstrument("NQ")}
+                className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                  selectedInstrument === "NQ"
+                    ? "bg-zinc-700 text-zinc-100 font-semibold"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                NQ
+              </button>
+              <button
+                onClick={() => onSelectInstrument("MNQ")}
+                className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                  selectedInstrument === "MNQ"
+                    ? "bg-zinc-700 text-zinc-100 font-semibold"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                MNQ
+              </button>
+            </div>
+
+            <div className="flex items-center p-0.5 rounded bg-zinc-900 border border-zinc-800">
+              {(["America/New_York", "America/Chicago", "America/Los_Angeles"] as SupportedTimezone[]).map((tzOption) => {
+                const code = tzOption === "America/New_York" ? "ET" : tzOption === "America/Chicago" ? "CT" : "PT";
+                return (
+                  <button
+                    key={tzOption}
+                    onClick={() => setTimezone(tzOption)}
+                    className={`px-1.5 py-0.5 rounded transition-colors ${
+                      timezone === tzOption
+                        ? "bg-zinc-700 text-zinc-100 font-bold"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {code}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </header>

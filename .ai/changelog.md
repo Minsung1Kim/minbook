@@ -686,3 +686,12 @@ All notable changes and architectural decisions are logged here.
   - Replaced hardcoded 9:30–9:33 AM sweep and 10:00 AM window-closed messaging with session-specific guidance (`ASIA`, `LONDON`, `NY_PREMARKET`, `NY_AM`, `NY_LUNCH`, `NY_PM`, `POST_CLOSE`) and appropriate liquidity sweep references (`Asia High/Low` in London, `Today's Session H/L` + `ONH/ONL` in NY PM, `PDC`/`Asia H/L` in Asia).
 - **Neutral Shared Branding for Multi-User Access (`Header.tsx`, `app/login/page.tsx`, `app/layout.tsx`, `app/journal/page.tsx`, `app/settings/page.tsx`):**
   - Rebranded visible UI copy from personal `"MinBook"` to neutral `"TapeBook"`, updated journal column/call headers (`Model Call That Day` / `Frozen Model Call`), and removed personal 1-trade/day copy locks in `/settings` so friends trading any session can use the terminal cleanly.
+
+## [2026-11-24] - Responsive Layout Pass Across Mobile, Tablet, Laptop & Ultrawide Monitors
+- **Fluid Container & Ultrawide Monitor Scaling (`Header.tsx`, `Dashboard.tsx`, `MinBookChart.tsx`, `journal/page.tsx`, `calendar/page.tsx`, `performance/page.tsx`, `settings/page.tsx`):**
+  - Expanded main page & header max-width from `max-w-7xl` (`1280px`) to `max-w-[1640px]` and scaled desktop grids (`2xl:col-span-9` chart + `2xl:col-span-3` Bounce & Targets, 4-column `xl` Quant Facts, and responsive chart height `h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px]`).
+- **Mobile & Touch Ergonomics (`globals.css`, `Header.tsx`, `Dashboard.tsx`, `KeyLevelsTable.tsx`, `MinBookChart.tsx`, `calendar/page.tsx`, `journal/page.tsx`):**
+  - Added `overflow-x: clip` and `touch-action: manipulation` in `globals.css`.
+  - Exposed `NQ | MNQ` and `ET | CT | PT` + live session label in a compact mobile/tablet sub-bar inside `Header.tsx` (`md:hidden`) so phone and iPad users have full controls.
+  - Constrained mobile chart HUD overlay widths (`max-w-[52%]` / `max-w-[46%]`) to prevent OHLC and GEX card collisions on small screens.
+  - Made copy-price buttons visible on touch screens (`opacity-75 sm:opacity-0 sm:group-hover:opacity-100`), converted P&L Journal stats into a clean responsive grid, and added responsive column hiding (`hidden sm:table-cell` / `hidden md:table-cell` with mobile detail drawer fields in News Calendar) across tables.

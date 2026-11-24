@@ -144,9 +144,9 @@ export function SettingsPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
       <Header selectedInstrument={defaultInstrument} onSelectInstrument={(i) => setDefaultInstrument(i)} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-[1640px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-5 space-y-5">
         {/* Top Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-lg bg-[#0f1624] border border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-lg bg-zinc-900/70 border border-zinc-800/80">
           <div>
             <div className="flex items-center space-x-2.5">
               <Settings className="w-4 h-4 text-slate-400" />

@@ -203,16 +203,16 @@ export function KeyLevelsTable({
       </div>
 
       {/* Monospace Tight Table */}
-      <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
+      <div className="overflow-x-auto max-h-[420px] lg:max-h-[580px] xl:max-h-[640px] overflow-y-auto">
         <table className="w-full text-left text-xs font-mono">
           <thead className="bg-zinc-950/80 text-zinc-400 text-[11px] uppercase tracking-wider border-b border-zinc-800/80 sticky top-0 z-10">
             <tr>
-              <th className="py-2 px-3 w-10 text-center">#</th>
-              <th className="py-2 px-3">Level & Meaning</th>
-              <th className="py-2 px-2.5 text-right w-28">Price</th>
-              <th className="py-2 px-2.5 text-right w-24">Dist</th>
-              <th className="py-2 px-2.5 w-36 text-center">Hit Likelihood</th>
-              <th className="py-2 px-2 text-center w-8"></th>
+              <th className="hidden sm:table-cell py-2 px-3 w-10 text-center">#</th>
+              <th className="py-2 px-2.5 sm:px-3">Level &amp; Meaning</th>
+              <th className="py-2 px-2 sm:px-2.5 text-right w-24 sm:w-28">Price</th>
+              <th className="py-2 px-2 sm:px-2.5 text-right w-20 sm:w-24">Dist</th>
+              <th className="hidden md:table-cell py-2 px-2.5 w-36 text-center">Hit Likelihood</th>
+              <th className="py-2 px-1.5 sm:px-2 text-center w-8"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/60 tabular-nums">
@@ -237,18 +237,18 @@ export function KeyLevelsTable({
                   title="Click to highlight level on chart canvas"
                 >
                   {/* Rank */}
-                  <td className="py-2.5 px-3 text-center text-zinc-500 text-[11px] font-mono">
+                  <td className="hidden sm:table-cell py-2.5 px-3 text-center text-zinc-500 text-[11px] font-mono">
                     {sortMode === "VITALITY" ? `${idx + 1}` : "—"}
                   </td>
 
                   {/* Level Name & Plain English Directive */}
-                  <td className="py-2.5 px-3">
+                  <td className="py-2 px-2.5 sm:py-2.5 sm:px-3">
                     <div className="space-y-0.5">
                       <div className="flex items-center space-x-1.5">
                         <span className="font-bold text-zinc-100 text-xs">
                           {lvl.shortName}
                         </span>
-                        <span className="text-[11px] text-zinc-500 font-sans">
+                        <span className="hidden sm:inline text-[11px] text-zinc-500 font-sans">
                           • {lvl.role}
                         </span>
                       </div>
@@ -259,13 +259,13 @@ export function KeyLevelsTable({
                   </td>
 
                   {/* Price */}
-                  <td className="py-2.5 px-2.5 text-right text-zinc-100 font-semibold text-xs whitespace-nowrap">
+                  <td className="py-2 px-2 sm:py-2.5 sm:px-2.5 text-right text-zinc-100 font-semibold text-xs whitespace-nowrap">
                     {lvl.price.toFixed(2)}
                   </td>
 
                   {/* Distance */}
                   <td
-                    className={`py-2.5 px-2.5 text-right font-medium text-xs whitespace-nowrap ${
+                    className={`py-2 px-2 sm:py-2.5 sm:px-2.5 text-right font-medium text-xs whitespace-nowrap ${
                       isAbove ? "text-emerald-400" : "text-rose-400"
                     }`}
                   >
@@ -274,7 +274,7 @@ export function KeyLevelsTable({
                   </td>
 
                   {/* Hit Likelihood Badge */}
-                  <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
+                  <td className="hidden md:table-cell py-2.5 px-2.5 text-center whitespace-nowrap">
                     <span
                       className={`inline-block px-2 py-0.5 rounded text-[11px] font-mono font-bold border ${lvl.statusColor}`}
                     >
@@ -285,10 +285,10 @@ export function KeyLevelsTable({
                   </td>
 
                   {/* Copy Button */}
-                  <td className="py-2.5 px-2 text-center">
+                  <td className="py-2 px-1.5 sm:py-2.5 sm:px-2 text-center">
                     <button
                       onClick={(e) => handleCopyLevel(e, lvl)}
-                      className="p-1 rounded text-zinc-500 hover:text-zinc-200 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      className="p-1.5 rounded text-zinc-400 hover:text-zinc-200 transition-colors opacity-75 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
                       title="Copy exact price"
                     >
                       {isCopied ? (

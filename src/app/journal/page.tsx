@@ -232,10 +232,10 @@ export function JournalPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
       <Header selectedInstrument={symbol} onSelectInstrument={(inst) => setSymbol(inst)} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 space-y-3.5">
+      <main className="flex-1 max-w-[1640px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-4 space-y-3.5">
         {/* 1. COMPACT SUMMARY BAR */}
-        <div className="px-4 py-3 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="px-4 py-3 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3 font-mono text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-5 w-full lg:w-auto">
             <div>
               <span className="text-zinc-500 uppercase text-[10px] block">Net P&amp;L</span>
               <span
@@ -247,14 +247,14 @@ export function JournalPage() {
               </span>
             </div>
 
-            <div className="border-l border-zinc-800/80 pl-4">
+            <div className="sm:border-l sm:border-zinc-800/80 sm:pl-4">
               <span className="text-zinc-500 uppercase text-[10px] block">Win Rate</span>
               <span className="text-sm font-bold tabular-nums text-zinc-100">
                 {winRate.toFixed(1)}%
               </span>
             </div>
 
-            <div className="border-l border-zinc-800/80 pl-4">
+            <div className="md:border-l md:border-zinc-800/80 md:pl-4">
               <span className="text-zinc-500 uppercase text-[10px] block">Green / Red</span>
               <span className="text-sm font-bold tabular-nums text-zinc-100">
                 <span className="text-emerald-400">{wins}</span> /{" "}
@@ -262,7 +262,7 @@ export function JournalPage() {
               </span>
             </div>
 
-            <div className="border-l border-zinc-800/80 pl-4">
+            <div className="sm:border-l sm:border-zinc-800/80 sm:pl-4">
               <span className="text-zinc-500 uppercase text-[10px] block">Avg Win / Loss</span>
               <span className="text-sm font-bold tabular-nums">
                 <span className="text-emerald-400">+${avgWin.toFixed(0)}</span>
@@ -271,7 +271,7 @@ export function JournalPage() {
               </span>
             </div>
 
-            <div className="border-l border-zinc-800/80 pl-4">
+            <div className="sm:border-l sm:border-zinc-800/80 sm:pl-4">
               <span className="text-zinc-500 uppercase text-[10px] block">Screenshots</span>
               <span className="text-sm font-bold tabular-nums text-zinc-100">
                 {trades.length}

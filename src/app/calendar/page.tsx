@@ -140,7 +140,7 @@ export default function CalendarPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
       <Header selectedInstrument="NQ" onSelectInstrument={() => {}} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 space-y-4">
+      <main className="flex-1 max-w-[1640px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-4 space-y-4">
         {/* Top Macro Telemetry Bar */}
         <div className="p-4 rounded-lg bg-zinc-900/70 border border-zinc-800/80 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -249,8 +249,8 @@ export default function CalendarPage() {
         </div>
 
         {/* Filter Controls Bar */}
-        <div className="px-4 py-2.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-          <div className="flex items-center space-x-3">
+        <div className="px-3 sm:px-4 py-2.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* Time Filter */}
             <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded p-0.5 text-[11px]">
               <button
@@ -406,14 +406,14 @@ export default function CalendarPage() {
                       <table className="w-full text-left text-xs font-mono">
                         <thead className="bg-zinc-950/40 text-zinc-500 text-[11px] uppercase tracking-wider border-b border-zinc-800/60">
                           <tr>
-                            <th className="py-2 px-3 w-28">Time ({timezoneCode})</th>
-                            <th className="py-2 px-2.5 w-24">Impact</th>
-                            <th className="py-2 px-2 w-16">Cur</th>
-                            <th className="py-2 px-3">News Event</th>
-                            <th className="py-2 px-3 text-right w-24">Actual</th>
-                            <th className="py-2 px-3 text-right w-24">Forecast</th>
-                            <th className="py-2 px-3 text-right w-24">Previous</th>
-                            <th className="py-2 px-2.5 text-center w-10"></th>
+                            <th className="py-2 px-2.5 sm:px-3 w-24 sm:w-28">Time ({timezoneCode})</th>
+                            <th className="py-2 px-2 sm:px-2.5 w-16 sm:w-24">Impact</th>
+                            <th className="hidden sm:table-cell py-2 px-2 w-16">Cur</th>
+                            <th className="py-2 px-2.5 sm:px-3">News Event</th>
+                            <th className="py-2 px-2 sm:px-3 text-right w-16 sm:w-24">Actual</th>
+                            <th className="hidden md:table-cell py-2 px-3 text-right w-24">Forecast</th>
+                            <th className="hidden md:table-cell py-2 px-3 text-right w-24">Previous</th>
+                            <th className="py-2 px-2 text-center w-8 sm:w-10"></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-800/60 tabular-nums">
@@ -462,12 +462,12 @@ export default function CalendarPage() {
                                     </span>
                                   </td>
 
-                                  <td className="py-2.5 px-2 text-zinc-400 font-medium">
+                                  <td className="hidden sm:table-cell py-2.5 px-2 text-zinc-400 font-medium">
                                     {ev.country}
                                   </td>
 
-                                  <td className="py-2.5 px-3">
-                                    <div className="flex items-center space-x-2">
+                                  <td className="py-2.5 px-2.5 sm:px-3">
+                                    <div className="flex flex-wrap items-center gap-1.5">
                                       <span
                                         className={`font-medium ${
                                           passed ? "text-zinc-400" : "text-zinc-100"
@@ -476,14 +476,14 @@ export default function CalendarPage() {
                                         {ev.event}
                                       </span>
                                       {ev.isNearOpenWindow && (
-                                        <span className="text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                        <span className="hidden sm:inline text-[11px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
                                           Open Window
                                         </span>
                                       )}
                                     </div>
                                   </td>
 
-                                  <td className="py-2.5 px-3 text-right">
+                                  <td className="py-2.5 px-2 sm:px-3 text-right">
                                     {ev.actual ? (
                                       <span className="font-bold text-zinc-100">
                                         {ev.actual}
@@ -493,11 +493,11 @@ export default function CalendarPage() {
                                     )}
                                   </td>
 
-                                  <td className="py-2.5 px-3 text-right text-zinc-300">
+                                  <td className="hidden md:table-cell py-2.5 px-3 text-right text-zinc-300">
                                     {ev.forecast || "—"}
                                   </td>
 
-                                  <td className="py-2.5 px-3 text-right text-zinc-500">
+                                  <td className="hidden md:table-cell py-2.5 px-3 text-right text-zinc-500">
                                     {ev.previous || "—"}
                                   </td>
 
@@ -519,6 +519,20 @@ export default function CalendarPage() {
                                           <span className="font-bold text-zinc-200">
                                             Futures Market Impact &amp; Mechanics:
                                           </span>
+                                        </div>
+                                        <div className="md:hidden grid grid-cols-3 gap-2 pb-2 mb-2 border-b border-zinc-800/70 text-[11px] font-mono">
+                                          <div>
+                                            <span className="text-zinc-500 block text-[10px]">Cur</span>
+                                            <span className="text-zinc-200">{ev.country}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-zinc-500 block text-[10px]">Forecast</span>
+                                            <span className="text-zinc-200">{ev.forecast || "—"}</span>
+                                          </div>
+                                          <div>
+                                            <span className="text-zinc-500 block text-[10px]">Previous</span>
+                                            <span className="text-zinc-400">{ev.previous || "—"}</span>
+                                          </div>
                                         </div>
                                         <p className="text-zinc-300 leading-relaxed text-xs">
                                           {ev.marketImpact || ev.notes || "High-impact catalyst. Expect algorithmic spread widening and stop-run probes around release time."}

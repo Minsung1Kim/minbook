@@ -1177,10 +1177,10 @@ export default function MinBookChart({
       </div>
 
       {/* 2. Chart Canvas Container with HUD Overlays */}
-      <div className="relative w-full h-[380px] sm:h-[480px] md:h-[560px] bg-[#09090b]">
+      <div className="relative w-full h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px] bg-[#09090b]">
         {/* Top-Right GEX Regime HUD Card */}
         {layers.gex && brief.gex && !allHudsHidden && (
-          <div className="absolute top-2.5 right-3 z-10 pointer-events-auto flex flex-col items-end space-y-1 max-w-xs">
+          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-3 z-10 pointer-events-auto flex flex-col items-end space-y-1 max-w-[46%] sm:max-w-xs">
             {isGexMinimized ? (
               <button
                 onClick={() => setIsGexMinimized(false)}
@@ -1255,7 +1255,7 @@ export default function MinBookChart({
         )}
         {/* Top-Left HUD Overlay inside chart container */}
         {!allHudsHidden && (
-          <div className="absolute top-2.5 left-3 z-10 pointer-events-none flex flex-col space-y-1.5 max-w-lg">
+          <div className="absolute top-2 left-2 sm:top-2.5 sm:left-3 z-10 pointer-events-none flex flex-col space-y-1.5 max-w-[52%] sm:max-w-lg">
             {/* Bar OHLC Strip */}
             {isOhlcMinimized ? (
               <button

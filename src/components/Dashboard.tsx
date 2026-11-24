@@ -28,7 +28,7 @@ import {
 const MinBookChart = dynamic(() => import("@/components/chart/MinBookChart"), {
   ssr: false,
   loading: () => (
-    <div className="h-[560px] w-full rounded-lg bg-zinc-950 border border-zinc-800/80 flex items-center justify-center">
+    <div className="h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px] w-full rounded-lg bg-zinc-950 border border-zinc-800/80 flex items-center justify-center">
       <div className="flex items-center space-x-2 text-xs text-zinc-400 font-mono">
         <RefreshCw className="w-4 h-4 animate-spin text-zinc-300" />
         <span>LOADING CHART...</span>
@@ -239,7 +239,7 @@ export function Dashboard() {
         }}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 space-y-3.5">
+      <main className="flex-1 max-w-[1640px] w-full mx-auto px-3 sm:px-5 lg:px-6 py-4 space-y-3.5">
         {loading && !brief && (
           <div className="p-12 rounded-lg bg-zinc-900/50 border border-zinc-800 text-center space-y-2.5">
             <RefreshCw className="w-4 h-4 text-zinc-400 animate-spin mx-auto" />
@@ -389,7 +389,7 @@ export function Dashboard() {
 
               {/* Quant Facts & Math Grid (Plain English + Real Numbers) */}
               {showQuantMath && (
-                <div className="pt-3 border-t border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                <div className="pt-3 border-t border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
                   {plainBrief.quantFacts.map((fact) => (
                     <div
                       key={fact.id}
@@ -548,8 +548,8 @@ export function Dashboard() {
 
             {/* 2. WORKSPACE: CHART (LEFT) + BOUNCE & TARGET AREAS (RIGHT) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-start">
-              {/* Chart (~67% width) */}
-              <div className="lg:col-span-8">
+              {/* Chart */}
+              <div className="lg:col-span-8 2xl:col-span-9 min-w-0">
                 <MinBookChart
                   brief={brief}
                   selectedInstrument={selectedInstrument}
@@ -559,8 +559,8 @@ export function Dashboard() {
                 />
               </div>
 
-              {/* Right Panel (~33% width): Bounce Areas + Target Areas */}
-              <div className="lg:col-span-4">
+              {/* Right Panel: Bounce Areas + Target Areas */}
+              <div className="lg:col-span-4 2xl:col-span-3 min-w-0">
                 <Tabs defaultValue="zones" className="w-full">
                   <TabsList className="w-full grid grid-cols-2 bg-zinc-900 border border-zinc-800 p-0.5 rounded-lg mb-2.5">
                     <TabsTrigger
@@ -635,7 +635,7 @@ export function Dashboard() {
                                     </span>
                                     <button
                                       onClick={(e) => handleCopyPrice(e, area.id, area.price)}
-                                      className="p-1 text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      className="p-1.5 text-zinc-400 hover:text-zinc-200 opacity-75 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
                                       title="Copy price"
                                     >
                                       {isCopied ? (
@@ -715,7 +715,7 @@ export function Dashboard() {
                                     </span>
                                     <button
                                       onClick={(e) => handleCopyPrice(e, area.id, area.price)}
-                                      className="p-1 text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      className="p-1.5 text-zinc-400 hover:text-zinc-200 opacity-75 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
                                       title="Copy price"
                                     >
                                       {isCopied ? (

@@ -488,7 +488,7 @@ export function JournalPage() {
                   <th className="py-2.5 px-3">Overlay</th>
                   <th className="py-2.5 px-3 text-right">P&amp;L ($)</th>
                   <th className="py-2.5 px-3">Note</th>
-                  <th className="py-2.5 px-4">Model Call That Day</th>
+                  <th className="py-2.5 px-4">MinBook Call That Day</th>
                   <th className="py-2.5 px-3 text-center w-12"></th>
                 </tr>
               </thead>
@@ -662,7 +662,7 @@ export function JournalPage() {
                 {auditMap[selectedTrade.tradeDate]?.prediction && (
                   <div className="p-3 rounded bg-zinc-900/60 border border-zinc-800 space-y-1 text-xs font-sans">
                     <span className="font-mono text-[10px] uppercase text-zinc-500 block">
-                      Frozen Model Call ({selectedTrade.tradeDate})
+                      MinBook Frozen Call ({selectedTrade.tradeDate})
                     </span>
                     <div className="text-zinc-200 font-medium">
                       {auditMap[selectedTrade.tradeDate].prediction.biasVerdict}

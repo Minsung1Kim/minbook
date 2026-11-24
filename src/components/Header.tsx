@@ -109,7 +109,7 @@ export function Header({
           <div className="flex items-center space-x-6 shrink-0">
             <Link href="/" className="flex items-center space-x-2 group">
               <span className="font-semibold text-sm tracking-tight text-zinc-100 group-hover:text-white transition-colors">
-                TapeBook
+                MinBook
               </span>
               <span className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400">
                 NQ

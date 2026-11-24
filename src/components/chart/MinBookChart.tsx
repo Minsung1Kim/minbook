@@ -1093,7 +1093,9 @@ export default function MinBookChart({
   // ---------------------------------------------------------------------------
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(`tapebook_chart_drawings_${selectedInstrument}`);
+      const saved =
+        localStorage.getItem(`minbook_chart_drawings_${selectedInstrument}`) ||
+        localStorage.getItem(`tapebook_chart_drawings_${selectedInstrument}`);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
@@ -1108,7 +1110,7 @@ export default function MinBookChart({
   useEffect(() => {
     try {
       localStorage.setItem(
-        `tapebook_chart_drawings_${selectedInstrument}`,
+        `minbook_chart_drawings_${selectedInstrument}`,
         JSON.stringify(drawings)
       );
     } catch {}

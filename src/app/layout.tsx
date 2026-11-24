@@ -15,12 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TapeBook — 24/5 Quantitative Futures Bias, Levels & Journal",
+  title: "MinBook — 24/5 Quantitative Futures Bias, Levels & Journal",
   description: "Session-aware quantitative bias, bounce & target levels, volatility risk gates, and P&L screenshot journal for CME Nasdaq-100 (NQ / MNQ) futures across Asia, London, and NY.",
-  keywords: ["Futures", "NQ", "MNQ", "Quantitative Trading", "Asia", "London", "NY Session", "SMT", "GEX", "TradingView", "Next.js"],
-  authors: [{ name: "TapeBook" }],
+  keywords: ["MinBook", "Futures", "NQ", "MNQ", "Quantitative Trading", "Asia", "London", "NY Session", "SMT", "GEX", "TradingView", "Next.js"],
+  authors: [{ name: "MinBook" }],
   openGraph: {
-    title: "TapeBook — 24/5 Quantitative Futures Bias, Levels & Journal",
+    title: "MinBook — 24/5 Quantitative Futures Bias, Levels & Journal",
     description: "Session-aware quantitative bias, bounce & target levels, volatility risk gates, and P&L screenshot journal for CME Nasdaq-100 (NQ / MNQ) futures across Asia, London, and NY.",
     type: "website",
   },

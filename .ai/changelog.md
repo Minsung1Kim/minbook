@@ -674,7 +674,7 @@ All notable changes and architectural decisions are logged here.
   - **Key Futures Notes Today**: Concise reminders for timing, red-folder news proximity, take-profit style (positive vs negative gamma), and risk sizing.
 - **Minimizable Gameplan & Realistic 15m Swing ATR (`src/components/Dashboard.tsx`, `src/lib/market/plainEnglishBrief.ts`):** Added persistent Minimize/Show toggle for the Futures Gameplan strip and switched 15m swing display to `atr15mIntraday` so outlier opening-bar spikes don't overstate 15m range.
 
-## [2026-11-24] - 24/5 Session-Dynamic Overhaul & Neutral Shared Branding (`TapeBook`)
+## [2026-11-24] - 24/5 Session-Dynamic Overhaul & Multi-User Polish (`MinBook`)
 - **24/5 Dynamic Futures Sessions (`src/lib/market/sessionClock.ts`, `src/components/Header.tsx`):**
   - Extended `getCMESessionInfo` with live session detection (`ASIA`, `LONDON`, `NY_PREMARKET`, `NY_AM`, `NY_LUNCH`, `NY_PM`, `POST_CLOSE`, `CME_BREAK`, `WEEKEND`), human session windows, and live countdowns to the next active session transition (localized to ET/CT/PT) while maintaining full backward compatibility.
   - Updated `Header.tsx` to display `LIVE • NY PM SESSION`, `LIVE • ASIA SESSION`, `LIVE • LONDON SESSION`, etc., with session countdowns instead of showing `"TARGET: 9:30 AM OPEN"` or `"RECAP"` all afternoon/evening.
@@ -684,8 +684,8 @@ All notable changes and architectural decisions are logged here.
   - Updated `/calendar` card #2 from `"Open Window Risk (09:30–10:00)"` to `"Today's Remaining Risk"`.
 - **Dynamic Plain-English Brief & Gameplan (`src/lib/market/plainEnglishBrief.ts`, `src/lib/market/regime.ts`, `src/components/Dashboard.tsx`):**
   - Replaced hardcoded 9:30–9:33 AM sweep and 10:00 AM window-closed messaging with session-specific guidance (`ASIA`, `LONDON`, `NY_PREMARKET`, `NY_AM`, `NY_LUNCH`, `NY_PM`, `POST_CLOSE`) and appropriate liquidity sweep references (`Asia High/Low` in London, `Today's Session H/L` + `ONH/ONL` in NY PM, `PDC`/`Asia H/L` in Asia).
-- **Neutral Shared Branding for Multi-User Access (`Header.tsx`, `app/login/page.tsx`, `app/layout.tsx`, `app/journal/page.tsx`, `app/settings/page.tsx`):**
-  - Rebranded visible UI copy from personal `"MinBook"` to neutral `"TapeBook"`, updated journal column/call headers (`Model Call That Day` / `Frozen Model Call`), and removed personal 1-trade/day copy locks in `/settings` so friends trading any session can use the terminal cleanly.
+- **Multi-User Desk Polish (`Header.tsx`, `app/login/page.tsx`, `app/layout.tsx`, `app/journal/page.tsx`, `app/settings/page.tsx`):**
+  - Preserved canonical `MinBook` branding everywhere while removing single-user hardcoded copy (`"Shared team access"` on login, `"Per-Account Guardrails"` in `/settings`).
 
 ## [2026-11-24] - Responsive Layout Pass Across Mobile, Tablet, Laptop & Ultrawide Monitors
 - **Fluid Container & Ultrawide Monitor Scaling (`Header.tsx`, `Dashboard.tsx`, `MinBookChart.tsx`, `journal/page.tsx`, `calendar/page.tsx`, `performance/page.tsx`, `settings/page.tsx`):**
@@ -699,7 +699,7 @@ All notable changes and architectural decisions are logged here.
 ## [2026-11-24] - Simple Interactive Chart Drawing Tools (`Line`, `Square`, `Type`)
 - **Canvas Drawing Engine ([primitives.ts](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/primitives.ts), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
   - Added `UserDrawingsPrimitive` plus `timeSecToLogicalIndex` / `logicalIndexToTimeSec` / `timeSecToChartX` / `chartXToTimeSec` helpers so boxes and text annotations pan/zoom smoothly inside Lightweight Charts (including between bars and into future right-side whitespace).
-  - Added slim drawing bar with `Cursor`, `Line` (0.25-tick snapped straight horizontal line with price-axis tag), `Square` (supports both drag-and-release and click-two-corners), `Type` (inline floating input anchored to clicked price/time), 4 color dots (`CYAN`, `EMERALD`, `ROSE`, `AMBER`), `Undo`, `Clear`, `Esc` cancel shortcut, and `localStorage` persistence per instrument (`tapebook_chart_drawings_${selectedInstrument}`).
+  - Added slim drawing bar with `Cursor`, `Line` (0.25-tick snapped straight horizontal line with price-axis tag), `Square` (supports both drag-and-release and click-two-corners), `Type` (inline floating input anchored to clicked price/time), 4 color dots (`CYAN`, `EMERALD`, `ROSE`, `AMBER`), `Undo`, `Clear`, `Esc` cancel shortcut, and `localStorage` persistence per instrument (`minbook_chart_drawings_${selectedInstrument}`).
 
 ## [2026-11-24] - Interactive Object Manipulation & Live Cache/Dynamic Refresh Fix
 - **Manipulable Chart Drawings ([primitives.ts](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/primitives.ts), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**

@@ -1,7 +1,7 @@
 {
   "name": "minbook",
   "version": "1.0.0",
-  "description": "MinBook — Quantitative NY Open Futures Decision Engine for CME Nasdaq-100 (NQ/MNQ)",
+  "description": "MinBook — 24/5 Quantitative Futures Bias, Key Levels, Charting & P&L Terminal for CME Nasdaq-100 (NQ/MNQ)",
   "license": "MIT",
   "scripts": {
     "dev": "next dev",

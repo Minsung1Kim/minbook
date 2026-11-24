@@ -32,6 +32,10 @@ export async function getOpenBrief(options?: {
   const provider = getMarketDataProvider();
   const fallbackProvider = new SeedFallbackProvider();
 
+  if (options?.forceRefresh && provider.clearCache) {
+    provider.clearCache();
+  }
+
   let quote;
   let dailyBars = [];
   let intradayBars = [];
@@ -90,7 +94,7 @@ export async function getOpenBrief(options?: {
   try {
     const [gexRes, m1Bars] = await Promise.all([
       getMarketGEX(quote.price, ivPct, options?.forceRefresh),
-      fetch1mBars(symbol === "MNQ" ? "MNQ=F" : "NQ=F")
+      fetch1mBars(symbol === "MNQ" ? "MNQ=F" : "NQ=F", options?.forceRefresh)
     ]);
     gex = gexRes;
     footprint = buildFootprintSummary(intradayBars, m1Bars, 900, keyLevels, sessionMetrics);

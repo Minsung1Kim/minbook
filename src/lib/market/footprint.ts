@@ -8,7 +8,7 @@ interface M1Cache {
   bars: OHLCVBar[];
   cachedAt: number;
 }
-let cached1m: M1Cache | null = null;
+let cached1mBySymbol = new Map<string, M1Cache>();
 const M1_CACHE_TTL_MS = 15 * 1000;
 
 /**
@@ -95,9 +95,13 @@ export function computeIntrabarDelta(
 /**
  * Fetch trailing 1m bars for NQ=F via yahoo-finance2
  */
-export async function fetch1mBars(symbol: string = "NQ=F"): Promise<OHLCVBar[]> {
+export async function fetch1mBars(
+  symbol: string = "NQ=F",
+  forceRefresh: boolean = false
+): Promise<OHLCVBar[]> {
   const now = Date.now();
-  if (cached1m && now - cached1m.cachedAt < M1_CACHE_TTL_MS) {
+  const cached1m = cached1mBySymbol.get(symbol);
+  if (!forceRefresh && cached1m && now - cached1m.cachedAt < M1_CACHE_TTL_MS) {
     return cached1m.bars;
   }
 
@@ -129,7 +133,7 @@ export async function fetch1mBars(symbol: string = "NQ=F"): Promise<OHLCVBar[]> 
       .filter((b): b is OHLCVBar => b !== null);
 
     if (bars.length > 0) {
-      cached1m = { bars, cachedAt: now };
+      cached1mBySymbol.set(symbol, { bars, cachedAt: now });
       return bars;
     }
   } catch (err: any) {

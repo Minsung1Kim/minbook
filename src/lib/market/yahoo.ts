@@ -36,6 +36,12 @@ export class YahooFinanceProvider implements MarketDataProvider {
     return true;
   }
 
+  clearCache(): void {
+    this.quoteCache.clear();
+    this.chartCache.clear();
+    this.macroCache = null;
+  }
+
   private mapSymbol(symbol: string): string {
     const s = symbol.toUpperCase().trim();
     if (s === "NQ" || s === "NQ=F") return "NQ=F";

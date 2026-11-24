@@ -33,4 +33,5 @@ export interface MarketDataProvider {
   getIntradayBars(symbol: string, interval?: "1m" | "5m" | "15m"): Promise<OHLCVBar[]>;
   getMacroData(): Promise<MacroDataResult>;
   getEconomicEvents(): Promise<EconomicEvent[]>;
+  clearCache?(): void;
 }

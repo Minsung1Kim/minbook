@@ -9,7 +9,10 @@ import { isEventPassed } from "../components/EconomicNewsCard";
 import {
   timeSecToLogicalIndex,
   logicalIndexToTimeSec,
-  DRAWING_COLOR_PALETTE
+  DRAWING_COLOR_PALETTE,
+  hitTestScreenBoxes,
+  applyDrawingDrag,
+  ChartDrawing
 } from "../components/chart/primitives";
 import { OHLCVBar } from "../types/market";
 
@@ -139,5 +142,65 @@ describe("MinBookChart Unit Tests", () => {
 
     // Drawing color palette contains all 4 colors
     expect(Object.keys(DRAWING_COLOR_PALETTE)).toEqual(["CYAN", "EMERALD", "ROSE", "AMBER"]);
+  });
+
+  it("supports hit-testing, dragging, and corner resizing of chart drawings", () => {
+    const line: ChartDrawing = { id: "d-line", type: "hline", price: 26250, color: "CYAN" };
+    const rect: ChartDrawing = {
+      id: "d-rect",
+      type: "rect",
+      timeSec1: 1000,
+      price1: 26300,
+      timeSec2: 1900,
+      price2: 26260,
+      color: "EMERALD"
+    };
+    const note: ChartDrawing = {
+      id: "d-note",
+      type: "text",
+      timeSec: 1500,
+      price: 26320,
+      text: "Sweep",
+      color: "AMBER"
+    };
+
+    const boxes = [
+      { drawing: line, y1: 220 },
+      { drawing: rect, x1: 100, y1: 120, x2: 200, y2: 180 },
+      { drawing: note, x1: 300, y1: 80 }
+    ];
+
+    // Corner resize hit on SE corner of rect
+    expect(hitTestScreenBoxes(202, 179, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "SE"
+    });
+    // Body move hit inside rect
+    expect(hitTestScreenBoxes(150, 150, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "MOVE"
+    });
+    // Line hit within tolerance
+    expect(hitTestScreenBoxes(50, 224, boxes)).toEqual({
+      id: "d-line",
+      type: "hline",
+      mode: "MOVE"
+    });
+    // Empty space returns null
+    expect(hitTestScreenBoxes(40, 40, boxes)).toBeNull();
+
+    // Drag line (+12.13 -> snapped to 0.25 -> +12.25)
+    const movedLine = applyDrawingDrag(line, "MOVE", 0, 12.13, 0.25);
+    expect(movedLine.type === "hline" && movedLine.price).toBe(26262.25);
+
+    // Resize SE corner of rect
+    const resizedRect = applyDrawingDrag(rect, "SE", 900, -10, 0.25);
+    expect(resizedRect.type).toBe("rect");
+    if (resizedRect.type === "rect") {
+      expect(resizedRect.timeSec2).toBe(2800);
+      expect(resizedRect.price2).toBe(26250);
+    }
   });
 });

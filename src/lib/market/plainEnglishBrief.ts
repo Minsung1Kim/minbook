@@ -248,10 +248,24 @@ export function buildPlainEnglishBrief(
     verdictSubtitle = plainRiskReason;
   } else if (direction === "BULLISH") {
     verdictTitle = "Lean Bullish — Look for Dips to Bounce";
-    verdictSubtitle = `Price is holding above today's average (${metrics.sessionVwap.toFixed(1)} VWAP) and yesterday's close (${metrics.pdc.toFixed(1)}) with buyers in control.`;
+    const aboveVwap = spot >= metrics.sessionVwap;
+    const abovePdc = spot >= metrics.pdc;
+    verdictSubtitle =
+      aboveVwap && abovePdc
+        ? `Price is holding above Session VWAP (${metrics.sessionVwap.toFixed(1)}) and Yesterday's Close (${metrics.pdc.toFixed(1)}) with buyers in control.`
+        : aboveVwap
+        ? `Buyers are leading intraday above Session VWAP (${metrics.sessionVwap.toFixed(1)}); next key hurdle is Yesterday's Close (${metrics.pdc.toFixed(1)}).`
+        : `Higher-timeframe and macro signals tilt bullish while price hovers near VWAP (${metrics.sessionVwap.toFixed(1)}).`;
   } else if (direction === "BEARISH") {
     verdictTitle = "Lean Bearish — Look for Bounces to Reject";
-    verdictSubtitle = `Price is below today's average (${metrics.sessionVwap.toFixed(1)} VWAP) and yesterday's close (${metrics.pdc.toFixed(1)}) with sellers in control.`;
+    const belowVwap = spot < metrics.sessionVwap;
+    const belowPdc = spot < metrics.pdc;
+    verdictSubtitle =
+      belowVwap && belowPdc
+        ? `Price is below Session VWAP (${metrics.sessionVwap.toFixed(1)}) and Yesterday's Close (${metrics.pdc.toFixed(1)}) with sellers in control.`
+        : belowPdc
+        ? `Price remains below Yesterday's Close (${metrics.pdc.toFixed(1)}) with bearish flow pressure near VWAP (${metrics.sessionVwap.toFixed(1)}).`
+        : `Sellers hold the edge on momentum/macro flow while price tests Session VWAP (${metrics.sessionVwap.toFixed(1)}).`;
   }
 
   // 4. Honest, Easy-to-Read Signal Tally

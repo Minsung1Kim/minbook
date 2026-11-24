@@ -28,7 +28,12 @@ import {
   ChartDrawingColor,
   DRAWING_COLOR_PALETTE,
   RectDrawing,
-  chartXToTimeSec
+  DrawingDragMode,
+  DrawingScreenBox,
+  timeSecToChartX,
+  chartXToTimeSec,
+  hitTestScreenBoxes,
+  applyDrawingDrag
 } from "./primitives";
 import { OpenBriefData, KeyLevel, OHLCVBar } from "../../types/market";
 import { useTimezone } from "../../context/TimezoneContext";
@@ -252,11 +257,15 @@ export default function MinBookChart({
   const htfGoldenBoxPrimitiveRef = useRef<HorizontalRetraceZonePrimitive | null>(null);
   const userDrawingsPrimitiveRef = useRef<UserDrawingsPrimitive | null>(null);
 
-  // User Chart Drawing Tools State (H-Line, Square, Type)
+  // User Chart Drawing Tools State (H-Line, Square, Type) & Object Manipulation
   type DrawingTool = "cursor" | "hline" | "rect" | "text";
   const [activeTool, setActiveTool] = useState<DrawingTool>("cursor");
   const [drawingColor, setDrawingColor] = useState<ChartDrawingColor>("CYAN");
   const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const [editingPriceInput, setEditingPriceInput] = useState<string>("");
+  const [canvasCursor, setCanvasCursor] = useState<string>("default");
   const [rectDraftStart, setRectDraftStart] = useState<{
     timeSec: number;
     price: number;
@@ -274,6 +283,13 @@ export default function MinBookChart({
   const barTimesRef = useRef<number[]>([]);
   const intervalSecRef = useRef<number>(900);
   const isDraggingRectRef = useRef<boolean>(false);
+  const activeDragRef = useRef<{
+    id: string;
+    mode: DrawingDragMode;
+    startTimeSec: number;
+    startPrice: number;
+    snapshot: ChartDrawing;
+  } | null>(null);
 
   // Timeframe state
   const [timeframe, setTimeframe] = useState<"15m" | "5m">("15m");
@@ -345,47 +361,68 @@ export default function MinBookChart({
     setLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
   };
 
-  // Fetch or retrieve bars for selected timeframe
+  // Fetch or retrieve bars for selected timeframe + instrument
   const activeBars = useMemo(() => {
+    const key15 = `${selectedInstrument}_15m`;
+    const key5 = `${selectedInstrument}_5m`;
     if (timeframe === "15m") {
-      return cachedBarsByTf["15m"] || brief.intradayBars || [];
+      return cachedBarsByTf[key15] || brief.intradayBars || [];
     }
-    return cachedBarsByTf["5m"] || [];
-  }, [timeframe, cachedBarsByTf, brief.intradayBars]);
+    return cachedBarsByTf[key5] || [];
+  }, [timeframe, cachedBarsByTf, brief.intradayBars, selectedInstrument]);
 
-  // Initial populate of 15m bars from brief
+  // Populate 15m bars cleanly per instrument on brief update
   useEffect(() => {
     if (brief.intradayBars && brief.intradayBars.length > 0) {
       setCachedBarsByTf((prev) => ({
         ...prev,
-        "15m": brief.intradayBars!
+        [`${selectedInstrument}_15m`]: brief.intradayBars!
       }));
     }
-  }, [brief.intradayBars]);
+  }, [brief.intradayBars, selectedInstrument]);
+
+  const fetchTimeframeBars = useCallback(
+    async (tf: "15m" | "5m", forceFresh: boolean = false) => {
+      setLoadingTimeframe(true);
+      try {
+        const res = await fetch(
+          `/api/market-data/chart?symbol=${selectedInstrument}&interval=${tf}${forceFresh ? "&refresh=true" : ""}&t=${Date.now()}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json();
+        if (json.success && Array.isArray(json.bars)) {
+          setCachedBarsByTf((prev) => ({
+            ...prev,
+            [`${selectedInstrument}_${tf}`]: json.bars
+          }));
+        }
+      } catch (err) {
+        console.error(`Failed to fetch ${tf} bars:`, err);
+      } finally {
+        setLoadingTimeframe(false);
+      }
+    },
+    [selectedInstrument]
+  );
+
+  // Keep 5m chart dynamically synced whenever parent brief refreshes or instrument toggles
+  useEffect(() => {
+    if (timeframe === "5m") {
+      fetchTimeframeBars("5m", true);
+    }
+  }, [timeframe, brief.generatedAt, selectedInstrument, fetchTimeframeBars]);
 
   // Fetch 5m or 15m on switcher click
-  const handleSelectTimeframe = useCallback(async (tf: "15m" | "5m") => {
-    setTimeframe(tf);
-    if (cachedBarsByTf[tf] && cachedBarsByTf[tf].length > 0) {
-      return;
-    }
-
-    setLoadingTimeframe(true);
-    try {
-      const res = await fetch(`/api/market-data/chart?symbol=${selectedInstrument}&interval=${tf}`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.bars)) {
-        setCachedBarsByTf((prev) => ({
-          ...prev,
-          [tf]: json.bars
-        }));
+  const handleSelectTimeframe = useCallback(
+    async (tf: "15m" | "5m") => {
+      setTimeframe(tf);
+      if (tf === "15m" && brief.intradayBars && brief.intradayBars.length > 0) {
+        return;
       }
-    } catch (err) {
-      console.error(`Failed to fetch ${tf} bars:`, err);
-    } finally {
-      setLoadingTimeframe(false);
-    }
-  }, [selectedInstrument, cachedBarsByTf]);
+      await fetchTimeframeBars(tf, true);
+    },
+    [brief.intradayBars, fetchTimeframeBars]
+  );
 
   // ---------------------------------------------------------------------------
   // Initialize Chart Instance
@@ -1082,6 +1119,7 @@ export default function MinBookChart({
     // 1. Sync Rectangle & Text drawings to canvas primitive
     if (userDrawingsPrimitiveRef.current) {
       userDrawingsPrimitiveRef.current.setDrawings(drawings);
+      userDrawingsPrimitiveRef.current.setSelectedId(selectedDrawingId);
     }
 
     // 2. Sync Straight Horizontal Lines as native price lines with axis labels
@@ -1095,43 +1133,70 @@ export default function MinBookChart({
     for (const d of drawings) {
       if (d.type === "hline") {
         const palette = DRAWING_COLOR_PALETTE[d.color] || DRAWING_COLOR_PALETTE.CYAN;
+        const isSelected = d.id === selectedDrawingId;
         try {
           const line = candleSeries.createPriceLine({
             price: d.price,
-            color: palette.hex,
-            lineWidth: 2,
+            color: isSelected ? "#ffffff" : palette.hex,
+            lineWidth: isSelected ? 3 : 2,
             lineStyle: LineStyle.Solid,
             axisLabelVisible: true,
-            title: "LINE"
+            title: isSelected ? "★ LINE" : "LINE"
           });
           userHLineRefs.current.push(line);
         } catch {}
       }
     }
-  }, [drawings, selectedInstrument, activeBars, isTwapMode]);
+  }, [drawings, selectedDrawingId, selectedInstrument, activeBars, isTwapMode]);
 
-  // Focus text input automatically when user taps chart in Type mode
+  const selectedDrawing = useMemo(
+    () => drawings.find((d) => d.id === selectedDrawingId) ?? null,
+    [drawings, selectedDrawingId]
+  );
+
+  useEffect(() => {
+    if (selectedDrawing?.type === "hline") {
+      setEditingPriceInput(selectedDrawing.price.toFixed(2));
+    } else {
+      setEditingPriceInput("");
+    }
+  }, [selectedDrawing]);
+
+  // Focus text input automatically when user taps chart in Type mode or edits existing text
   useEffect(() => {
     if (pendingTextAnchor) {
       setTimeout(() => textInputRef.current?.focus(), 20);
     }
   }, [pendingTextAnchor]);
 
-  // Escape key cancels active drawing / switches back to cursor
+  // Escape key cancels active drawing / clears selection; Delete/Backspace removes selected object
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      const isTyping = targetTag === "INPUT" || targetTag === "TEXTAREA";
+
       if (e.key === "Escape") {
         setRectDraftStart(null);
         isDraggingRectRef.current = false;
+        activeDragRef.current = null;
         setPendingTextAnchor(null);
         setPendingTextValue("");
+        setEditingTextId(null);
+        setSelectedDrawingId(null);
         userDrawingsPrimitiveRef.current?.setPreview(null, null);
         setActiveTool("cursor");
+        return;
+      }
+
+      if (!isTyping && (e.key === "Delete" || e.key === "Backspace") && selectedDrawingId) {
+        e.preventDefault();
+        setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawingId));
+        setSelectedDrawingId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [selectedDrawingId]);
 
   const getChartPointFromEvent = useCallback(
     (clientX: number, clientY: number) => {
@@ -1161,12 +1226,167 @@ export default function MinBookChart({
     []
   );
 
+  const computeCurrentScreenBoxes = useCallback((): DrawingScreenBox[] => {
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    if (!chart || !series) return [];
+    const boxes: DrawingScreenBox[] = [];
+
+    for (const d of drawings) {
+      if (d.type === "hline") {
+        const y1 = series.priceToCoordinate(d.price);
+        if (y1 !== null) boxes.push({ drawing: d, y1: y1 as number });
+      } else if (d.type === "text") {
+        const x1 = timeSecToChartX(chart, barTimesRef.current, intervalSecRef.current, d.timeSec);
+        const y1 = series.priceToCoordinate(d.price);
+        if (x1 !== null && y1 !== null) boxes.push({ drawing: d, x1, y1: y1 as number });
+      } else if (d.type === "rect") {
+        const x1 = timeSecToChartX(chart, barTimesRef.current, intervalSecRef.current, d.timeSec1);
+        const x2 = timeSecToChartX(chart, barTimesRef.current, intervalSecRef.current, d.timeSec2);
+        const y1 = series.priceToCoordinate(d.price1);
+        const y2 = series.priceToCoordinate(d.price2);
+        if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
+          boxes.push({ drawing: d, x1, y1: y1 as number, x2, y2: y2 as number });
+        }
+      }
+    }
+    return boxes;
+  }, [drawings]);
+
+  const setChartNavigationEnabled = useCallback((enabled: boolean) => {
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: enabled,
+        horzTouchDrag: enabled,
+        vertTouchDrag: enabled
+      },
+      handleScale: {
+        axisPressedMouseMove: enabled,
+        mouseWheel: true,
+        pinch: enabled
+      }
+    });
+  }, []);
+
+  const handleCanvasPointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Do not intercept HUD clicks, inline text editor clicks, or active draw-mode overlay clicks
+    if (activeTool !== "cursor" || pendingTextAnchor) return;
+    if ((e.target as HTMLElement | null)?.closest("[data-chart-hud='true']")) return;
+
+    const pt = getChartPointFromEvent(e.clientX, e.clientY);
+    if (!pt) return;
+
+    const boxes = computeCurrentScreenBoxes();
+    const hit = hitTestScreenBoxes(pt.x, pt.y, boxes, 9);
+
+    if (!hit) {
+      setSelectedDrawingId(null);
+      return; // Let Lightweight Charts pan normally!
+    }
+
+    const hitDrawing = drawings.find((d) => d.id === hit.id);
+    if (!hitDrawing) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+    setSelectedDrawingId(hitDrawing.id);
+    setDrawingColor(hitDrawing.color);
+    setChartNavigationEnabled(false);
+
+    activeDragRef.current = {
+      id: hitDrawing.id,
+      mode: hit.mode,
+      startTimeSec: pt.timeSec,
+      startPrice: pt.price,
+      snapshot: { ...hitDrawing }
+    };
+  };
+
+  const handleCanvasPointerMoveCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activeTool !== "cursor") return;
+
+    const drag = activeDragRef.current;
+    if (drag) {
+      const pt = getChartPointFromEvent(e.clientX, e.clientY);
+      if (!pt) return;
+      const deltaTimeSec = pt.timeSec - drag.startTimeSec;
+      const deltaPrice = pt.price - drag.startPrice;
+      const updated = applyDrawingDrag(drag.snapshot, drag.mode, deltaTimeSec, deltaPrice, 0.25);
+      setDrawings((prev) => prev.map((d) => (d.id === drag.id ? updated : d)));
+      return;
+    }
+
+    // Hover cursor feedback when over selectable objects
+    const pt = getChartPointFromEvent(e.clientX, e.clientY);
+    if (!pt || drawings.length === 0) {
+      if (canvasCursor !== "default") setCanvasCursor("default");
+      return;
+    }
+    const hit = hitTestScreenBoxes(pt.x, pt.y, computeCurrentScreenBoxes(), 8);
+    if (!hit) {
+      if (canvasCursor !== "default") setCanvasCursor("default");
+    } else if (hit.mode === "NW" || hit.mode === "SE") {
+      setCanvasCursor("nwse-resize");
+    } else if (hit.mode === "NE" || hit.mode === "SW") {
+      setCanvasCursor("nesw-resize");
+    } else if (hit.type === "hline") {
+      setCanvasCursor("ns-resize");
+    } else {
+      setCanvasCursor("grab");
+    }
+  };
+
+  useEffect(() => {
+    const endActiveDrag = () => {
+      if (activeDragRef.current) {
+        activeDragRef.current = null;
+        setChartNavigationEnabled(true);
+      }
+    };
+    window.addEventListener("pointerup", endActiveDrag);
+    window.addEventListener("pointercancel", endActiveDrag);
+    return () => {
+      window.removeEventListener("pointerup", endActiveDrag);
+      window.removeEventListener("pointercancel", endActiveDrag);
+    };
+  }, [setChartNavigationEnabled]);
+
+  const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (activeTool !== "cursor") return;
+    if ((e.target as HTMLElement | null)?.closest("[data-chart-hud='true']")) return;
+    const pt = getChartPointFromEvent(e.clientX, e.clientY);
+    if (!pt) return;
+    const hit = hitTestScreenBoxes(pt.x, pt.y, computeCurrentScreenBoxes(), 9);
+    if (!hit) return;
+
+    const hitDrawing = drawings.find((d) => d.id === hit.id);
+    if (hitDrawing?.type === "text") {
+      setSelectedDrawingId(hitDrawing.id);
+      setEditingTextId(hitDrawing.id);
+      setPendingTextValue(hitDrawing.text);
+      setPendingTextAnchor({
+        timeSec: hitDrawing.timeSec,
+        price: hitDrawing.price,
+        screenX: pt.x,
+        screenY: pt.y
+      });
+    }
+  };
+
   const handleSelectTool = (tool: DrawingTool) => {
     setActiveTool(tool);
     setRectDraftStart(null);
     isDraggingRectRef.current = false;
+    activeDragRef.current = null;
+    setChartNavigationEnabled(true);
     setPendingTextAnchor(null);
     setPendingTextValue("");
+    setEditingTextId(null);
+    if (tool !== "cursor") {
+      setSelectedDrawingId(null);
+    }
     userDrawingsPrimitiveRef.current?.setPreview(null, null);
   };
 
@@ -1283,9 +1503,24 @@ export default function MinBookChart({
     if (e) e.preventDefault();
     if (!pendingTextAnchor) return;
     const trimmed = pendingTextValue.trim();
+
+    if (editingTextId) {
+      if (trimmed) {
+        setDrawings((prev) =>
+          prev.map((d) => (d.id === editingTextId && d.type === "text" ? { ...d, text: trimmed } : d))
+        );
+      }
+      setEditingTextId(null);
+      setPendingTextAnchor(null);
+      setPendingTextValue("");
+      setActiveTool("cursor");
+      return;
+    }
+
     if (trimmed) {
+      const nextId = `draw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const next: ChartDrawing = {
-        id: `draw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: nextId,
         type: "text",
         timeSec: pendingTextAnchor.timeSec,
         price: pendingTextAnchor.price,
@@ -1293,18 +1528,72 @@ export default function MinBookChart({
         color: drawingColor
       };
       setDrawings((prev) => [...prev, next]);
+      setSelectedDrawingId(nextId);
     }
     setPendingTextAnchor(null);
     setPendingTextValue("");
     setActiveTool("cursor");
   };
 
+  const handleSelectColor = (col: ChartDrawingColor) => {
+    setDrawingColor(col);
+    if (selectedDrawingId) {
+      setDrawings((prev) =>
+        prev.map((d) => (d.id === selectedDrawingId ? { ...d, color: col } : d))
+      );
+    }
+  };
+
+  const handleApplySelectedLinePrice = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDrawing || selectedDrawing.type !== "hline") return;
+    const parsed = parseFloat(editingPriceInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    const snapped = Math.round(parsed * 4) / 4;
+    setDrawings((prev) =>
+      prev.map((d) => (d.id === selectedDrawing.id && d.type === "hline" ? { ...d, price: snapped } : d))
+    );
+    setEditingPriceInput(snapped.toFixed(2));
+  };
+
+  const handleOpenEditSelectedText = () => {
+    if (!selectedDrawing || selectedDrawing.type !== "text") return;
+    const chart = chartRef.current;
+    const series = candleSeriesRef.current;
+    const x =
+      chart && timeSecToChartX(chart, barTimesRef.current, intervalSecRef.current, selectedDrawing.timeSec);
+    const y = series?.priceToCoordinate(selectedDrawing.price);
+    setEditingTextId(selectedDrawing.id);
+    setPendingTextValue(selectedDrawing.text);
+    setPendingTextAnchor({
+      timeSec: selectedDrawing.timeSec,
+      price: selectedDrawing.price,
+      screenX: typeof x === "number" ? x : 100,
+      screenY: typeof y === "number" ? y : 100
+    });
+  };
+
+  const handleDeleteSelected = () => {
+    if (!selectedDrawingId) return;
+    setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawingId));
+    setSelectedDrawingId(null);
+    setEditingTextId(null);
+  };
+
   const handleUndoDrawing = () => {
-    setDrawings((prev) => prev.slice(0, -1));
+    setDrawings((prev) => {
+      const next = prev.slice(0, -1);
+      if (selectedDrawingId && !next.some((d) => d.id === selectedDrawingId)) {
+        setSelectedDrawingId(null);
+      }
+      return next;
+    });
   };
 
   const handleClearDrawings = () => {
     setDrawings([]);
+    setSelectedDrawingId(null);
+    setEditingTextId(null);
     setRectDraftStart(null);
     setPendingTextAnchor(null);
     setPendingTextValue("");
@@ -1547,18 +1836,18 @@ export default function MinBookChart({
             <span>Type</span>
           </button>
 
-          {/* 4-Color Dots */}
+          {/* 4-Color Dots (styles active/selected drawing or next drawing) */}
           <div className="flex items-center space-x-1 pl-1.5 ml-1 border-l border-zinc-800">
             {(Object.keys(DRAWING_COLOR_PALETTE) as ChartDrawingColor[]).map((col) => {
               const p = DRAWING_COLOR_PALETTE[col];
-              const isSelected = drawingColor === col;
+              const isSelected = (selectedDrawing?.color || drawingColor) === col;
               return (
                 <button
                   key={col}
                   type="button"
-                  onClick={() => setDrawingColor(col)}
+                  onClick={() => handleSelectColor(col)}
                   aria-label={`Drawing color ${p.label}`}
-                  title={p.label}
+                  title={selectedDrawing ? `Change selected color to ${p.label}` : p.label}
                   className={`w-3.5 h-3.5 rounded-full border transition-transform ${
                     isSelected ? "scale-110 ring-1 ring-white border-white" : "border-zinc-700 opacity-70 hover:opacity-100"
                   }`}
@@ -1569,8 +1858,53 @@ export default function MinBookChart({
           </div>
         </div>
 
-        <div className="flex items-center space-x-1.5">
-          {activeTool !== "cursor" && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {selectedDrawing && (
+            <div className="flex flex-wrap items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px]">
+              <span className="text-zinc-300 font-semibold uppercase">
+                {selectedDrawing.type === "hline"
+                  ? "Line"
+                  : selectedDrawing.type === "rect"
+                  ? "Square"
+                  : "Text"}
+              </span>
+
+              {selectedDrawing.type === "hline" && (
+                <form onSubmit={handleApplySelectedLinePrice} className="flex items-center space-x-1">
+                  <input
+                    type="number"
+                    step="0.25"
+                    value={editingPriceInput}
+                    onChange={(e) => setEditingPriceInput(e.target.value)}
+                    onBlur={handleApplySelectedLinePrice}
+                    className="w-20 bg-zinc-950 border border-zinc-700 rounded px-1.5 py-0.2 text-[11px] text-zinc-100 font-mono tabular-nums focus:outline-none focus:border-sky-500"
+                  />
+                </form>
+              )}
+
+              {selectedDrawing.type === "text" && (
+                <button
+                  type="button"
+                  onClick={handleOpenEditSelectedText}
+                  className="px-1.5 py-0.2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600"
+                >
+                  Edit
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleDeleteSelected}
+                className="px-1.5 py-0.2 rounded bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-800/70 flex items-center space-x-0.5"
+                title="Delete selected object (or press Delete/Backspace)"
+              >
+                <X className="w-2.5 h-2.5" />
+                <span>Delete</span>
+              </button>
+            </div>
+          )}
+
+          {activeTool !== "cursor" && !selectedDrawing && (
             <span className="text-[10px] text-sky-300 hidden sm:inline">
               {activeTool === "hline"
                 ? "Click price to place line"
@@ -1579,6 +1913,11 @@ export default function MinBookChart({
                   ? "Click second corner"
                   : "Drag or click 2 corners"
                 : "Click chart to type"}
+            </span>
+          )}
+          {!selectedDrawing && activeTool === "cursor" && drawings.length > 0 && (
+            <span className="text-[10px] text-zinc-500 hidden xl:inline">
+              Click any object to drag, resize, or edit
             </span>
           )}
           {drawings.length > 0 && (
@@ -1607,10 +1946,19 @@ export default function MinBookChart({
       </div>
 
       {/* 2. Chart Canvas Container with HUD Overlays */}
-      <div className="relative w-full h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px] bg-[#09090b]">
+      <div
+        onPointerDownCapture={handleCanvasPointerDownCapture}
+        onPointerMove={handleCanvasPointerMoveCapture}
+        onDoubleClick={handleCanvasDoubleClick}
+        style={{ cursor: activeTool === "cursor" ? canvasCursor : "crosshair" }}
+        className="relative w-full h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px] bg-[#09090b]"
+      >
         {/* Top-Right GEX Regime HUD Card */}
         {layers.gex && brief.gex && !allHudsHidden && (
-          <div className="absolute top-2 right-2 sm:top-2.5 sm:right-3 z-10 pointer-events-auto flex flex-col items-end space-y-1 max-w-[46%] sm:max-w-xs">
+          <div
+            data-chart-hud="true"
+            className="absolute top-2 right-2 sm:top-2.5 sm:right-3 z-10 pointer-events-auto flex flex-col items-end space-y-1 max-w-[46%] sm:max-w-xs"
+          >
             {isGexMinimized ? (
               <button
                 onClick={() => setIsGexMinimized(false)}
@@ -1685,7 +2033,10 @@ export default function MinBookChart({
         )}
         {/* Top-Left HUD Overlay inside chart container */}
         {!allHudsHidden && (
-          <div className="absolute top-2 left-2 sm:top-2.5 sm:left-3 z-10 pointer-events-none flex flex-col space-y-1.5 max-w-[52%] sm:max-w-lg">
+          <div
+            data-chart-hud="true"
+            className="absolute top-2 left-2 sm:top-2.5 sm:left-3 z-10 pointer-events-none flex flex-col space-y-1.5 max-w-[52%] sm:max-w-lg"
+          >
             {/* Bar OHLC Strip */}
             {isOhlcMinimized ? (
               <button
@@ -1891,13 +2242,14 @@ export default function MinBookChart({
               type="submit"
               className="px-2 py-1 rounded bg-zinc-100 hover:bg-white text-zinc-950 text-[11px] font-mono font-semibold"
             >
-              Add
+              {editingTextId ? "Save" : "Add"}
             </button>
             <button
               type="button"
               onClick={() => {
                 setPendingTextAnchor(null);
                 setPendingTextValue("");
+                setEditingTextId(null);
               }}
               className="p-1 text-zinc-400 hover:text-zinc-200"
               title="Cancel"
@@ -1908,7 +2260,10 @@ export default function MinBookChart({
         )}
 
         {/* Bottom TradingView Attribution (Apache-2.0 License Requirement) */}
-        <div className="absolute bottom-1 right-2 z-10 text-[9px] text-slate-500 font-sans pointer-events-auto">
+        <div
+          data-chart-hud="true"
+          className="absolute bottom-1 right-2 z-10 text-[9px] text-slate-500 font-sans pointer-events-auto"
+        >
           <a
             href="https://www.tradingview.com/"
             target="_blank"

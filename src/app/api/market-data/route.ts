@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpenBrief } from "@/lib/market/service";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -20,7 +22,7 @@ export async function GET(request: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
         }
       }
     );

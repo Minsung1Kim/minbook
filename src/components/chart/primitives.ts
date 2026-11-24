@@ -596,6 +596,7 @@ interface RenderedRectItem {
   y2: number;
   color: ChartDrawingColor;
   isPreview?: boolean;
+  isSelected?: boolean;
 }
 
 interface RenderedTextItem {
@@ -603,6 +604,7 @@ interface RenderedTextItem {
   y: number;
   text: string;
   color: ChartDrawingColor;
+  isSelected?: boolean;
 }
 
 interface RenderedHLinePreview {
@@ -611,19 +613,27 @@ interface RenderedHLinePreview {
   color: ChartDrawingColor;
 }
 
+interface RenderedSelectedHLine {
+  y: number;
+  color: ChartDrawingColor;
+}
+
 class UserDrawingsRenderer implements IPrimitivePaneRenderer {
   private _rects: RenderedRectItem[] = [];
   private _texts: RenderedTextItem[] = [];
   private _hlinePreview: RenderedHLinePreview | null = null;
+  private _selectedHLine: RenderedSelectedHLine | null = null;
 
   setData(
     rects: RenderedRectItem[],
     texts: RenderedTextItem[],
-    hlinePreview: RenderedHLinePreview | null
+    hlinePreview: RenderedHLinePreview | null,
+    selectedHLine: RenderedSelectedHLine | null = null
   ) {
     this._rects = rects;
     this._texts = texts;
     this._hlinePreview = hlinePreview;
+    this._selectedHLine = selectedHLine;
   }
 
   draw(target: CanvasRenderingTarget2D): void {
@@ -638,13 +648,31 @@ class UserDrawingsRenderer implements IPrimitivePaneRenderer {
 
         ctx.save();
         ctx.fillStyle = palette.fill;
-        ctx.strokeStyle = palette.stroke;
-        ctx.lineWidth = r.isPreview ? 1.5 : 1.5;
+        ctx.strokeStyle = r.isSelected ? "#ffffff" : palette.stroke;
+        ctx.lineWidth = r.isSelected ? 2 : 1.5;
         if (r.isPreview) {
           ctx.setLineDash([4, 3]);
         }
         ctx.fillRect(left, top, width, height);
         ctx.strokeRect(left, top, width, height);
+
+        // Draw corner resize handles when selected
+        if (r.isSelected && !r.isPreview) {
+          const corners: Array<[number, number]> = [
+            [left, top],
+            [left + width, top],
+            [left, top + height],
+            [left + width, top + height]
+          ];
+          const hs = 4;
+          for (const [cx, cy] of corners) {
+            ctx.fillStyle = "#ffffff";
+            ctx.strokeStyle = palette.hex;
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2);
+            ctx.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2);
+          }
+        }
         ctx.restore();
       }
 
@@ -659,6 +687,24 @@ class UserDrawingsRenderer implements IPrimitivePaneRenderer {
         ctx.moveTo(0, this._hlinePreview.y);
         ctx.lineTo(mediaSize.width, this._hlinePreview.y);
         ctx.stroke();
+        ctx.restore();
+      }
+
+      // 2B. Selected Horizontal Line Handle Indicators
+      if (this._selectedHLine !== null) {
+        const palette = DRAWING_COLOR_PALETTE[this._selectedHLine.color] || DRAWING_COLOR_PALETTE.CYAN;
+        const y = this._selectedHLine.y;
+        const handleXs = [28, Math.max(60, mediaSize.width - 90)];
+        ctx.save();
+        for (const hx of handleXs) {
+          ctx.beginPath();
+          ctx.arc(hx, y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = "#ffffff";
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = palette.hex;
+          ctx.stroke();
+        }
         ctx.restore();
       }
 
@@ -678,8 +724,8 @@ class UserDrawingsRenderer implements IPrimitivePaneRenderer {
         const drawY = Math.max(4, Math.min(t.y - boxH / 2, mediaSize.height - boxH - 4));
 
         ctx.fillStyle = palette.pillBg;
-        ctx.strokeStyle = palette.stroke;
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = t.isSelected ? "#ffffff" : palette.stroke;
+        ctx.lineWidth = t.isSelected ? 2 : 1;
         ctx.beginPath();
         ctx.roundRect(drawX, drawY, boxW, boxH, 4);
         ctx.fill();
@@ -698,6 +744,7 @@ export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
   private _series: ISeriesApi<SeriesType, Time> | null = null;
   private _requestUpdate: (() => void) | null = null;
   private _drawings: ChartDrawing[] = [];
+  private _selectedId: string | null = null;
   private _previewRect: Omit<RectDrawing, "id"> | null = null;
   private _previewHLine: { price: number; color: ChartDrawingColor } | null = null;
   private _barsTimes: number[] = [];
@@ -744,6 +791,12 @@ export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
     this._requestUpdate?.();
   }
 
+  setSelectedId(selectedId: string | null): void {
+    this._selectedId = selectedId;
+    this.updateAllViews();
+    this._requestUpdate?.();
+  }
+
   setPreview(
     previewRect: Omit<RectDrawing, "id"> | null,
     previewHLine: { price: number; color: ChartDrawingColor } | null
@@ -756,27 +809,34 @@ export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
 
   updateAllViews(): void {
     if (!this._chart || !this._series) {
-      this._renderer.setData([], [], null);
+      this._renderer.setData([], [], null, null);
       return;
     }
 
     const rects: RenderedRectItem[] = [];
     const texts: RenderedTextItem[] = [];
+    let selectedHLine: RenderedSelectedHLine | null = null;
 
     for (const d of this._drawings) {
+      const isSelected = d.id === this._selectedId;
       if (d.type === "rect") {
         const x1 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec1);
         const x2 = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec2);
         const y1 = this._series.priceToCoordinate(d.price1);
         const y2 = this._series.priceToCoordinate(d.price2);
         if (x1 !== null && x2 !== null && y1 !== null && y2 !== null) {
-          rects.push({ x1, y1: y1 as number, x2, y2: y2 as number, color: d.color });
+          rects.push({ x1, y1: y1 as number, x2, y2: y2 as number, color: d.color, isSelected });
         }
       } else if (d.type === "text") {
         const x = timeSecToChartX(this._chart, this._barsTimes, this._intervalSec, d.timeSec);
         const y = this._series.priceToCoordinate(d.price);
         if (x !== null && y !== null) {
-          texts.push({ x, y: y as number, text: d.text, color: d.color });
+          texts.push({ x, y: y as number, text: d.text, color: d.color, isSelected });
+        }
+      } else if (d.type === "hline" && isSelected) {
+        const y = this._series.priceToCoordinate(d.price);
+        if (y !== null) {
+          selectedHLine = { y: y as number, color: d.color };
         }
       }
     }
@@ -810,6 +870,155 @@ export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
       }
     }
 
-    this._renderer.setData(rects, texts, hlinePreview);
+    this._renderer.setData(rects, texts, hlinePreview, selectedHLine);
   }
+}
+
+export type RectCornerHandle = "NW" | "NE" | "SW" | "SE";
+export type DrawingDragMode = "MOVE" | RectCornerHandle;
+
+export interface DrawingScreenBox {
+  drawing: ChartDrawing;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  widthPx?: number;
+}
+
+export interface DrawingHitResult {
+  id: string;
+  type: ChartDrawing["type"];
+  mode: DrawingDragMode;
+}
+
+/**
+ * Hit-tests user chart objects in visual priority order (topmost drawn object first).
+ */
+export function hitTestScreenBoxes(
+  px: number,
+  py: number,
+  boxes: DrawingScreenBox[],
+  tolerance: number = 9
+): DrawingHitResult | null {
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const item = boxes[i];
+    const d = item.drawing;
+
+    if (d.type === "text" && item.x1 !== undefined && item.y1 !== undefined) {
+      const boxW = Math.max(48, d.text.trim().length * 7 + 16);
+      const boxH = 24;
+      const drawX = Math.max(4, item.x1);
+      const drawY = item.y1 - boxH / 2;
+      if (
+        px >= drawX - 4 &&
+        px <= drawX + boxW + 4 &&
+        py >= drawY - 4 &&
+        py <= drawY + boxH + 4
+      ) {
+        return { id: d.id, type: "text", mode: "MOVE" };
+      }
+    } else if (d.type === "hline" && item.y1 !== undefined) {
+      if (Math.abs(py - item.y1) <= tolerance) {
+        return { id: d.id, type: "hline", mode: "MOVE" };
+      }
+    } else if (
+      d.type === "rect" &&
+      item.x1 !== undefined &&
+      item.y1 !== undefined &&
+      item.x2 !== undefined &&
+      item.y2 !== undefined
+    ) {
+      const left = Math.min(item.x1, item.x2);
+      const right = Math.max(item.x1, item.x2);
+      const top = Math.min(item.y1, item.y2);
+      const bottom = Math.max(item.y1, item.y2);
+
+      // Corner resize handles get highest priority inside/near rect
+      const corners: Array<{ mode: RectCornerHandle; cx: number; cy: number }> = [
+        { mode: "NW", cx: left, cy: top },
+        { mode: "NE", cx: right, cy: top },
+        { mode: "SW", cx: left, cy: bottom },
+        { mode: "SE", cx: right, cy: bottom }
+      ];
+      for (const c of corners) {
+        if (Math.abs(px - c.cx) <= tolerance + 2 && Math.abs(py - c.cy) <= tolerance + 2) {
+          return { id: d.id, type: "rect", mode: c.mode };
+        }
+      }
+
+      if (px >= left - 4 && px <= right + 4 && py >= top - 4 && py <= bottom + 4) {
+        return { id: d.id, type: "rect", mode: "MOVE" };
+      }
+    }
+  }
+  return null;
+}
+
+export function applyDrawingDrag(
+  original: ChartDrawing,
+  mode: DrawingDragMode,
+  deltaTimeSec: number,
+  deltaPrice: number,
+  snapTick: number = 0.25
+): ChartDrawing {
+  const snap = (p: number) => Math.round(p / snapTick) * snapTick;
+
+  if (original.type === "hline") {
+    return {
+      ...original,
+      price: snap(original.price + deltaPrice)
+    };
+  }
+
+  if (original.type === "text") {
+    return {
+      ...original,
+      timeSec: Math.round(original.timeSec + deltaTimeSec),
+      price: snap(original.price + deltaPrice)
+    };
+  }
+
+  // RectDrawing
+  if (mode === "MOVE") {
+    return {
+      ...original,
+      timeSec1: Math.round(original.timeSec1 + deltaTimeSec),
+      timeSec2: Math.round(original.timeSec2 + deltaTimeSec),
+      price1: snap(original.price1 + deltaPrice),
+      price2: snap(original.price2 + deltaPrice)
+    };
+  }
+
+  const minT = Math.min(original.timeSec1, original.timeSec2);
+  const maxT = Math.max(original.timeSec1, original.timeSec2);
+  const lowP = Math.min(original.price1, original.price2);
+  const highP = Math.max(original.price1, original.price2);
+
+  let nextMinT = minT;
+  let nextMaxT = maxT;
+  let nextLowP = lowP;
+  let nextHighP = highP;
+
+  if (mode === "NW") {
+    nextMinT = Math.round(minT + deltaTimeSec);
+    nextHighP = snap(highP + deltaPrice);
+  } else if (mode === "NE") {
+    nextMaxT = Math.round(maxT + deltaTimeSec);
+    nextHighP = snap(highP + deltaPrice);
+  } else if (mode === "SW") {
+    nextMinT = Math.round(minT + deltaTimeSec);
+    nextLowP = snap(lowP + deltaPrice);
+  } else if (mode === "SE") {
+    nextMaxT = Math.round(maxT + deltaTimeSec);
+    nextLowP = snap(lowP + deltaPrice);
+  }
+
+  return {
+    ...original,
+    timeSec1: nextMinT,
+    timeSec2: nextMaxT,
+    price1: nextHighP,
+    price2: nextLowP
+  };
 }

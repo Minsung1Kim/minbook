@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getUSEconomicEvents } from "@/lib/market/economicCalendar";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const events = await getUSEconomicEvents();
@@ -15,7 +17,7 @@ export async function GET() {
       },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
         }
       }
     );

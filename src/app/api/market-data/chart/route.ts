@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getMarketDataProvider } from "@/lib/market/factory";
 import { SeedFallbackProvider } from "@/lib/market/fallback";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -9,8 +11,12 @@ export async function GET(request: NextRequest) {
     const symbol = symbolParam.startsWith("MNQ") ? "MNQ" : "NQ";
     const intervalParam = searchParams.get("interval") || "15m";
     const interval = (intervalParam === "5m" ? "5m" : "15m") as "5m" | "15m";
+    const refresh = searchParams.get("refresh") === "true";
 
     const provider = getMarketDataProvider();
+    if (refresh && provider.clearCache) {
+      provider.clearCache();
+    }
     let bars = [];
     let providerName = provider.name;
 
@@ -33,7 +39,7 @@ export async function GET(request: NextRequest) {
       },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120"
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"
         }
       }
     );

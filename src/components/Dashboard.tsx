@@ -48,9 +48,10 @@ export function Dashboard() {
   const [currentProfile, setCurrentProfile] = useState<UserProfile | null>(null);
 
   const [isAutoRefreshOn, setIsAutoRefreshOn] = useState<boolean>(true);
-  const [refreshIntervalSec] = useState<number>(60);
-  const [countdown, setCountdown] = useState<number>(60);
+  const [refreshIntervalSec] = useState<number>(30);
+  const [countdown, setCountdown] = useState<number>(30);
   const [secondsAgo, setSecondsAgo] = useState<number>(0);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const lastFetchedTimeRef = useRef<number>(Date.now());
   const previousPriceRef = useRef<number | null>(null);
   const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
@@ -97,8 +98,8 @@ export function Dashboard() {
       setError(null);
 
       try {
-        const url = `/api/market-data?symbol=${selectedInstrument}&refresh=true`;
-        const res = await fetch(url);
+        const url = `/api/market-data?symbol=${selectedInstrument}&refresh=true&t=${Date.now()}`;
+        const res = await fetch(url, { cache: "no-store" });
         const json = await res.json();
 
         if (!res.ok || !json.success) {
@@ -117,7 +118,9 @@ export function Dashboard() {
         previousPriceRef.current = newData.quote.price;
 
         setBrief(newData);
-        lastFetchedTimeRef.current = Date.now();
+        const now = Date.now();
+        lastFetchedTimeRef.current = now;
+        setNowTick(now);
         setSecondsAgo(0);
         setCountdown(refreshIntervalSec);
       } catch (err: any) {
@@ -140,8 +143,12 @@ export function Dashboard() {
 
     const timer = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
-      const elapsed = Math.floor((Date.now() - lastFetchedTimeRef.current) / 1000);
+      const now = Date.now();
+      const elapsed = Math.floor((now - lastFetchedTimeRef.current) / 1000);
       setSecondsAgo(elapsed);
+      if (elapsed % 15 === 0) {
+        setNowTick(now);
+      }
 
       setCountdown((prev) => {
         if (prev <= 1) {
@@ -176,8 +183,8 @@ export function Dashboard() {
 
   const plainBrief = useMemo(() => {
     if (!brief) return null;
-    return buildPlainEnglishBrief(brief);
-  }, [brief]);
+    return buildPlainEnglishBrief(brief, new Date(nowTick));
+  }, [brief, nowTick]);
 
   const formattedExchangeTime = quote?.timestamp
     ? new Date(quote.timestamp).toLocaleTimeString("en-US", {

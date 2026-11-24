@@ -582,6 +582,14 @@ All notable changes and architectural decisions are logged here.
   - Updated `grader.ts`: Preserves `HIT_TP1` when price hits TP1 before later triggering the runner stop or MSS kill-switch.
   - Hardened `gex.ts`: Locks basis ratio to standard 41.35 when timestamps mismatch $> 60$s and settlement basis is undefined.
   - Hardened `ltfExecution.ts`: Transitions status to `STAND_ASIDE` when contracts quantize to 0.
+- **Authentication Gate & How-To-Use Scalper Guide (`src/proxy.ts`, `src/app/login/page.tsx`, `src/components/HowToUseNotice.tsx`):**
+  - **Sign In First Architecture (`src/proxy.ts`):** Unauthenticated visitors are now routed directly to `/login` first before accessing the dashboard. Once signed in, they are redirected straight into their account (`/`).
+  - **Sign Up / Sign In Dual Mode (`src/app/login/page.tsx`):** Added a clean toggle allowing traders to either sign in with existing credentials or register a new trader account via Supabase Auth.
+  - **Simple 3-Step "How to Use" Notice (`src/components/HowToUseNotice.tsx`):** Mounted a high-contrast terminal guide banner on the dashboard explaining the 3 simple scalper steps:
+    1. 09:30–09:33 ET: Hands off mouse (wait for 3m range).
+    2. 09:34–09:50 ET: Check 1-Min Scalp Card & set limit order inside entry zone with 10–18 pt stop.
+    3. Scale 50% at TP1, move stop to Breakeven, hold runner for TP2 (1 trade per day mandate).
+  - Added quick "Rules" toggle directly on `LTFTradeCardView.tsx` for immediate at-a-glance reminders.
 - **Verification:**
   - Full Vitest suite: 16 test files, 114 tests passing (0 failures).
   - Next.js 16 production build succeeded with 0 errors.

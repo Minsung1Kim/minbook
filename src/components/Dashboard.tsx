@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Header } from "@/components/Header";
+import { HowToUseNotice } from "@/components/HowToUseNotice";
 import { LTFTradeCardView } from "@/components/LTFTradeCardView";
 import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
@@ -257,6 +258,9 @@ export function Dashboard() {
                 <span className="font-medium">{plan.newsBufferWarning}</span>
               </div>
             )}
+
+            {/* Quick Start Scalper Guide */}
+            <HowToUseNotice />
 
             {/* 1. HERO: AI QUANT PREDICTION COMMAND CARD (Forefront of MinBook) */}
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800/80 p-4 sm:p-5 space-y-3.5">

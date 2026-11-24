@@ -44,20 +44,29 @@ export async function proxy(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
-  // Protect /journal - redirect unauthenticated visitors to /login
-  if (pathname.startsWith("/journal")) {
-    if (!user) {
-      const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/login";
+  // Public routes that do not require authentication
+  const isPublicRoute =
+    pathname === "/login" ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/api/market-data") ||
+    pathname.startsWith("/api/calendar") ||
+    pathname.startsWith("/api/cron");
+
+  // If unauthenticated, redirect to sign-in page first
+  if (!user && !isPublicRoute) {
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = "/login";
+    if (pathname !== "/") {
       loginUrl.searchParams.set("redirect", pathname);
-      return NextResponse.redirect(loginUrl);
     }
+    return NextResponse.redirect(loginUrl);
   }
 
-  // If authenticated user navigates to /login, redirect to /
+  // If authenticated user navigates to /login, redirect to account dashboard (/)
   if (pathname === "/login" && user) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/";
+    redirectUrl.pathname = request.nextUrl.searchParams.get("redirect") || "/";
+    redirectUrl.searchParams.delete("redirect");
     return NextResponse.redirect(redirectUrl);
   }
 

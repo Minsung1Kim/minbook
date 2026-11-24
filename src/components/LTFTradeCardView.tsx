@@ -10,7 +10,8 @@ import {
   ChevronUp,
   Flame,
   Zap,
-  Info
+  Info,
+  HelpCircle
 } from "lucide-react";
 import { LTFTradeCard, PropProfile } from "@/types/market";
 import { PROP_PRESETS } from "@/lib/risk/propProfile";
@@ -28,6 +29,7 @@ export function LTFTradeCardView({
   propProfile = PROP_PRESETS.Topstep_EOD
 }: LTFTradeCardViewProps) {
   const [showHTFContext, setShowHTFContext] = useState(false);
+  const [showCardGuide, setShowCardGuide] = useState(false);
 
   if (!card) {
     return (
@@ -63,6 +65,16 @@ export function LTFTradeCardView({
         </div>
 
         <div className="flex items-center space-x-2 text-xs">
+          {/* Quick Rules Toggle */}
+          <button
+            onClick={() => setShowCardGuide(!showCardGuide)}
+            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 font-mono text-[10px] flex items-center space-x-1 transition-colors"
+            title="Click for simple scalper instructions"
+          >
+            <HelpCircle className="w-3 h-3 text-cyan-400" />
+            <span>{showCardGuide ? "Hide Rules" : "Rules"}</span>
+          </button>
+
           {/* Static Clean Scalper Badge - No Dropdown Clutter */}
           <span className="px-2.5 py-0.5 rounded bg-zinc-800/90 text-cyan-300 border border-zinc-700/80 font-mono text-[11px] font-semibold tracking-wider">
             MNQ SCALP MODE
@@ -73,6 +85,27 @@ export function LTFTradeCardView({
           </span>
         </div>
       </div>
+
+      {/* Quick Scalper Instructions Drawer */}
+      {showCardGuide && (
+        <div className="px-4 py-2.5 bg-cyan-950/40 border-b border-cyan-900/50 text-xs font-sans space-y-1.5 text-zinc-300">
+          <div className="font-mono text-[11px] font-bold text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5">
+            <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+            <span>How to Trade This Card (Very Simple 3 Steps):</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px]">
+            <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800/80">
+              1. <strong className="text-zinc-100">Limit Entry:</strong> Set limit inside [{card.entryZone.low.toFixed(1)} – {card.entryZone.high.toFixed(1)}]. Do NOT market chase!
+            </div>
+            <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800/80">
+              2. <strong className="text-rose-400">Fixed Stop:</strong> Hard stop at {card.stopLoss.toFixed(1)} ({card.stopPts.toFixed(1)} pts / ${(card.stopPts * 2).toFixed(0)}).
+            </div>
+            <div className="p-1.5 rounded bg-zinc-900/80 border border-zinc-800/80">
+              3. <strong className="text-emerald-400">Scale at TP1:</strong> Take 50% profit at {card.tp1.price.toFixed(1)}, move stop to BE, runner to {card.tp2.price.toFixed(1)}.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Observation Lock Banner (09:30–09:33 ET) */}
       {isObservationLock && (

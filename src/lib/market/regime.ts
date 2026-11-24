@@ -7,6 +7,7 @@ import {
   MacroRegimeState,
   GEXExposureData
 } from "@/types/market";
+import { evaluateLayer1RiskGates } from "./riskGates";
 
 export function evaluateBiasAndRegime(
   currentPrice: number,
@@ -19,18 +20,25 @@ export function evaluateBiasAndRegime(
 ): BiasRegime {
   const drivers: string[] = [];
   const risks: string[] = [];
-  let regimeRiskMultiplier: 1.0 | 0.5 | 0.0 = 1.0;
 
-  // 0. Dealer Gamma Exposure (GEX Tilt) - Strictly a regime tilt, never deterministic
-  if (gex) {
-    if (gex.netGammaRegime === "NEGATIVE_GAMMA") {
-      drivers.push(
-        `DEALER GEX TILT: Negative Gamma (<$0). Market makers hedge with market direction, amplifying momentum, expanding candle wicks, and supporting HTF continuation runners (2.5R–3.0R). Expect sharper stop sweeps.`
-      );
+  // Evaluate Layer 1 Multiplicative Risk Gates & Vetoes
+  const layer1 = evaluateLayer1RiskGates({
+    currentPrice,
+    metrics,
+    volatilitySurface,
+    gex,
+    vix,
+    hasRedFolderNewsAroundOpen
+  });
+
+  let regimeRiskMultiplier: 1.0 | 0.5 | 0.0 = layer1.sizeMultiplier;
+
+  // Add Layer 1 Risk Gate observations to drivers / risks
+  for (const detail of layer1.gateDetails) {
+    if (detail.includes("VETO") || detail.includes("NEGATIVE") || detail.includes("BACKWARDATION") || detail.includes("PINNING") || detail.includes("SHOCK")) {
+      risks.push(detail);
     } else {
-      risks.push(
-        `DEALER GEX TILT: Positive Gamma (+$${(gex.totalNetGex / 1e6).toFixed(0)}M). Market makers hedge counter-trend, dampening volatility and pinning price into mean-reversion chop. Tighter targets (1.8R–2.2R) favored; beware pinning near Call Wall (${gex.callWallNq}) or Put Wall (${gex.putWallNq}).`
-      );
+      drivers.push(detail);
     }
   }
 
@@ -52,24 +60,26 @@ export function evaluateBiasAndRegime(
     htfTrend = "BEARISH";
   }
 
-  // 2. Standardized Overnight Inventory (0% to 100%)
-  if (metrics.inventoryPercent >= 70) {
+  // 2. Standardized Overnight Inventory & Reversal Veto check
+  if (layer1.reversalVetoActive && layer1.reversalVetoReason) {
+    risks.push(`REVERSAL VETO: ${layer1.reversalVetoReason}`);
+  } else if (metrics.inventoryPercent >= 70) {
     drivers.push(
-      `Overnight inventory is heavily long (${metrics.inventoryPercent}% of Globex bars accepted above PDC). If 9:30 AM open stalls, expect an inventory liquidation flush.`
+      `Overnight inventory is heavily long (${metrics.inventoryPercent}% of Globex bars accepted above PDC).`
     );
   } else if (metrics.inventoryPercent <= 30) {
     drivers.push(
-      `Overnight inventory is heavily short (only ${metrics.inventoryPercent}% above PDC). Trapped overnight shorts vulnerable to aggressive short-squeeze drive.`
+      `Overnight inventory is heavily short (${metrics.inventoryPercent}% above PDC).`
     );
   } else {
     drivers.push(
-      `Overnight inventory is balanced (${metrics.inventoryPercent}% above PDC). Expect clean two-way auction at the open.`
+      `Overnight inventory is balanced (${metrics.inventoryPercent}% above PDC).`
     );
   }
 
   // 3. Opening Price Location
   if (metrics.openingLocation === "ABOVE_ONH") {
-    drivers.push(`Opening above Overnight High (${metrics.onh}). Runaway expansion or immediate retest of ONH as support favored.`);
+    drivers.push(`Opening above Overnight High (${metrics.onh}). Runaway expansion or retest of ONH favored.`);
   } else if (metrics.openingLocation === "INSIDE_UPPER_GLOBEX") {
     drivers.push(`Opening in upper Globex quadrant between ON Mid (${metrics.onMid}) and ONH (${metrics.onh}).`);
   } else if (metrics.openingLocation === "INSIDE_LOWER_GLOBEX") {
@@ -98,82 +108,30 @@ export function evaluateBiasAndRegime(
     }
   }
 
-  // 6. Volatility Surface & Tail Risk Analytics
+  // 6. Volatility & Chop Risk
   let chopRisk: BiasRegime["chopRisk"] = "LOW";
   const overnightAtrRatio = metrics.overnightRange / (metrics.atr14Daily || 160);
 
-  if (volatilitySurface) {
-    // A. Variance Risk Premium (VRP = IV - RV)
-    if (volatilitySurface.isNegativeVrp) {
-      chopRisk = "ELEVATED";
-      regimeRiskMultiplier = 0.5;
-      risks.push(
-        `NEGATIVE VRP (Realized Vol ${volatilitySurface.realizedVolYZ20d.toFixed(1)}% > IV ${volatilitySurface.vxn.toFixed(1)}%): Market is underpricing tail movement. Dislocation / stop-run risk is high; risk scaled to 0.5x.`
-      );
-    }
-
-    // B. Term Structure (VIX / VIX3M)
-    if (volatilitySurface.termStructureRegime === "BACKWARDATION (STRESS)") {
-      chopRisk = "SEVERE";
-      regimeRiskMultiplier = 0.5;
-      risks.push(
-        `VOLATILITY BACKWARDATION (VIX/VIX3M: ${volatilitySurface.termRatio.toFixed(2)} > 1.00): Inverted volatility term structure reflects acute market hedging. Severe whipsaw risk.`
-      );
-    } else if (volatilitySurface.termStructureRegime === "ELEVATED") {
-      risks.push(`Term structure is elevated (VIX/VIX3M: ${volatilitySurface.termRatio.toFixed(2)}). Caution on runner targets.`);
-    }
-
-    // C. Short-term shock (VIX9D / VIX)
-    if (volatilitySurface.isShortTermShock) {
-      regimeRiskMultiplier = 0.5;
-      risks.push(
-        `SHORT-TERM VOL SHOCK (VIX9D/VIX: ${volatilitySurface.shortTermShockRatio.toFixed(2)} > 1.15): Near-term shock hazard active right at the opening bell.`
-      );
-    }
-
-    // D. Volatility of VIX (VVIX)
-    if (volatilitySurface.vvixRegime === "HIGH TAIL / WHIPSAW RISK (>=110)") {
-      regimeRiskMultiplier = 0.5;
-      risks.push(
-        `VVIX HIGH (${volatilitySurface.vvix.toFixed(1)} >= 110): Volatility of vol signals rapid gamma flips and aggressive 20-30 pt wick expansion.`
-      );
-    }
-  } else if (vix && vix.value > 26) {
+  if (layer1.activeVetoes.some((v) => v.includes("BACKWARDATION") || v.includes("STAND ASIDE"))) {
     chopRisk = "SEVERE";
-    regimeRiskMultiplier = 0.5;
-    risks.push(`VIX elevated at ${vix.value.toFixed(1)} (>26). Erratic whipsaws expected.`);
-  }
-
-  // 7. Volatility-Normalized Compression & Pinch Checks
-  if (metrics.overnightRangeConsumedPercent < 30) {
+  } else if (layer1.activeVetoes.length > 0 || layer1.sizeMultiplier === 0.5) {
     chopRisk = "ELEVATED";
-    risks.push(
-      `Overnight range has consumed only ${metrics.overnightRangeConsumedPercent.toFixed(1)}% of expected daily straddle move. Tight overnight coil often triggers deceptive false breaks before true expansion.`
-    );
   }
 
-  const pinchThreshold = 0.35 * metrics.atr15mIntraday;
-  if (Math.abs(currentPrice - metrics.sessionVwap) < pinchThreshold && Math.abs(currentPrice - metrics.pdc) < pinchThreshold * 1.2) {
-    chopRisk = "ELEVATED";
-    risks.push(
-      `Price is pinched between PDC (${metrics.pdc}) and Session VWAP (${metrics.sessionVwap}) within ${pinchThreshold.toFixed(1)} pts. Wait for directional separation before committing capital.`
-    );
-  }
-
-  // 8. Stock-Bond Correlation & Macro Regime
+  // 7. Stock-Bond Correlation & Macro Regime via 23h ZN Futures
   if (macroRegime) {
     if (macroRegime.macroCorrelationRegime === "INFLATION / RATE-SENSITIVE") {
-      if (macroRegime.tnxBpsChange > 3) {
+      if (macroRegime.macroHeadwindScore < 0) {
         risks.push(
-          `RATE HEADWIND: 10Y Yield up +${macroRegime.tnxBpsChange} bps in negative stock-bond correlation regime (${macroRegime.stockBondCorrelation60d.toFixed(2)}). Multiple compression pressure on NQ.`
+          `RATE HEADWIND: 23h ZN down / yields rising in negative correlation regime (${macroRegime.stockBondCorrelation60d.toFixed(2)}). Multiple compression on NQ.`
         );
-      } else if (macroRegime.tnxBpsChange < -3) {
+      } else if (macroRegime.macroHeadwindScore > 0) {
         drivers.push(
-          `RATE TAILWIND: 10Y Yield down ${macroRegime.tnxBpsChange} bps. Lower bond yields support tech equity continuation.`
+          `RATE TAILWIND: 23h ZN up / yields falling. Lower bond yields support tech equity continuation.`
         );
       }
     } else if (macroRegime.macroCorrelationRegime === "GROWTH-SCARE") {
-      if (macroRegime.tnxBpsChange < -4) {
+      if (macroRegime.macroHeadwindScore < 0) {
         risks.push(
           `GROWTH SCARE: Yields dropping sharply in positive correlation regime (${macroRegime.stockBondCorrelation60d.toFixed(2)}). Recession fears weigh on equities.`
         );
@@ -185,28 +143,27 @@ export function evaluateBiasAndRegime(
     }
   }
 
-  // 9. Macro News Proximity Warning
-  if (hasRedFolderNewsAroundOpen) {
-    risks.push("High-impact economic release scheduled right around the open (9:45 / 10:00 AM). Spreads will widen.");
-  }
-
-  // 10. Formulate Final Verdict & Risk Scaling
+  // 8. Formulate Final Verdict
   let verdict: BiasVerdict = "CAUTION / CHOP RISK";
   let confidence: BiasRegime["confidence"] = "MODERATE";
   let summary = "";
 
-  if (hasRedFolderNewsAroundOpen && (chopRisk === "SEVERE" || (vix?.value ?? 0) > 28)) {
+  if (!layer1.allowTrading) {
     verdict = "STAND ASIDE / HIGH VOL";
     regimeRiskMultiplier = 0.0;
     confidence = "HIGH";
-    summary = "High-impact macro catalyst scheduled near open during elevated/stressed volatility regime. Risk of stop clipping exceeds statistical expectancy. Stand aside.";
+    summary = "High-impact macro catalyst or severe volatility backwardation active. Capital preservation priority. Stand aside.";
+  } else if (layer1.reversalVetoActive) {
+    verdict = "CAUTION / CHOP RISK";
+    confidence = "LOW";
+    summary = layer1.reversalVetoReason || "Overnight inventory trapped offside. Stand aside from chasing opening breakout.";
   } else if (isAbovePdc && isAboveVwap && isAboveOnMid && htfTrend !== "BEARISH" && chopRisk !== "SEVERE") {
     verdict = "CONTINUATION FAVORED (BULLISH)";
-    confidence = overnightAtrRatio >= 0.45 && !volatilitySurface?.isNegativeVrp ? "HIGH" : "MODERATE";
+    confidence = overnightAtrRatio >= 0.45 && !layer1.volatilityState.isNegativeVrp ? "HIGH" : "MODERATE";
     summary = `Bullish continuation favored. Look for a patient retrace into the ${metrics.onMid} - ${metrics.sessionVwap} zone between 9:34 AM and 9:48 AM ET. Invalidation below ${metrics.onl > metrics.pdc ? metrics.pdc : metrics.onl}. Target PDH (${metrics.pdh}) / ONH (${metrics.onh}).`;
   } else if (!isAbovePdc && !isAboveVwap && !isAboveOnMid && htfTrend !== "BULLISH" && chopRisk !== "SEVERE") {
     verdict = "CONTINUATION FAVORED (BEARISH)";
-    confidence = overnightAtrRatio >= 0.45 && !volatilitySurface?.isNegativeVrp ? "HIGH" : "MODERATE";
+    confidence = overnightAtrRatio >= 0.45 && !layer1.volatilityState.isNegativeVrp ? "HIGH" : "MODERATE";
     summary = `Bearish continuation favored. Look for a retrace rally into VWAP (${metrics.sessionVwap}) or PDC (${metrics.pdc}) to stall between 9:34 AM and 9:48 AM ET. Target ONL (${metrics.onl}) / PDL (${metrics.pdl}).`;
   } else if (chopRisk === "SEVERE") {
     verdict = "STAND ASIDE / HIGH VOL";
@@ -216,10 +173,10 @@ export function evaluateBiasAndRegime(
   } else {
     verdict = "CAUTION / CHOP RISK";
     confidence = "LOW";
-    summary = "Mixed signals: Overnight inventory, price location, or macro indicators conflict. Do not take an aggressive early entry. Demand clear wick absorption before entering.";
+    summary = "Mixed signals: Overnight inventory, price location, or macro indicators conflict. Demand clear wick rejection before entering.";
   }
 
-  // 11. Ideal Retrace Zone
+  // 9. Ideal Retrace Zone
   let idealRetraceZone: BiasRegime["idealRetraceZone"];
   if (verdict === "CONTINUATION FAVORED (BULLISH)") {
     const lowBound = Math.min(metrics.sessionVwap, metrics.onMid);
@@ -257,6 +214,7 @@ export function evaluateBiasAndRegime(
     volatilitySurface,
     macroRegime,
     gex,
+    layer1RiskGates: layer1,
     idealRetraceZone
   };
 }

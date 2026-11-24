@@ -67,6 +67,14 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
         chop_warning_correct INTEGER NOT NULL,
         brier_score REAL NOT NULL,
         composite_score REAL NOT NULL,
+        log_score REAL DEFAULT NULL,
+        triple_barrier_outcome TEXT DEFAULT NULL,
+        realized_net_r REAL DEFAULT NULL,
+        net_pnl_dollars REAL DEFAULT NULL,
+        fill_price REAL DEFAULT NULL,
+        fill_time_et TEXT DEFAULT NULL,
+        exit_price REAL DEFAULT NULL,
+        exit_time_et TEXT DEFAULT NULL,
         graded_at TEXT NOT NULL,
         FOREIGN KEY (prediction_id) REFERENCES daily_predictions(id)
       );
@@ -189,8 +197,9 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
         window_low, window_close_1000, bias_correct, favorable_excursion_pts,
         adverse_excursion_pts, retrace_tapped_json, stop_hunt_occurred,
         liquidity_draw_hit_json, chop_warning_correct, brier_score,
-        composite_score, graded_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        composite_score, log_score, triple_barrier_outcome, realized_net_r,
+        net_pnl_dollars, fill_price, fill_time_et, exit_price, exit_time_et, graded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -210,6 +219,14 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
       grade.chopWarningCorrect ? 1 : 0,
       grade.brierScore,
       grade.compositeScore,
+      grade.logScore ?? null,
+      grade.tripleBarrierOutcome ?? null,
+      grade.realizedNetR ?? null,
+      grade.netPnlDollars ?? null,
+      grade.fillPrice ?? null,
+      grade.fillTimeET ?? null,
+      grade.exitPrice ?? null,
+      grade.exitTimeET ?? null,
       grade.gradedAt
     );
 
@@ -417,19 +434,27 @@ export class SqliteCalibrationRepository implements ICalibrationRepository {
       id: row.id,
       targetTradeDate: row.target_trade_date,
       predictionId: row.prediction_id,
-      openPrice930: row.open_price_930,
-      windowHigh: row.window_high,
-      windowLow: row.window_low,
-      windowClose1000: row.window_close_1000,
+      openPrice930: Number(row.open_price_930),
+      windowHigh: Number(row.window_high),
+      windowLow: Number(row.window_low),
+      windowClose1000: Number(row.window_close_1000),
       biasCorrect: Boolean(row.bias_correct),
-      favorableExcursionPts: row.favorable_excursion_pts,
-      adverseExcursionPts: row.adverse_excursion_pts,
-      retraceTapped: JSON.parse(row.retrace_tapped_json),
+      favorableExcursionPts: Number(row.favorable_excursion_pts),
+      adverseExcursionPts: Number(row.adverse_excursion_pts),
+      retraceTapped: JSON.parse(row.retrace_tapped_json || "[]"),
       stopHuntOccurred: Boolean(row.stop_hunt_occurred),
-      liquidityDrawHit: JSON.parse(row.liquidity_draw_hit_json),
+      liquidityDrawHit: JSON.parse(row.liquidity_draw_hit_json || "[]"),
       chopWarningCorrect: Boolean(row.chop_warning_correct),
-      brierScore: row.brier_score,
-      compositeScore: row.composite_score,
+      brierScore: Number(row.brier_score),
+      logScore: row.log_score != null ? Number(row.log_score) : undefined,
+      compositeScore: Number(row.composite_score),
+      tripleBarrierOutcome: row.triple_barrier_outcome || undefined,
+      realizedNetR: row.realized_net_r != null ? Number(row.realized_net_r) : undefined,
+      netPnlDollars: row.net_pnl_dollars != null ? Number(row.net_pnl_dollars) : undefined,
+      fillPrice: row.fill_price != null ? Number(row.fill_price) : undefined,
+      fillTimeET: row.fill_time_et || undefined,
+      exitPrice: row.exit_price != null ? Number(row.exit_price) : undefined,
+      exitTimeET: row.exit_time_et || undefined,
       gradedAt: row.graded_at
     };
   }

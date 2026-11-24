@@ -427,17 +427,29 @@ export function deleteTrade(id: string): boolean {
   return res.changes > 0;
 }
 
+/**
+ * Computes upper confidence bound of the 90th percentile using non-parametric bootstrap resampling.
+ */
+export function computeBootstrapUpperP90(data: number[], numReplications = 1000, confidence = 0.90): number {
+  if (data.length === 0) return 1.0;
+  const bEstimates: number[] = [];
+  const n = data.length;
+  for (let i = 0; i < numReplications; i++) {
+    const sample: number[] = new Array(n);
+    for (let j = 0; j < n; j++) {
+      const randIdx = Math.floor(Math.random() * n);
+      sample[j] = data[randIdx];
+    }
+    sample.sort((a, b) => a - b);
+    bEstimates.push(sample[Math.floor(n * 0.90)]);
+  }
+  bEstimates.sort((a, b) => a - b);
+  const upperIdx = Math.min(bEstimates.length - 1, Math.floor(bEstimates.length * confidence));
+  return Math.round(bEstimates[upperIdx] * 100) / 100;
+}
+
 export function computeJournalAnalytics(userId?: string): JournalAnalytics {
   const trades = getTrades(userId);
-  const sampleSizeGate = {
-    isCalibrated: trades.length >= 50,
-    targetSampleSize: 50,
-    currentCount: trades.length,
-    statusMessage:
-      trades.length < 50
-        ? `COLLECTING SAMPLE (${trades.length} / 50 TRADES) — DO NOT TIGHTEN STOPS YET`
-        : `SAMPLE CALIBRATED (${trades.length} TRADES) — EMPIRICAL OUT-OF-SAMPLE GUIDANCE ACTIVE`
-  };
 
   if (trades.length === 0) {
     return {
@@ -454,7 +466,14 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
       avgMaeLosingTradesR: 0,
       avgMfeTradesR: 0,
       avgExitEfficiencyPercent: 0,
-      sampleSizeGate,
+      sampleSizeGate: {
+        isCalibrated: false,
+        targetSampleSize: 150,
+        currentCount: 0,
+        targetWinningTrades: 75,
+        currentWinningTrades: 0,
+        statusMessage: "COLLECTING SAMPLE (0/150 TRADES, 0/75 WINS) — DO NOT TIGHTEN STOPS YET"
+      },
       deepHeatDistribution: {
         under25PctR: 0,
         under50PctR: 0,
@@ -525,6 +544,19 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     }
   }
 
+  const isCalibrated = trades.length >= 150 && wins >= 75;
+  const sampleSizeGate = {
+    isCalibrated,
+    targetSampleSize: 150,
+    currentCount: trades.length,
+    targetWinningTrades: 75,
+    currentWinningTrades: wins,
+    statusMessage:
+      !isCalibrated
+        ? `COLLECTING SAMPLE (${trades.length}/150 TRADES, ${wins}/75 WINS) — DO NOT TIGHTEN STOPS YET`
+        : `SAMPLE CALIBRATED (${trades.length} TRADES, ${wins} WINS) — BOOTSTRAP P90 MAE ACTIVE`
+  };
+
   const winRate = (wins / trades.length) * 100;
   const profitFactor = grossLossesDollars > 0 ? grossWinsDollars / grossLossesDollars : grossWinsDollars > 0 ? 99 : 0;
   const avgPnlR = sumPnlR / trades.length;
@@ -535,6 +567,7 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
 
   let percentile85MaeWinners: number | undefined;
   let percentile90MaeWinners: number | undefined;
+  let upper90BootstrapMaeWinners: number | undefined;
 
   if (winnerMaes.length >= 20) {
     winnerMaes.sort((a, b) => a - b);
@@ -542,11 +575,19 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     percentile90MaeWinners = winnerMaes[Math.floor(winnerMaes.length * 0.90)];
   }
 
+  if (isCalibrated && winnerMaes.length >= 75) {
+    upper90BootstrapMaeWinners = computeBootstrapUpperP90(winnerMaes, 1000, 0.90);
+  }
+
   let recommendation = "";
-  if (trades.length < 50) {
-    recommendation = `Collecting sample (${trades.length}/50 trades). Do NOT prematurely tighten stops based on small-sample curve fitting. Honor your structural stop level.`;
-  } else if (percentile85MaeWinners !== undefined) {
-    recommendation = `Calibrated (${trades.length} trades): 85% of winning continuation retraces suffered <= ${percentile85MaeWinners.toFixed(2)}R adverse excursion. Stalls exceeding ${percentile90MaeWinners?.toFixed(2) || "0.65"}R on volume have low recovery expectancy.`;
+  if (!isCalibrated) {
+    recommendation = `Collecting sample (${trades.length}/150 trades, ${wins}/75 winners). Do NOT prematurely tighten stops based on small-sample curve fitting. Honor your structural stop level.`;
+  } else if (upper90BootstrapMaeWinners !== undefined) {
+    if (upper90BootstrapMaeWinners <= 0.70) {
+      recommendation = `Calibrated (${trades.length} trades, ${wins} winners): Upper 90% bootstrap bound of winners' P90 MAE is ${upper90BootstrapMaeWinners.toFixed(2)}R (Point P90: ${percentile90MaeWinners?.toFixed(2) || "0.65"}R). Stops beyond ${upper90BootstrapMaeWinners.toFixed(2)}R can be tightened safely without truncating valid continuation trades.`;
+    } else {
+      recommendation = `Calibrated (${trades.length} trades, ${wins} winners): Upper 90% bootstrap bound of winners' P90 MAE is ${upper90BootstrapMaeWinners.toFixed(2)}R (Point P90: ${percentile90MaeWinners?.toFixed(2) || "0.65"}R). Retain standard structural stop — tightening would induce premature stop-outs during normal opening noise.`;
+    }
   } else {
     recommendation = "Maintain 1-trade discipline across your morning execution window.";
   }
@@ -568,6 +609,8 @@ export function computeJournalAnalytics(userId?: string): JournalAnalytics {
     sampleSizeGate,
     percentile85MaeWinners,
     percentile90MaeWinners,
+    upper90BootstrapMaeWinners,
+    winningTradesCount: wins,
     deepHeatDistribution: distribution,
     recommendation
   };

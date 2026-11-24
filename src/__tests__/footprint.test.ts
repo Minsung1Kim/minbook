@@ -186,9 +186,49 @@ describe("Footprint & Absorption Engine", () => {
 
       expect(summary.bars.length).toBe(21);
       const lastBar = summary.bars[20];
-      expect(lastBar.signal).toBe("ABS_BUY");
-      expect(lastBar.signalLabel).toBe("ABS BUY");
-      expect(summary.disclaimer).toBe("Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)");
+      expect(lastBar.signal).toBe("VWWR_BUY");
+      expect(lastBar.signalLabel).toBe("VWWR BUY");
+      expect(summary.disclaimer).toBe("Free 1m-Derived Volume-Weighted Wick Rejection (Delayed — Not CME L2 Tick Flow)");
+      expect(summary.hasNativeAggressorSide).toBe(false);
+    });
+
+    it("disables CVD DIV signals when hasNativeAggressorSide is false", () => {
+      const parentBars: OHLCVBar[] = [];
+      const m1Bars: OHLCVBar[] = [];
+
+      for (let i = 0; i < 20; i++) {
+        const time = new Date(Date.UTC(2026, 10, 23, 14, i * 5)).toISOString();
+        parentBars.push({
+          timestamp: time,
+          open: 21000 + i * 5,
+          high: 21010 + i * 5,
+          low: 20990 + i * 5,
+          close: 21008 + i * 5,
+          volume: 1000
+        });
+        m1Bars.push({
+          timestamp: time,
+          open: 21000 + i * 5,
+          high: 21010 + i * 5,
+          low: 20990 + i * 5,
+          close: 21008 + i * 5,
+          volume: 1000
+        });
+      }
+
+      const summaryWithoutNative = buildFootprintSummary(
+        parentBars,
+        m1Bars,
+        300,
+        mockKeyLevels,
+        mockMetrics,
+        false
+      );
+
+      const divSignals = summaryWithoutNative.bars.filter(
+        (b) => b.signal === "CVD_DIV_BEAR" || b.signal === "CVD_DIV_BULL"
+      );
+      expect(divSignals.length).toBe(0);
     });
 
     it("detects Aggressive Impulsive Sweep (IMP+) when volume and delta ratio are extreme", () => {

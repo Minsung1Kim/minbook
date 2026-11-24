@@ -9,7 +9,12 @@ import {
   ExecutionWindowSubPhase,
   FactorScoreItem,
   MarketQuote,
-  EconomicEvent
+  EconomicEvent,
+  CandleFootprintData,
+  OHLCVBar,
+  KeyLevel,
+  PropProfile,
+  LTFTradeCard
 } from "@/types/market";
 import {
   getCMESessionInfo,
@@ -18,6 +23,9 @@ import {
   getETParts,
   CMESessionInfo
 } from "./sessionClock";
+import { evaluateLayer1RiskGates } from "./riskGates";
+import { evaluateLayer2DirectionalScore } from "./directionalScore";
+import { evaluateLTFExecution } from "../execution/ltfExecution";
 
 export function generateTacticalPlaybook(
   currentPrice: number,
@@ -29,6 +37,10 @@ export function generateTacticalPlaybook(
     economicEvents?: EconomicEvent[];
     sessionInfo?: CMESessionInfo;
     factorWeights?: Record<string, number>;
+    footprintBars?: CandleFootprintData[];
+    intradayBars?: OHLCVBar[];
+    keyLevels?: KeyLevel[];
+    propProfile?: PropProfile;
   }
 ): TacticalExecutionPlan {
   const vwap = metrics.sessionVwap;
@@ -97,123 +109,36 @@ export function generateTacticalPlaybook(
     }
   }
 
-  // 4. Inspectable Factor Scorecard (+1 / 0 / -1)
-  const factorScorecard: FactorScoreItem[] = [];
-
-  // Factor A: HTF Trend
-  const htfScore = bias.htfTrend === "BULLISH" ? 1 : bias.htfTrend === "BEARISH" ? -1 : 0;
-  factorScorecard.push({
-    factor: "HTF Trend Alignment",
-    score: htfScore,
-    impact: htfScore === 1 ? "BULLISH" : htfScore === -1 ? "BEARISH" : "NEUTRAL",
-    detail: `Trailing 5-day daily close structure is ${bias.htfTrend}.`
+  // 4. Two-Layer Gated Architecture
+  // Layer 1: Multiplicative Risk Gates & Target Caps
+  const layer1 = bias.layer1RiskGates ?? evaluateLayer1RiskGates({
+    currentPrice,
+    metrics,
+    volatilitySurface: bias.volatilitySurface,
+    gex: bias.gex,
+    hasRedFolderNewsAroundOpen: !!newsBufferWarning
   });
 
-  // Factor B: Price Location vs PDC
-  const pdcScore = currentPrice > pdc ? 1 : -1;
-  factorScorecard.push({
-    factor: "Prior Day Close (PDC)",
-    score: pdcScore,
-    impact: pdcScore === 1 ? "BULLISH" : "BEARISH",
-    detail: `Trading ${currentPrice > pdc ? "above" : "below"} PDC (${pdc}). ${currentPrice > pdc ? "Long inventory defended." : "Defensive responsive selling."}`
+  // Layer 2: Strictly 4 Orthogonal Directional Signals (Equal 1.0 Baseline Weights)
+  const layer2 = evaluateLayer2DirectionalScore({
+    currentPrice,
+    metrics,
+    htfTrend: bias.htfTrend,
+    macroRegime: bias.macroRegime,
+    qqqProxyQuote: options?.qqqProxyQuote,
+    footprintBars: options?.footprintBars,
+    reversalVetoActive: layer1.reversalVetoActive,
+    reversalVetoReason: layer1.reversalVetoReason,
+    weights: options?.factorWeights
   });
 
-  // Factor C: Price Location vs Session VWAP
-  const vwapScore = currentPrice > vwap ? 1 : -1;
-  factorScorecard.push({
-    factor: "Session VWAP Benchmark",
-    score: vwapScore,
-    impact: vwapScore === 1 ? "BULLISH" : "BEARISH",
-    detail: `Holding ${currentPrice > vwap ? "above" : "below"} fair value (${vwap}).`
-  });
-
-  // Factor D: Overnight Inventory Imbalance
-  let inventoryScore = 0;
-  if (metrics.inventoryPercent >= 70) inventoryScore = 1;
-  else if (metrics.inventoryPercent <= 30) inventoryScore = -1;
-  factorScorecard.push({
-    factor: "Overnight Inventory Imbalance",
-    score: inventoryScore,
-    impact: inventoryScore === 1 ? "BULLISH" : inventoryScore === -1 ? "BEARISH" : "NEUTRAL",
-    detail: `${metrics.inventoryPercent}% of Globex bars closing above PDC.`
-  });
-
-  // Factor E: Cross-Index SMT Divergence
-  let smtScore = 0;
-  if (metrics.smtDivergence?.hasDivergence) {
-    if (metrics.smtDivergence.divergenceType.includes("BULLISH")) smtScore = 1;
-    else if (metrics.smtDivergence.divergenceType.includes("BEARISH")) smtScore = -1;
-  }
-  factorScorecard.push({
-    factor: "Cross-Index SMT (NQ vs ES)",
-    score: smtScore,
-    impact: smtScore === 1 ? "BULLISH" : smtScore === -1 ? "BEARISH" : "NEUTRAL",
-    detail: metrics.smtDivergence?.notes || "NQ and ES moving in sync."
-  });
-
-  // Factor F: Volatility Surface & VRP
-  let volScore = 0;
-  if (bias.volatilitySurface) {
-    if (bias.volatilitySurface.isNegativeVrp || bias.volatilitySurface.termStructureRegime.includes("BACKWARDATION")) {
-      volScore = -1;
-    } else if (bias.volatilitySurface.termStructureRegime.includes("CONTANGO")) {
-      volScore = 1;
-    }
-  }
-  factorScorecard.push({
-    factor: "Volatility Surface & VRP",
-    score: volScore,
-    impact: volScore === 1 ? "BULLISH" : volScore === -1 ? "BEARISH" : "NEUTRAL",
-    detail: bias.volatilitySurface
-      ? `VRP: ${bias.volatilitySurface.vrp > 0 ? "+" : ""}${bias.volatilitySurface.vrp.toFixed(1)}% • ${bias.volatilitySurface.termStructureRegime}`
-      : "Standard implied volatility baseline."
-  });
-
-  // Factor G: Macro Correlation & Yields
-  let macroScore = 0;
-  if (bias.macroRegime) {
-    if (bias.macroRegime.macroHeadwindScore > 0) macroScore = 1;
-    else if (bias.macroRegime.macroHeadwindScore < 0) macroScore = -1;
-  }
-  factorScorecard.push({
-    factor: "Macro Yields & Dollar",
-    score: macroScore,
-    impact: macroScore === 1 ? "BULLISH" : macroScore === -1 ? "BEARISH" : "NEUTRAL",
-    detail: bias.macroRegime ? bias.macroRegime.macroSummary : "Macro factors neutral."
-  });
-
-  // Factor H: Dealer Gamma Tilt (GEX)
-  if (bias.gex) {
-    const isNeg = bias.gex.netGammaRegime === "NEGATIVE_GAMMA";
-    const isBullTrend = bias.htfTrend === "BULLISH";
-    const isBearTrend = bias.htfTrend === "BEARISH";
-    const gexScore = isNeg ? (isBullTrend ? 1 : isBearTrend ? -1 : 0) : 0;
-    factorScorecard.push({
-      factor: "Dealer Gamma Tilt (GEX)",
-      score: gexScore,
-      impact: isNeg ? (isBullTrend ? "BULLISH" : isBearTrend ? "BEARISH" : "NEUTRAL") : "NEUTRAL",
-      detail: `${bias.gex.netGammaRegime === "NEGATIVE_GAMMA" ? "Negative Gamma (Continuation / Momentum Amplified)" : "Positive Gamma (Mean-Reversion Pinned)"} • Call Wall: ${bias.gex.callWallNq} • Put Wall: ${bias.gex.putWallNq}`
-    });
-  }
-
-  // Map factor scorecard to calibrated factor weights
-  const factorKeyMap: Record<string, string> = {
-    "HTF Trend Alignment": "htfTrend",
-    "VWAP / Opening Location": "vwapAlignment",
-    "Overnight Inventory Imbalance": "overnightInventory",
-    "Opening Gap Extension": "openingGap",
-    "Cross-Index SMT (NQ vs ES)": "smtDivergence",
-    "Volatility Surface & VRP": "volatilitySurface",
-    "Macro Yields & Dollar": "macroRegime",
-    "Dealer Gamma Tilt (GEX)": "gexRegime"
-  };
-
-  const weights = options?.factorWeights;
-  const totalFactorScore = factorScorecard.reduce((sum, item) => {
-    const key = factorKeyMap[item.factor];
-    const w = key && weights && weights[key] !== undefined ? weights[key] : 1.0;
-    return sum + item.score * w;
-  }, 0);
+  const totalFactorScore = layer2.totalScore;
+  const factorScorecard: FactorScoreItem[] = layer2.signals.map((s) => ({
+    factor: s.name,
+    score: s.score,
+    impact: s.impact,
+    detail: s.detail
+  }));
 
   // 5. Volatility-Normalized Archetype Classification
   const distToVwap = Math.round((currentPrice - vwap) * 10) / 10;
@@ -304,21 +229,33 @@ export function generateTacticalPlaybook(
   };
 
   // 6. Synthesize Trader's 5 Core Answers
-  const isBull = bias.verdict.includes("BULLISH");
-  const isBear = bias.verdict.includes("BEARISH");
+  const isBull = (bias.verdict.includes("BULLISH") || layer2.direction === "BULLISH") && layer1.allowTrading && !layer1.reversalVetoActive;
+  const isBear = (bias.verdict.includes("BEARISH") || layer2.direction === "BEARISH") && layer1.allowTrading && !layer1.reversalVetoActive;
 
   // A. Direction / Bias
-  const biasDirection: Trader5Answers["biasDirection"] = isBull
+  const biasDirection: Trader5Answers["biasDirection"] = !layer1.allowTrading
+    ? "CHOP / NEUTRAL"
+    : layer1.reversalVetoActive
+    ? "CHOP / NEUTRAL"
+    : isBull
     ? "BULLISH CONTINUATION"
     : isBear
     ? "BEARISH CONTINUATION"
     : "CHOP / NEUTRAL";
-  const biasConfidence: Trader5Answers["biasConfidence"] = bias.confidence;
-  const biasReason = isBull
-    ? `Price is trading above Prior Day Close (${pdc}) and Session VWAP (${vwap}) with positive factor score (+${totalFactorScore}).`
+  const biasConfidence: Trader5Answers["biasConfidence"] = !layer1.allowTrading
+    ? "HIGH"
+    : layer1.reversalVetoActive
+    ? "LOW"
+    : bias.confidence;
+  const biasReason = !layer1.allowTrading
+    ? (layer1.activeVetoes[0] || "Layer 1 Risk Gate active: Stand aside.")
+    : layer1.reversalVetoActive
+    ? (layer1.reversalVetoReason || "Overnight inventory trapped offside. Stand aside from chasing opening breakout.")
+    : isBull
+    ? `Price is trading above Prior Day Close (${pdc}) and Session VWAP (${vwap}) with positive Layer 2 directional score (+${totalFactorScore}).`
     : isBear
-    ? `Price is trading below Prior Day Close (${pdc}) and Session VWAP (${vwap}) with negative factor score (${totalFactorScore}).`
-    : `Price is compressed near Prior Day Close (${pdc}) with conflicting signals (score ${totalFactorScore}).`;
+    ? `Price is trading below Prior Day Close (${pdc}) and Session VWAP (${vwap}) with negative Layer 2 directional score (${totalFactorScore}).`
+    : `Price is compressed near Prior Day Close (${pdc}) or signals are neutral (score ${totalFactorScore}).`;
 
   // B. Stop Hunt Likelihood (Simple ICT Liquidity Sweep Architecture)
   let stopHuntProbability: Trader5Answers["stopHuntProbability"];
@@ -415,29 +352,32 @@ export function generateTacticalPlaybook(
     }
   ];
 
-  // E. Session R:R Strategy Recommendation factoring Volatility & Dealer Gamma Tilt
+  // E. Session R:R Strategy Recommendation factoring Layer 1 Risk & Target Caps
   const isNegGamma = bias.gex?.netGammaRegime === "NEGATIVE_GAMMA";
   const isPosGamma = bias.gex?.netGammaRegime === "POSITIVE_GAMMA";
   const isHighVol = atr15 > 30 || bias.volatilitySurface?.isNegativeVrp;
+  const targetMultipleR = layer1.targetCapMultipleR;
+  const isCapped = targetMultipleR <= 1.8;
 
-  const rrGuidance: Trader5Answers["rrGuidance"] =
-    (isHighVol || isPosGamma) && !isNegGamma
-      ? {
-          recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
-          targetMultipleR: 1.8,
-          recommendedTargetPts: Math.round(atr15 * 0.8),
-          rationale: isPosGamma
-            ? `Options dealers are dampening volatility (+Γ). Pinning risk is high near Call Wall (${bias.gex?.callWallNq}). Take a quick 1.8R–2.0R profit rather than holding for a large runner.`
-            : `Intraday volatility is elevated (${atr15} pts 15m ATR). Whipsaws are violent. Lock in 1.5R–2.0R quickly or trail your stop to breakeven.`
-        }
-      : {
-          recommendedStrategy: "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)",
-          targetMultipleR: isNegGamma ? 3.0 : 2.8,
-          recommendedTargetPts: Math.round(atr15 * (isNegGamma ? 1.8 : 1.5)),
-          rationale: isNegGamma
-            ? `Options dealers are accelerating momentum (-Γ). The market has room to run toward Call Wall (${bias.gex?.callWallNq}) / Put Wall (${bias.gex?.putWallNq}). Aim for a 2.5R–3.0R runner target.`
-            : `Volatility is normal and healthy (${atr15} pts 15m ATR). Allow your runner to reach primary targets at ONH/PDH for ~2.5R.`
-        };
+  const rrGuidance: Trader5Answers["rrGuidance"] = isCapped
+    ? {
+        recommendedStrategy: "LOWER R:R (1.5R – 2.0R QUICK SCALP & LOCK)",
+        targetMultipleR: targetMultipleR,
+        recommendedTargetPts: Math.round(atr15 * 0.8),
+        rationale: isPosGamma
+          ? `Options dealers are dampening volatility (+Γ). Pinning risk is high near Call Wall (${bias.gex?.callWallNq}). Layer 1 target capped at ${targetMultipleR}R.`
+          : isHighVol
+          ? `Intraday volatility is elevated (${atr15} pts 15m ATR) or negative VRP active. Whipsaws are violent. Layer 1 risk target capped at ${targetMultipleR}R.`
+          : `Market regime indicates compression/chop or reversal risk. Target capped at ${targetMultipleR}R.`
+      }
+    : {
+        recommendedStrategy: "HIGHER R:R (2.5R – 3.5R RUNNER EXPANSION)",
+        targetMultipleR: isNegGamma ? 3.0 : Math.max(2.2, targetMultipleR),
+        recommendedTargetPts: Math.round(atr15 * (isNegGamma ? 1.8 : 1.5)),
+        rationale: isNegGamma
+          ? `Options dealers are accelerating momentum (-Γ). The market has room to run toward Call Wall (${bias.gex?.callWallNq}) / Put Wall (${bias.gex?.putWallNq}). Aim for a 2.5R–3.0R runner target.`
+          : `Volatility is normal and healthy (${atr15} pts 15m ATR). Allow your runner to reach primary targets at ONH/PDH for ~2.2R–2.8R.`
+      };
 
   const trader5Answers: Trader5Answers = {
     biasDirection,
@@ -572,6 +512,22 @@ export function generateTacticalPlaybook(
     }
   };
 
+  // 11. 1-Minute Lower Timeframe Execution Card & Reachability Target Engine
+  let ltfTradeCard: LTFTradeCard | undefined = undefined;
+  if (options?.intradayBars && options.intradayBars.length > 0) {
+    ltfTradeCard = evaluateLTFExecution({
+      m1Bars: options.intradayBars,
+      currentPrice,
+      atrOpen15m: metrics.atrOpen15m || atr15,
+      metrics,
+      layer1,
+      layer2,
+      keyLevels: options.keyLevels,
+      propProfile: options.propProfile,
+      events: options.economicEvents
+    });
+  }
+
   return {
     singleTradeDirective,
     trader5Answers,
@@ -583,6 +539,9 @@ export function generateTacticalPlaybook(
     delayedFeedBannerText,
     newsBufferWarning,
     qqqLiveProxy: options?.qqqProxyQuote,
+    layer1RiskGates: layer1,
+    layer2DirectionalScore: layer2,
+    ltfTradeCard,
     timelineGuide,
     vwapPlaybook,
     sessionInfo,

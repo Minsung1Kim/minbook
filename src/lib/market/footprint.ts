@@ -140,24 +140,26 @@ export async function fetch1mBars(symbol: string = "NQ=F"): Promise<OHLCVBar[]> 
 }
 
 /**
- * Groups 1m bars into parent candles (5m or 15m) and detects Footprint Signals:
- * 1. Passive Absorption (ABS BUY / ABS SELL)
+ * Groups 1m bars into parent candles (5m or 15m) and detects Volume-Weighted Wick Rejection (VWWR) signals:
+ * 1. Volume-Weighted Wick Rejection (VWWR BUY / VWWR SELL)
  * 2. Aggressive Sweep / Initiative (IMP+ / IMP-)
- * 3. CVD Divergence (CVD DIV)
+ * 3. CVD Divergence (CVD DIV) - strictly disabled unless native CME aggressor side is present.
  */
 export function buildFootprintSummary(
   parentBars: OHLCVBar[],
   m1Bars: OHLCVBar[],
   timeframeSec: number = 900, // 900 for 15m, 300 for 5m
   keyLevels?: KeyLevel[],
-  sessionMetrics?: SessionMetrics
+  sessionMetrics?: SessionMetrics,
+  hasNativeAggressorSide: boolean = false
 ): FootprintSummary {
   if (parentBars.length === 0) {
     return {
       bars: [],
       sessionCvd: 0,
       rthCvd: 0,
-      disclaimer: "Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)",
+      disclaimer: "Free 1m-Derived Volume-Weighted Wick Rejection (Delayed — Not CME L2 Tick Flow)",
+      hasNativeAggressorSide,
       lastUpdated: new Date().toISOString()
     };
   }
@@ -263,16 +265,16 @@ export function buildFootprintSummary(
       (lvl) => Math.abs(parent.low - lvl) <= atrThreshold || Math.abs(parent.high - lvl) <= atrThreshold
     );
 
-    // 1. Passive Absorption (ABS BUY / ABS SELL)
+    // 1. Volume-Weighted Wick Rejection (VWWR BUY / VWWR SELL)
     // High volume (>= 1.8x avg) + small body/wick rejection (bodyRatio <= 0.35) near key level
     if (fBar.totalVolume >= 1.8 * avgVol20 && bodyRatio <= 0.35 && isNearKeyLevel) {
       if (lowerWickRatio >= 0.4) {
-        fBar.signal = "ABS_BUY";
-        fBar.signalLabel = "ABS BUY";
+        fBar.signal = "VWWR_BUY";
+        fBar.signalLabel = "VWWR BUY";
         fBar.signalColor = "#22d3ee"; // Cyan
       } else if (upperWickRatio >= 0.4) {
-        fBar.signal = "ABS_SELL";
-        fBar.signalLabel = "ABS SELL";
+        fBar.signal = "VWWR_SELL";
+        fBar.signalLabel = "VWWR SELL";
         fBar.signalColor = "#f43f5e"; // Rose
       }
     }
@@ -291,8 +293,9 @@ export function buildFootprintSummary(
       }
     }
 
-    // 3. CVD Divergence (CVD DIV) over trailing 6–12 bars
-    if (!fBar.signal && i >= 6) {
+    // 3. CVD Divergence (CVD DIV) - strictly requires native CME aggressor side data
+    // Bar-derived delta proxies must NOT emit synthetic divergence signals.
+    if (!fBar.signal && i >= 6 && hasNativeAggressorSide) {
       const windowStart = Math.max(0, i - 10);
       const prevParents = parentBars.slice(windowStart, i);
       const prevFootprints = footprintBars.slice(windowStart, i);
@@ -321,7 +324,8 @@ export function buildFootprintSummary(
     bars: footprintBars,
     sessionCvd: runningSessionCvd,
     rthCvd: runningRthCvd,
-    disclaimer: "Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)",
+    disclaimer: "Free 1m-Derived Volume-Weighted Wick Rejection (Delayed — Not CME L2 Tick Flow)",
+    hasNativeAggressorSide,
     lastUpdated: new Date().toISOString()
   };
 }

@@ -312,3 +312,81 @@ export async function getUSEconomicEvents(): Promise<EconomicEvent[]> {
   lastCachedAt = now;
   return cachedEvents;
 }
+
+export interface NewsBlackoutCheckResult {
+  hasBlackoutAlarm: boolean;
+  blackoutEvent?: EconomicEvent;
+  minutesUntilRelease?: number;
+  alarmMessage?: string;
+}
+
+export function isTier1Event(eventName: string): boolean {
+  const name = eventName.toLowerCase();
+  return (
+    name.includes("cpi") ||
+    name.includes("consumer price") ||
+    name.includes("nfp") ||
+    name.includes("non-farm") ||
+    name.includes("ppi") ||
+    name.includes("producer price") ||
+    name.includes("fomc") ||
+    name.includes("funds rate") ||
+    name.includes("rate decision") ||
+    name.includes("unemployment rate") ||
+    name.includes("pce")
+  );
+}
+
+export function parseEventTimeET(timeETStr: string): { hour: number; minute: number } | null {
+  const match = timeETStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return null;
+  let hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  const ampm = (match[3] || "").toUpperCase();
+  if (ampm === "PM" && hour < 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+  return { hour, minute };
+}
+
+export function checkTier1NewsBlackout(
+  events: EconomicEvent[],
+  nowET: Date | string,
+  blackoutMinutes: number = 2
+): NewsBlackoutCheckResult {
+  if (blackoutMinutes <= 0 || !events || events.length === 0) {
+    return { hasBlackoutAlarm: false };
+  }
+
+  const dt = typeof nowET === "string" ? new Date(nowET) : nowET;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false
+  }).formatToParts(dt);
+
+  const curHour = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+  const curMin = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+  const currentTotalMins = curHour * 60 + curMin;
+
+  for (const ev of events) {
+    if (!isTier1Event(ev.event)) continue;
+    const parsed = parseEventTimeET(ev.timeET);
+    if (!parsed) continue;
+
+    const evTotalMins = parsed.hour * 60 + parsed.minute;
+    const diff = Math.abs(currentTotalMins - evTotalMins);
+
+    if (diff <= blackoutMinutes) {
+      return {
+        hasBlackoutAlarm: true,
+        blackoutEvent: ev,
+        minutesUntilRelease: evTotalMins - currentTotalMins,
+        alarmMessage: `PROP FIRM VIOLATION RISK: Tier 1 News Release (${ev.event}) within ±${blackoutMinutes}m window (${ev.timeET}). CANCEL ALL RESTING LIMIT ORDERS and remain flat or firm will terminate account.`
+      };
+    }
+  }
+
+  return { hasBlackoutAlarm: false };
+}
+

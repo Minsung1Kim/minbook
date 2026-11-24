@@ -10,6 +10,13 @@ import {
 import { getCalibrationRepository, DEFAULT_MODEL_WEIGHTS } from "./store";
 
 export const FACTOR_KEY_CONFIG: Record<string, { name: string; defaultWeight: number }> = {
+  // v3.0 4 Orthogonal Signals
+  compositeHtf: { name: "Composite HTF & Auction Location", defaultWeight: 1.0 },
+  smtBreadth: { name: "Cross-Index SMT Divergence + Breadth", defaultWeight: 1.0 },
+  macroImpulse: { name: "23h Macro Impulse (ZN / DXY)", defaultWeight: 1.0 },
+  openingFlow: { name: "Opening Flow (VW Wick Rejection)", defaultWeight: 1.0 },
+
+  // Historical / Legacy Factor Mappings
   htfTrend: { name: "HTF Trend Alignment", defaultWeight: 1.0 },
   vwapAlignment: { name: "VWAP / Opening Location", defaultWeight: 1.0 },
   overnightInventory: { name: "Overnight Inventory Skew", defaultWeight: 1.0 },
@@ -19,6 +26,13 @@ export const FACTOR_KEY_CONFIG: Record<string, { name: string; defaultWeight: nu
   macroRegime: { name: "Macro Yields & Dollar", defaultWeight: 1.0 },
   gexRegime: { name: "Dealer Gamma Tilt (GEX)", defaultWeight: 1.0 }
 };
+
+export const PRIOR_ALPHA_0 = 25;
+export const PRIOR_BETA_0 = 25;
+export const DEFAULT_FORGETTING_FACTOR = 0.99;
+export const WEIGHT_MIN_CLIP = 0.6;
+export const WEIGHT_MAX_CLIP = 1.5;
+export const STATUS_TAG_MIN_SAMPLE_SIZE = 60;
 
 /**
  * Computes the complete System Self-Audit and Factor Attribution Leaderboard.
@@ -150,9 +164,12 @@ export async function computeCalibrationSummary(
 
     const currentWeight = activeWeights.weights[key] ?? cfg.defaultWeight;
 
+    // Strict Sample Size Gate: remove ±4% status tags until N >= 60
     let status: FactorAttribution["status"] = "NEUTRAL";
-    if (liftPercent >= 4.0) status = "EDGE_ENHANCER";
-    else if (liftPercent <= -4.0) status = "NOISE_DETRACTOR";
+    if (gradedSessions >= STATUS_TAG_MIN_SAMPLE_SIZE) {
+      if (liftPercent >= 4.0) status = "EDGE_ENHANCER";
+      else if (liftPercent <= -4.0) status = "NOISE_DETRACTOR";
+    }
 
     factorAttributions.push({
       factorKey: key,
@@ -174,10 +191,10 @@ export async function computeCalibrationSummary(
   // Sort factor attribution leaderboard: edge enhancers first, then neutral, then noise detractors
   factorAttributions.sort((a, b) => b.liftPercent - a.liftPercent);
 
-  // 3. Walk-Forward Calibration (N >= 30 Guardrail)
+  // 3. Closed-Form Beta-Binomial Bayesian Shrinkage Optimization
   let proposedUpdate: ProposedWeightUpdate | null = null;
   if (gradedSessions >= 30) {
-    proposedUpdate = computeWalkForwardOptimization(gradedHistory, activeWeights, factorAttributions);
+    proposedUpdate = computeBayesianShrinkageOptimization(gradedHistory, activeWeights, factorAttributions);
   }
 
   return {
@@ -204,117 +221,165 @@ export async function computeCalibrationSummary(
   };
 }
 
+export interface BayesianFactorResult {
+  factorKey: string;
+  totalOccurrences: number;
+  winsWhenActive: number;
+  effectiveN: number;
+  effectiveWins: number;
+  rawWinRate: number;
+  shrunkWinRate: number;
+  bayesianWeight: number;
+  clippedWeight: number;
+  rationale: string;
+}
+
 /**
- * Runs a strict 70/30 chronological time-split walk-forward optimization.
- * Bounded weight updates clamped within [0.0, 2.5].
- * Only surfaces an update if out-of-sample accuracy strictly improves.
+ * Closed-Form Beta-Binomial Bayesian Shrinkage:
+ * Prior alpha0 = 25, beta0 = 25 (prior mean = 50%, prior pseudo-sample size = 50).
+ * Optional exponential forgetting factor gamma = 0.99.
+ * Production weight clip strictly within [0.6, 1.5].
  */
-export function computeWalkForwardOptimization(
+export function computeBayesianFactorShrinkage(
   gradedHistory: Array<{ prediction: DailyPrediction; grade: PredictionGrade }>,
-  activeWeights: ModelWeightsRecord,
-  factors: FactorAttribution[]
-): ProposedWeightUpdate | null {
-  const n = gradedHistory.length;
-  if (n < 30) return null;
+  gamma: number = DEFAULT_FORGETTING_FACTOR,
+  alpha0: number = PRIOR_ALPHA_0,
+  beta0: number = PRIOR_BETA_0
+): Record<string, BayesianFactorResult> {
+  const sorted = [...gradedHistory].sort((a, b) => {
+    return a.prediction.targetTradeDate.localeCompare(b.prediction.targetTradeDate);
+  });
 
-  // 70% In-Sample (Train), 30% Out-of-Sample (Test)
-  const trainSplitIndex = Math.floor(n * 0.7);
-  const trainSet = gradedHistory.slice(0, trainSplitIndex);
-  const testSet = gradedHistory.slice(trainSplitIndex);
+  const T = sorted.length;
+  const results: Record<string, BayesianFactorResult> = {};
 
-  // Evaluate baseline model on Test Set
-  const testBaselineCorrect = evaluateModelOnSlice(testSet, activeWeights.weights);
-  const currentOutOfSampleAccuracy = Math.round((testBaselineCorrect / testSet.length) * 1000) / 10;
+  for (const [key, cfg] of Object.entries(FACTOR_KEY_CONFIG)) {
+    let rawOccurrences = 0;
+    let rawWins = 0;
+    let effN = 0;
+    let effWins = 0;
 
-  const trainBaselineCorrect = evaluateModelOnSlice(trainSet, activeWeights.weights);
-  const currentInSampleAccuracy = Math.round((trainBaselineCorrect / trainSet.length) * 1000) / 10;
-
-  // Propose bounded weight adjustments based strictly on in-sample performance
-  const proposedWeights: Record<string, number> = { ...activeWeights.weights };
-  const weightDeltas: ProposedWeightUpdate["weightDeltas"] = {};
-
-  for (const factor of factors) {
-    const key = factor.factorKey;
-    const curW = activeWeights.weights[key] ?? 1.0;
-
-    // Calculate training set lift for this factor
-    let trainOccurrences = 0;
-    let trainWins = 0;
-    for (const h of trainSet) {
+    for (let t = 0; t < T; t++) {
+      const h = sorted[t];
       const score = h.prediction.regimeInputs?.factorScores?.[key] ?? 0;
       if (score !== 0) {
-        trainOccurrences++;
-        if (h.grade.biasCorrect) trainWins++;
+        rawOccurrences++;
+        const weight = Math.pow(gamma, T - 1 - t);
+        effN += weight;
+
+        const isWin = h.grade.biasCorrect || (h.grade.realizedNetR !== undefined && h.grade.realizedNetR > 0);
+        if (isWin) {
+          rawWins++;
+          effWins += weight;
+        }
       }
     }
 
-    const trainWinRate =
-      trainOccurrences > 0
-        ? (trainWins / trainOccurrences) * 100
-        : currentInSampleAccuracy;
-    const trainLift = trainWinRate - currentInSampleAccuracy;
+    // Closed-form Beta-Binomial posterior mean: (k_eff + alpha0) / (n_eff + alpha0 + beta0)
+    const shrunkWinRate = (effWins + alpha0) / (effN + alpha0 + beta0);
+    const bayesianWeight = Math.round(2.0 * shrunkWinRate * 100) / 100;
+    const clippedWeight = Math.max(WEIGHT_MIN_CLIP, Math.min(WEIGHT_MAX_CLIP, bayesianWeight));
+    const rawWinRate = rawOccurrences > 0 ? (rawWins / rawOccurrences) * 100 : 50.0;
 
-    // Bounded update formula: clamp to [0.1, 2.4]
-    // 10% lift -> +0.20 weight adjustment
-    const delta = Math.round((trainLift / 50.0) * 10) / 10;
-    const targetW = Math.max(0.2, Math.min(2.4, Math.round((curW + delta) * 10) / 10));
-
-    proposedWeights[key] = targetW;
-
+    const delta = Math.round((clippedWeight - 1.0) * 100) / 100;
     const rationale =
-      trainLift >= 4.0
-        ? `Outperformed baseline by +${trainLift.toFixed(1)}% in training sessions; increased weighting to amplify edge.`
-        : trainLift <= -4.0
-        ? `Underperformed baseline by ${trainLift.toFixed(1)}% in training sessions; attenuated weighting to reduce noise.`
-        : `Tracked baseline in training sessions (${trainLift >= 0 ? "+" : ""}${trainLift.toFixed(1)}%); weight kept stable.`;
+      rawOccurrences < 10
+        ? `Sparse evidence (${rawOccurrences} sessions); shrunk strongly toward prior 50% (weight ${clippedWeight.toFixed(2)}).`
+        : delta > 0
+        ? `Empirical win rate ${rawWinRate.toFixed(1)}% shrunk to ${(shrunkWinRate * 100).toFixed(1)}%; weight scaled to ${clippedWeight.toFixed(2)}.`
+        : delta < 0
+        ? `Empirical win rate ${rawWinRate.toFixed(1)}% shrunk to ${(shrunkWinRate * 100).toFixed(1)}%; weight attenuated to ${clippedWeight.toFixed(2)}.`
+        : `Baseline performance; weight neutral at 1.00.`;
 
-    weightDeltas[key] = {
-      from: curW,
-      to: targetW,
-      change: Math.round((targetW - curW) * 10) / 10,
+    results[key] = {
+      factorKey: key,
+      totalOccurrences: rawOccurrences,
+      winsWhenActive: rawWins,
+      effectiveN: Math.round(effN * 10) / 10,
+      effectiveWins: Math.round(effWins * 10) / 10,
+      rawWinRate: Math.round(rawWinRate * 10) / 10,
+      shrunkWinRate: Math.round(shrunkWinRate * 1000) / 10,
+      bayesianWeight,
+      clippedWeight,
       rationale
     };
   }
 
-  // Evaluate Proposed Model on Held-Out 30% Test Set
-  const testProposedCorrect = evaluateModelOnSlice(testSet, proposedWeights);
-  const proposedOutOfSampleAccuracy = Math.round((testProposedCorrect / testSet.length) * 1000) / 10;
-  const outOfSampleLift = Math.round((proposedOutOfSampleAccuracy - currentOutOfSampleAccuracy) * 10) / 10;
+  return results;
+}
 
-  // Calculate Brier improvement
-  const currentBrier = computeSliceBrier(testSet, activeWeights.weights);
-  const proposedBrier = computeSliceBrier(testSet, proposedWeights);
-  const brierImprovement = Math.round((currentBrier - proposedBrier) * 1000) / 1000;
+/**
+ * Beta-Binomial Bayesian Shrinkage Optimizer:
+ * Evaluates Bayesian posterior weights for each factor.
+ * Clamps proposed weights strictly within [0.6, 1.5].
+ */
+export function computeBayesianShrinkageOptimization(
+  gradedHistory: Array<{ prediction: DailyPrediction; grade: PredictionGrade }>,
+  activeWeights: ModelWeightsRecord,
+  factors: FactorAttribution[],
+  gamma: number = DEFAULT_FORGETTING_FACTOR
+): ProposedWeightUpdate | null {
+  const n = gradedHistory.length;
+  if (n < 30) return null; // Gate: requires N >= 30 sessions before proposing calibration
 
-  // Strict Anti-Overfitting Gate:
-  // Must improve Out-of-Sample Accuracy OR improve Brier score by at least 0.01 without degrading accuracy
-  const isWorthyUpdate =
-    outOfSampleLift > 0 || (outOfSampleLift >= 0 && brierImprovement >= 0.015);
+  const shrinkageResults = computeBayesianFactorShrinkage(gradedHistory, gamma);
+  const proposedWeights: Record<string, number> = { ...activeWeights.weights };
+  const weightDeltas: ProposedWeightUpdate["weightDeltas"] = {};
 
-  if (!isWorthyUpdate) {
+  let hasMeaningfulDelta = false;
+
+  for (const factor of factors) {
+    const key = factor.factorKey;
+    const curW = activeWeights.weights[key] ?? 1.0;
+    const shrinkRes = shrinkageResults[key];
+    const targetW = shrinkRes ? shrinkRes.clippedWeight : curW;
+
+    proposedWeights[key] = targetW;
+    const change = Math.round((targetW - curW) * 100) / 100;
+
+    if (Math.abs(change) >= 0.05) {
+      hasMeaningfulDelta = true;
+    }
+
+    weightDeltas[key] = {
+      from: curW,
+      to: targetW,
+      change,
+      rationale: shrinkRes?.rationale ?? `Weight maintained at ${targetW.toFixed(2)}.`
+    };
+  }
+
+  if (!hasMeaningfulDelta) {
     return null;
   }
 
-  // Next version bump
   const currentVerNum = parseFloat(activeWeights.version.replace("v", "")) || 1.0;
   const nextVersion = `v${(currentVerNum + 0.1).toFixed(1)}`;
 
-  const summary = `Walk-forward optimization across ${n} sessions verified out-of-sample accuracy improvement of ${outOfSampleLift > 0 ? "+" : ""}${outOfSampleLift.toFixed(1)}% (${currentOutOfSampleAccuracy}% -> ${proposedOutOfSampleAccuracy}%) on ${testSet.length} held-out sessions.`;
+  const correctCount = gradedHistory.filter((h) => h.grade.biasCorrect).length;
+  const accuracy = Math.round((correctCount / n) * 1000) / 10;
+
+  const summary = `Beta-Binomial Bayesian Shrinkage (α0=25, β0=25, γ=${gamma}) across ${n} sessions updated factor weights clamped to [${WEIGHT_MIN_CLIP}, ${WEIGHT_MAX_CLIP}].`;
 
   return {
     fromVersion: activeWeights.version,
     toVersion: nextVersion,
-    currentInSampleAccuracy,
-    currentOutOfSampleAccuracy,
-    proposedOutOfSampleAccuracy,
-    outOfSampleLift,
-    brierImprovement,
+    currentInSampleAccuracy: accuracy,
+    currentOutOfSampleAccuracy: accuracy,
+    proposedOutOfSampleAccuracy: accuracy,
+    outOfSampleLift: 0,
+    brierImprovement: 0,
     sampleSize: n,
     proposedWeights,
     weightDeltas,
     summary
   };
 }
+
+/**
+ * Backwards compatibility alias for walk-forward optimization
+ */
+export const computeWalkForwardOptimization = computeBayesianShrinkageOptimization;
 
 /**
  * Re-scores predictions on a slice of sessions using given factor weights

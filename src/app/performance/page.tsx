@@ -238,7 +238,7 @@ export default function PerformancePage() {
               )}
               <span className="text-zinc-300">
                 {summary.sampleSizeGate.isCalibrated
-                  ? "Sample Size Calibrated (N >= 30 Sessions) • Walk-forward optimization active"
+                  ? "Sample Size Calibrated (N >= 30 Sessions) • Beta-Binomial Bayesian Shrinkage active"
                   : `Collecting Baseline Sample (${summary.sampleSizeGate.current}/${summary.sampleSizeGate.required} Sessions graded)`}
               </span>
             </div>
@@ -393,7 +393,15 @@ export default function PerformancePage() {
                                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
                                 }`}
                               >
-                                {grade.biasCorrect ? "CORRECT" : "FAILED"}
+                                {grade.tripleBarrierOutcome
+                                  ? `${grade.tripleBarrierOutcome}${
+                                      grade.realizedNetR !== undefined
+                                        ? ` (${grade.realizedNetR >= 0 ? "+" : ""}${grade.realizedNetR.toFixed(2)}R)`
+                                        : ""
+                                    }`
+                                  : grade.biasCorrect
+                                  ? "CORRECT"
+                                  : "FAILED"}
                               </span>
                             ) : (
                               <span className="text-zinc-600 text-[10px]">PENDING</span>

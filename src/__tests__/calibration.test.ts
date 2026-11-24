@@ -301,7 +301,7 @@ describe("Calibration & Self-Improvement Engine", () => {
       expect(result).toBeNull();
     });
 
-    it("clamps proposed calibrated factor weights strictly within [0.2, 2.4]", () => {
+    it("clamps proposed calibrated factor weights strictly within [0.6, 1.5]", () => {
       // Generate 35 sessions
       const history: Array<{ prediction: DailyPrediction; grade: PredictionGrade }> = [];
       for (let i = 0; i < 35; i++) {
@@ -391,10 +391,11 @@ describe("Calibration & Self-Improvement Engine", () => {
       ];
 
       const proposed = computeWalkForwardOptimization(history, activeWeights, factors);
+      expect(proposed).not.toBeNull();
       if (proposed) {
         for (const [key, weight] of Object.entries(proposed.proposedWeights)) {
-          expect(weight).toBeGreaterThanOrEqual(0.2);
-          expect(weight).toBeLessThanOrEqual(2.4);
+          expect(weight).toBeGreaterThanOrEqual(0.6);
+          expect(weight).toBeLessThanOrEqual(1.5);
         }
       }
     });

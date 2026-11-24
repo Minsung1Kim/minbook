@@ -70,10 +70,14 @@ export interface JournalAnalytics {
     isCalibrated: boolean;
     targetSampleSize: number;
     currentCount: number;
+    targetWinningTrades?: number;
+    currentWinningTrades?: number;
     statusMessage: string;
   };
   percentile85MaeWinners?: number;
   percentile90MaeWinners?: number;
+  upper90BootstrapMaeWinners?: number;
+  winningTradesCount?: number;
   deepHeatDistribution: {
     under25PctR: number; // MAE <= 0.25R
     under50PctR: number; // MAE 0.25R - 0.50R

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { computeGarmanKlassVol, computeYangZhangVol, computeExpectedMove } from "../lib/market/math";
+import {
+  computeGarmanKlassVol,
+  computeYangZhangVol,
+  computeExpectedMove,
+  computeDimensionlessVRP,
+  computeIntradayRealizedVol5m
+} from "../lib/market/math";
 import { OHLCVBar } from "../types/market";
 
 describe("Volatility & Realized Range Estimators", () => {
@@ -28,30 +34,71 @@ describe("Volatility & Realized Range Estimators", () => {
     expect(yz).toBeLessThan(40);
   });
 
-  it("computes Variance Risk Premium (VRP) accurately", () => {
-    const vxn = 24.5;
-    const yz = computeYangZhangVol(sampleBars);
-    const vrp = Math.round((vxn - yz) * 100) / 100;
-    const isNegativeVrp = vrp < 0;
+  it("computes Variance Risk Premium (VRP) accurately in dimensionless ratio form", () => {
+    const iv = 22.0;
+    const rv = 18.0;
+    const res = computeDimensionlessVRP(iv, rv);
 
-    expect(typeof vrp).toBe("number");
-    expect(typeof isNegativeVrp).toBe("boolean");
+    expect(res.vrpRatio).toBeCloseTo(1.22, 2);
+    expect(res.isNegativeVrp).toBe(false);
+
+    // Negative VRP when RV > IV
+    const inverted = computeDimensionlessVRP(16.0, 20.0);
+    expect(inverted.vrpRatio).toBeCloseTo(0.80, 2);
+    expect(inverted.isNegativeVrp).toBe(true);
   });
 
-  it("computes Rule of 16 Implied Move and Straddle Proxy correctly", () => {
+  it("computes 5-minute intraday realized volatility", () => {
+    const bars5m: OHLCVBar[] = [];
+    let p = 21000;
+    for (let i = 0; i < 78; i++) {
+      const step = (i % 2 === 0 ? 1 : -1) * 15;
+      p += step;
+      bars5m.push({
+        timestamp: new Date(Date.UTC(2026, 10, 24, 14, 30 + i * 5)).toISOString(),
+        open: p - step,
+        high: p + 5,
+        low: p - 5,
+        close: p,
+        volume: 2000
+      });
+    }
+    const rv5m = computeIntradayRealizedVol5m(bars5m);
+    expect(rv5m).toBeGreaterThan(0);
+    expect(rv5m).toBeLessThan(100);
+  });
+
+  it("computes Cboe 365-day calendar annualized Implied Move and honest Straddle coverage", () => {
     const pdc = 21000;
     const iv = 20.0; // 20% annualized IV
     const move = computeExpectedMove(pdc, iv);
 
-    // 1-SD daily move = 21000 * 0.20 / sqrt(252) ≈ 21000 * 0.20 / 15.8745 ≈ 264.58 pts
-    expect(move.expectedMove1SD).toBeCloseTo(264.58, 0);
+    // 1-SD daily move = 21000 * 0.20 / sqrt(365) ≈ 21000 * 0.20 / 19.10497 ≈ 219.84 pts
+    expect(move.expectedMove1SD).toBeCloseTo(219.84, 1);
 
-    // Straddle move = 1-SD * sqrt(2/pi) ≈ 264.58 * 0.79788 ≈ 211.10 pts
-    expect(move.expectedMoveStraddle).toBeCloseTo(211.1, 0);
+    // Straddle move = 1-SD * sqrt(2/pi) ≈ 219.84 * 0.79788 ≈ 175.41 pts
+    expect(move.expectedMoveStraddle).toBeCloseTo(175.41, 1);
 
     expect(move.upper1SD).toBe(pdc + move.expectedMove1SD);
     expect(move.lower1SD).toBe(pdc - move.expectedMove1SD);
     expect(move.upperStraddle).toBe(pdc + move.expectedMoveStraddle);
     expect(move.lowerStraddle).toBe(pdc - move.expectedMoveStraddle);
+
+    // Coverage metadata
+    expect(move.annualizationDays).toBe(365);
+    expect(move.straddleCoveragePercent).toBe(57.5);
+    expect(move.coverageLabel).toContain("~57.5% Normal Coverage (0.7979 SD)");
+  });
+
+  it("prioritizes VOLQ over VXN when volq option is supplied", () => {
+    const pdc = 21000;
+    const vxn = 24.0;
+    const volq = 20.0;
+    const moveWithVolq = computeExpectedMove(pdc, vxn, { volq });
+    const moveWithoutVolq = computeExpectedMove(pdc, vxn);
+
+    expect(moveWithVolq.volatilityUsed).toBe(20.0);
+    expect(moveWithoutVolq.volatilityUsed).toBe(24.0);
+    expect(moveWithVolq.expectedMove1SD).toBeLessThan(moveWithoutVolq.expectedMove1SD);
   });
 });

@@ -1,0 +1,466 @@
+import {
+  OHLCVBar,
+  KeyLevel,
+  SessionMetrics,
+  LTFTradeCard,
+  ReachabilityTarget,
+  HTFDemotedLevel,
+  PropProfile,
+  EconomicEvent,
+  Layer1RiskGates,
+  Layer2DirectionalScore
+} from "@/types/market";
+import { computeDetailedRiskPlan } from "../risk/sizing";
+import { checkTier1NewsBlackout } from "../market/economicCalendar";
+import { getBarETParts } from "../market/levels";
+
+/**
+ * Standard Normal Cumulative Distribution Function (Rational approximation, error < 1.5e-7)
+ */
+export function normalCdf(x: number): number {
+  if (x < -8) return 0;
+  if (x > 8) return 1;
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const sign = x < 0 ? -1 : 1;
+  const absX = Math.abs(x) / Math.sqrt(2);
+  const t = 1.0 / (1.0 + p * absX);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+  return 0.5 * (1.0 + sign * y);
+}
+
+/**
+ * Computes Brownian motion first-passage touch probability:
+ * P(max_{0<=s<=t} W_s >= d) = 2 * (1 - Phi(d / (sigma_15m * sqrt(t / 15))))
+ * Parameter: sigma_15m_post = 0.50 * ATR_Open_15m
+ */
+export function computeBrownianTouchProbability(
+  distancePts: number,
+  horizonMinutes: 5 | 10 | 15,
+  atrOpen15m: number
+): number {
+  if (distancePts <= 0) return 1.0;
+  const safeAtr = Math.max(10, atrOpen15m);
+  const sigma15m = 0.5 * safeAtr;
+  const sigmaT = sigma15m * Math.sqrt(horizonMinutes / 15);
+  if (sigmaT <= 0) return 0;
+
+  const z = distancePts / sigmaT;
+  const cdf = normalCdf(z);
+  const touchProb = Math.min(1.0, Math.max(0.0, 2 * (1 - cdf)));
+  return Math.round(touchProb * 1000) / 1000;
+}
+
+export interface EvaluateLTFExecutionParams {
+  m1Bars: OHLCVBar[];
+  currentPrice: number;
+  atrOpen15m: number;
+  metrics: SessionMetrics;
+  layer1?: Layer1RiskGates;
+  layer2?: Layer2DirectionalScore;
+  keyLevels?: KeyLevel[];
+  propProfile?: PropProfile;
+  events?: EconomicEvent[];
+  forcedTimeET?: { hour: number; minute: number }; // For deterministic backtests
+}
+
+/**
+ * Evaluates real-time 1-minute execution context between 09:30 and 09:50 AM ET.
+ */
+export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTradeCard {
+  const {
+    m1Bars,
+    currentPrice,
+    atrOpen15m,
+    metrics,
+    layer1,
+    layer2,
+    keyLevels = [],
+    propProfile,
+    events = [],
+    forcedTimeET
+  } = params;
+
+  const safeAtrOpen15m = atrOpen15m > 0 ? atrOpen15m : (metrics.atrOpen15m || 30.0);
+
+  // 1. Isolate 1m bars from 09:30 AM ET onward
+  const rthBars = m1Bars.filter((b) => {
+    const et = getBarETParts(b.timestamp);
+    const mins = et.hour * 60 + et.minute;
+    return mins >= 9 * 60 + 30 && mins <= 10 * 60;
+  });
+
+  // Resolve current ET time
+  let curHour = 9;
+  let curMinute = 34;
+  if (forcedTimeET) {
+    curHour = forcedTimeET.hour;
+    curMinute = forcedTimeET.minute;
+  } else if (rthBars.length > 0) {
+    const lastBarET = getBarETParts(rthBars[rthBars.length - 1].timestamp);
+    curHour = lastBarET.hour;
+    curMinute = lastBarET.minute;
+  }
+  const curTotalMins = curHour * 60 + curMinute;
+
+  // 2. Compute 09:30–09:33 ET 3-minute Opening Range (ORH_3m, ORL_3m)
+  const bars930to933 = rthBars.filter((b) => {
+    const et = getBarETParts(b.timestamp);
+    const m = et.hour * 60 + et.minute;
+    return m >= 9 * 60 + 30 && m <= 9 * 60 + 33;
+  });
+
+  let orh3m = metrics.onh;
+  let orl3m = metrics.onl;
+  let initialImpulseRange = safeAtrOpen15m;
+  if (bars930to933.length > 0) {
+    orh3m = Math.max(...bars930to933.map((b) => b.high));
+    orl3m = Math.min(...bars930to933.map((b) => b.low));
+    initialImpulseRange = Math.max(5, orh3m - orl3m);
+  }
+
+  // Check Tier 1 News Blackout
+  const blackoutCheck = checkTier1NewsBlackout(
+    events,
+    new Date(),
+    propProfile?.newsBlackoutMinutes ?? 2
+  );
+
+  // 3. Phase A: 09:30–09:33 ET Observation Lock
+  if (curTotalMins <= 9 * 60 + 33) {
+    const stopPts = Math.round(0.25 * safeAtrOpen15m * 10) / 10;
+    const dummySizing = computeDetailedRiskPlan({
+      entryPrice: currentPrice,
+      stopPrice: currentPrice - stopPts,
+      instrument: "MNQ",
+      propProfile
+    });
+
+    return {
+      status: "OBSERVATION_LOCK",
+      archetype: "OBSERVATION_FREEZE",
+      direction: "SHORT",
+      entryZone: {
+        low: orl3m,
+        high: orh3m,
+        mid: Math.round(((orh3m + orl3m) / 2) * 100) / 100
+      },
+      stopLoss: orh3m + 5,
+      stopPts,
+      antiChaseWarning: false,
+      tp1: {
+        price: orl3m,
+        distancePts: Math.abs(currentPrice - orl3m),
+        hitProb5m: 0.5,
+        hitProb10m: 0.6,
+        hitProb15m: 0.7,
+        rationale: "ORL 3m Boundary"
+      },
+      tp2: {
+        price: orl3m - 20,
+        distancePts: Math.abs(currentPrice - (orl3m - 20)),
+        hitProb5m: 0.3,
+        hitProb10m: 0.45,
+        hitProb15m: 0.55,
+        rationale: "Initial Liquidity Pool"
+      },
+      htfDemotedLevels: [],
+      killSwitchPrice: currentPrice,
+      killSwitchMessage: "HANDS OFF MOUSE (09:30–09:33 ET). Observe initial impulse, spread expansion, and track ORH_3m / ORL_3m.",
+      contracts: dummySizing.suggestedContracts,
+      contractSplitDirective: "OBSERVATION PHASE: No orders permitted during 09:30–09:33 ET opening noise.",
+      netRR: dummySizing.netRR,
+      netTargetDollars: dummySizing.netTargetDollars,
+      netRiskDollars: dummySizing.netRiskDollars,
+      orh3m,
+      orl3m,
+      initialImpulseRange,
+      propProfile,
+      newsBlackoutWarning: blackoutCheck.hasBlackoutAlarm ? blackoutCheck.alarmMessage : undefined
+    };
+  }
+
+  // 4. Phase B: 09:34–09:50 ET Active Execution Window
+  // Isolate bars strictly after 09:33 ET for LTF execution & sweep detection
+  const post933Bars = rthBars.filter((b) => {
+    const et = getBarETParts(b.timestamp);
+    const m = et.hour * 60 + et.minute;
+    return m > 9 * 60 + 33;
+  });
+  const atr1mPost933 =
+    post933Bars.length > 0
+      ? post933Bars.reduce((sum, b) => sum + (b.high - b.low), 0) / post933Bars.length
+      : safeAtrOpen15m / 8;
+
+  const stopBuffer = Math.max(3.0, Math.round(0.25 * atr1mPost933 * 10) / 10);
+
+  // Default direction determination from Layer 2 / HTF impulse
+  let direction: "LONG" | "SHORT" = "SHORT";
+  if (layer2) {
+    direction = layer2.direction === "BULLISH" ? "LONG" : "SHORT";
+  } else if (metrics.htfImpulseDirection) {
+    direction = metrics.htfImpulseDirection === "BULLISH" ? "LONG" : "SHORT";
+  }
+
+  // Detect Setup Archetypes:
+  // a) Sweep + MSS Reversal Check in post-09:33 bars
+  let isSweepMssReversal = false;
+  let sweepLevel = 0;
+  let sweepExtreme = 0;
+
+  // Bullish Sweep + MSS Reversal: Sweeps ORL 3m (or ONL if not already broken) then displaces above
+  const sweptLowBar = post933Bars.find((b) => b.low < orl3m || (orl3m >= metrics.onl && b.low < metrics.onl));
+  if (sweptLowBar) {
+    const sweepLvl = sweptLowBar.low < orl3m ? orl3m : metrics.onl;
+    const sweepIdx = post933Bars.indexOf(sweptLowBar);
+    const subsequentBars = post933Bars.slice(sweepIdx);
+    const lowestLow = Math.min(...subsequentBars.map((b) => b.low));
+    // Bullish displacement: closing back above the swept level
+    const displacement = subsequentBars.find(
+      (b) => b.close > sweepLvl && b.close > b.open
+    );
+    if (displacement) {
+      isSweepMssReversal = true;
+      direction = "LONG";
+      sweepLevel = sweepLvl;
+      sweepExtreme = lowestLow;
+    }
+  }
+
+  // Bearish Sweep + MSS Reversal: Sweeps ORH 3m (or ONH if not already broken) then displaces below
+  if (!isSweepMssReversal) {
+    const sweptHighBar = post933Bars.find((b) => b.high > orh3m || (orh3m <= metrics.onh && b.high > metrics.onh));
+    if (sweptHighBar) {
+      const sweepLvl = sweptHighBar.high > orh3m ? orh3m : metrics.onh;
+      const sweepIdx = post933Bars.indexOf(sweptHighBar);
+      const subsequentBars = post933Bars.slice(sweepIdx);
+      const highestHigh = Math.max(...subsequentBars.map((b) => b.high));
+      // Bearish displacement: closing back below the swept level
+      const displacement = subsequentBars.find(
+        (b) => b.close < sweepLvl && b.close < b.open
+      );
+      if (displacement) {
+        isSweepMssReversal = true;
+        direction = "SHORT";
+        sweepLevel = sweepLvl;
+        sweepExtreme = highestHigh;
+      }
+    }
+  }
+
+  let archetype: LTFTradeCard["archetype"] = isSweepMssReversal ? "SWEEP_MSS_REVERSAL" : "RETRACE_CONTINUATION";
+  let entryZone = { low: 0, high: 0, mid: 0 };
+  let stopLoss = 0;
+
+  if (archetype === "SWEEP_MSS_REVERSAL") {
+    if (direction === "SHORT") {
+      entryZone = {
+        low: Math.round((sweepLevel - 2.5) * 100) / 100,
+        high: Math.round((sweepLevel + 1.5) * 100) / 100,
+        mid: Math.round(sweepLevel * 100) / 100
+      };
+      stopLoss = Math.round((sweepExtreme + stopBuffer) * 100) / 100;
+    } else {
+      entryZone = {
+        low: Math.round((sweepLevel - 1.5) * 100) / 100,
+        high: Math.round((sweepLevel + 2.5) * 100) / 100,
+        mid: Math.round(sweepLevel * 100) / 100
+      };
+      stopLoss = Math.round((sweepExtreme - stopBuffer) * 100) / 100;
+    }
+  } else {
+    // Retrace Continuation: 40%–50% impulse retrace zone
+    const impulseHigh = Math.max(...bars930to933.map((b) => b.high));
+    const impulseLow = Math.min(...bars930to933.map((b) => b.low));
+    const impulseRange = Math.max(8.0, impulseHigh - impulseLow);
+
+    if (direction === "SHORT") {
+      const retrace40 = impulseLow + 0.40 * impulseRange;
+      const retrace50 = impulseLow + 0.50 * impulseRange;
+      entryZone = {
+        low: Math.round(Math.min(retrace40, retrace50) * 100) / 100,
+        high: Math.round(Math.max(retrace40, retrace50) * 100) / 100,
+        mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
+      };
+
+      // 1m structural swing stop:
+      // If price has retraced into or near the zone, anchor to retrace high + buffer
+      const hasRetraced = post933Bars.some((b) => b.high >= entryZone.low - 5);
+      if (hasRetraced) {
+        const retraceHigh = Math.max(...post933Bars.map((b) => b.high));
+        stopLoss = Math.round((retraceHigh + Math.max(stopBuffer, 0.15 * safeAtrOpen15m)) * 100) / 100;
+      } else {
+        stopLoss = Math.round((impulseHigh + stopBuffer) * 100) / 100;
+      }
+    } else {
+      const retrace40 = impulseHigh - 0.40 * impulseRange;
+      const retrace50 = impulseHigh - 0.50 * impulseRange;
+      entryZone = {
+        low: Math.round(Math.min(retrace40, retrace50) * 100) / 100,
+        high: Math.round(Math.max(retrace40, retrace50) * 100) / 100,
+        mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
+      };
+
+      const hasRetraced = post933Bars.some((b) => b.low <= entryZone.high + 5);
+      if (hasRetraced) {
+        const retraceLow = Math.min(...post933Bars.map((b) => b.low));
+        stopLoss = Math.round((retraceLow - Math.max(stopBuffer, 0.15 * safeAtrOpen15m)) * 100) / 100;
+      } else {
+        stopLoss = Math.round((impulseLow - stopBuffer) * 100) / 100;
+      }
+    }
+  }
+
+  const stopPts = Math.max(3.0, Math.round(Math.abs(entryZone.mid - stopLoss) * 100) / 100);
+
+  // 5. Anti-Chase Gate
+  const liveDistToStop = Math.abs(currentPrice - stopLoss);
+  const chaseThreshold = 0.35 * safeAtrOpen15m;
+  const antiChaseWarning = archetype === "SWEEP_MSS_REVERSAL" ? false : liveDistToStop > chaseThreshold;
+  const antiChaseMessage = antiChaseWarning
+    ? `ANTI-CHASE GATE TRIGGERED: Current price (${currentPrice.toFixed(2)}) is ${liveDistToStop.toFixed(1)} pts from stop (${stopLoss.toFixed(2)}), exceeding 0.35 * ATR_Open_15m (${chaseThreshold.toFixed(1)} pts). DO NOT chase market orders! Set limit order inside retrace zone [${entryZone.low.toFixed(1)} – ${entryZone.high.toFixed(1)}].`
+    : undefined;
+
+  // 6. Reachability Target Engine (TP1 & TP2 & HTF Demotion)
+  const entryRefPrice = currentPrice;
+  const minTP1Dist = 0.25 * safeAtrOpen15m;
+  const maxTP1Dist = 0.45 * safeAtrOpen15m;
+  const minTP2Dist = 0.50 * safeAtrOpen15m;
+  const maxTP2Dist = 0.75 * safeAtrOpen15m;
+  const htfDemoteDist = 0.75 * safeAtrOpen15m;
+
+  // Candidate levels
+  const candidates: Array<{ name: string; price: number; distance: number }> = [];
+  if (orh3m) candidates.push({ name: "ORH 3m", price: orh3m, distance: Math.abs(orh3m - entryRefPrice) });
+  if (orl3m) candidates.push({ name: "ORL 3m", price: orl3m, distance: Math.abs(orl3m - entryRefPrice) });
+  if (metrics.sessionVwap) candidates.push({ name: "Session VWAP", price: metrics.sessionVwap, distance: Math.abs(metrics.sessionVwap - entryRefPrice) });
+  if (metrics.onMid) candidates.push({ name: "ON Mid", price: metrics.onMid, distance: Math.abs(metrics.onMid - entryRefPrice) });
+  if (metrics.priorDayPoc) candidates.push({ name: "Prior POC", price: metrics.priorDayPoc, distance: Math.abs(metrics.priorDayPoc - entryRefPrice) });
+
+  for (const kl of keyLevels) {
+    if (!candidates.some((c) => Math.abs(c.price - kl.price) < 2.0)) {
+      candidates.push({ name: kl.shortName || kl.name, price: kl.price, distance: Math.abs(kl.price - entryRefPrice) });
+    }
+  }
+
+  // Filter in direction of trade
+  const directionalCandidates = candidates.filter((c) => {
+    return direction === "LONG" ? c.price > entryRefPrice : c.price < entryRefPrice;
+  });
+
+  // Select TP1
+  const tp1Candidates = directionalCandidates.filter((c) => c.distance >= minTP1Dist && c.distance <= maxTP1Dist);
+  let tp1Dist = Math.round(0.35 * safeAtrOpen15m * 10) / 10;
+  let tp1Price = direction === "LONG" ? entryRefPrice + tp1Dist : entryRefPrice - tp1Dist;
+  let tp1Rationale = `Diurnal 0.35x ATR_Open_15m Scalp`;
+
+  if (tp1Candidates.length > 0) {
+    // Pick candidate closest to median of [minTP1Dist, maxTP1Dist]
+    tp1Candidates.sort((a, b) => Math.abs(a.distance - 0.35 * safeAtrOpen15m) - Math.abs(b.distance - 0.35 * safeAtrOpen15m));
+    tp1Price = tp1Candidates[0].price;
+    tp1Dist = tp1Candidates[0].distance;
+    tp1Rationale = `${tp1Candidates[0].name} (${tp1Dist.toFixed(1)} pts)`;
+  }
+
+  // Select TP2
+  const tp2Candidates = directionalCandidates.filter((c) => c.distance >= minTP2Dist && c.distance <= maxTP2Dist);
+  let tp2Dist = Math.round(0.65 * safeAtrOpen15m * 10) / 10;
+  let tp2Price = direction === "LONG" ? entryRefPrice + tp2Dist : entryRefPrice - tp2Dist;
+  let tp2Rationale = `Diurnal 0.65x ATR_Open_15m Runner Extension`;
+
+  if (tp2Candidates.length > 0) {
+    tp2Candidates.sort((a, b) => Math.abs(a.distance - 0.65 * safeAtrOpen15m) - Math.abs(b.distance - 0.65 * safeAtrOpen15m));
+    tp2Price = tp2Candidates[0].price;
+    tp2Dist = tp2Candidates[0].distance;
+    tp2Rationale = `${tp2Candidates[0].name} (${tp2Dist.toFixed(1)} pts)`;
+  }
+
+  // Intraday Unrealized Drawdown Cap on TP2
+  if (propProfile?.drawdownMode === "INTRADAY_UNREALIZED") {
+    const maxAllowedTp2Dist = Math.round(1.8 * stopPts * 10) / 10;
+    if (tp2Dist > maxAllowedTp2Dist) {
+      tp2Dist = maxAllowedTp2Dist;
+      tp2Price = direction === "LONG" ? entryZone.mid + tp2Dist : entryZone.mid - tp2Dist;
+      tp2Rationale = `Capped at 1.8R (${tp2Dist.toFixed(1)} pts) - Intraday Unrealized Mode`;
+    }
+  }
+
+  const tp1: ReachabilityTarget = {
+    price: Math.round(tp1Price * 100) / 100,
+    distancePts: Math.round(tp1Dist * 100) / 100,
+    hitProb5m: computeBrownianTouchProbability(tp1Dist, 5, safeAtrOpen15m),
+    hitProb10m: computeBrownianTouchProbability(tp1Dist, 10, safeAtrOpen15m),
+    hitProb15m: computeBrownianTouchProbability(tp1Dist, 15, safeAtrOpen15m),
+    rationale: tp1Rationale
+  };
+
+  const tp2: ReachabilityTarget = {
+    price: Math.round(tp2Price * 100) / 100,
+    distancePts: Math.round(tp2Dist * 100) / 100,
+    hitProb5m: computeBrownianTouchProbability(tp2Dist, 5, safeAtrOpen15m),
+    hitProb10m: computeBrownianTouchProbability(tp2Dist, 10, safeAtrOpen15m),
+    hitProb15m: computeBrownianTouchProbability(tp2Dist, 15, safeAtrOpen15m),
+    rationale: tp2Rationale
+  };
+
+  // HTF Demoted Levels (distance > 0.75 * ATR_Open_15m)
+  const htfDemotedLevels: HTFDemotedLevel[] = directionalCandidates
+    .filter((c) => c.distance > htfDemoteDist)
+    .map((c) => {
+      const prob10m = computeBrownianTouchProbability(c.distance, 10, safeAtrOpen15m);
+      return {
+        name: c.name,
+        price: Math.round(c.price * 100) / 100,
+        distancePts: Math.round(c.distance * 100) / 100,
+        hitProb10m: prob10m,
+        badge: `HTF Context Only — Low 10m Hit Prob (${(prob10m * 100).toFixed(1)}%)`
+      };
+    })
+    .sort((a, b) => a.distancePts - b.distancePts);
+
+  // 7. 1m MSS Exit / Kill-Switch Price
+  const killSwitchPrice = entryZone.mid;
+  const killSwitchMessage = `1m MSS Kill-Switch at ${killSwitchPrice.toFixed(2)}. If trade reaches >= 0.8R MFE and an opposing 1m candle closes back across entry, flatten immediately.`;
+
+  // 8. Contract Sizing & Quantization
+  const riskPlan = computeDetailedRiskPlan({
+    entryPrice: entryZone.mid,
+    stopPrice: stopLoss,
+    targetPrice: tp1.price,
+    instrument: "MNQ",
+    propProfile
+  });
+
+  return {
+    status: archetype === "SWEEP_MSS_REVERSAL" ? "ARMED_SWEEP_REVERSAL" : antiChaseWarning ? "STAND_ASIDE" : "ARMED_RETRACE",
+    archetype,
+    direction,
+    entryZone,
+    stopLoss,
+    stopPts,
+    antiChaseWarning,
+    antiChaseMessage,
+    tp1,
+    tp2,
+    htfDemotedLevels,
+    killSwitchPrice,
+    killSwitchMessage,
+    contracts: riskPlan.suggestedContracts,
+    contractSplitDirective: riskPlan.contractSplitDirective,
+    netRR: riskPlan.netRR,
+    netTargetDollars: riskPlan.netTargetDollars,
+    netRiskDollars: riskPlan.netRiskDollars,
+    orh3m,
+    orl3m,
+    initialImpulseRange,
+    propProfile,
+    phantomDrawdownWarning: riskPlan.phantomDrawdownWarning,
+    consistencyCapWarning: riskPlan.consistencyCapWarning,
+    newsBlackoutWarning: blackoutCheck.hasBlackoutAlarm ? blackoutCheck.alarmMessage : undefined
+  };
+}

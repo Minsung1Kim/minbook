@@ -257,16 +257,43 @@ export interface ExpectedMoveResult {
   lower1SD: number;
   upperStraddle: number;
   lowerStraddle: number;
+  straddleCoveragePercent: number; // 57.5
+  coverageLabel: string; // "~57.5% Normal Coverage (0.7979 SD)"
+  volSource: string; // "VOLQ" | "VXN" | "VIX" | "FALLBACK"
+  volatilityUsed: number;
+  annualizationDays: 365;
+}
+
+export interface ExpectedMoveOptions {
+  volq?: number;
+  vix1d?: number;
 }
 
 /**
- * Computes daily expected move bands using Rule of 16 and Straddle proxy.
- * Expected Move (1-SD) = PDC * (IV / 100) / sqrt(252)
+ * Computes daily expected move bands using Cboe calendar-annualized volatility (sqrt(365))
+ * and Expected Straddle proxy.
+ * Expected Move (1-SD) = PDC * (IV / 100) / sqrt(365)
  * Expected Straddle Move = ExpectedMove1SD * sqrt(2 / PI) (~0.79788x)
+ * Label coverage honestly (~57.5% Normal distribution coverage, 2*Phi(0.7979)-1), never 68%.
  */
-export function computeExpectedMove(pdc: number, ivPct: number): ExpectedMoveResult {
-  const safeIv = ivPct > 0 ? ivPct : 20;
-  const expectedMove1SD = Math.round(((pdc * (safeIv / 100)) / Math.sqrt(252)) * 100) / 100;
+export function computeExpectedMove(
+  pdc: number,
+  ivPct: number,
+  options?: ExpectedMoveOptions
+): ExpectedMoveResult {
+  let effectiveIv = ivPct > 0 ? ivPct : 20;
+  let volSource = "VXN";
+
+  if (options?.volq && options.volq > 0) {
+    effectiveIv = options.volq;
+    volSource = "VOLQ";
+  } else if (options?.vix1d && options.vix1d > 0) {
+    // If VIX1D is available, provide context note
+    volSource = "VIX1D_AWARE";
+  }
+
+  // Divide Cboe 30-day calendar-annualized volatility by sqrt(365), never sqrt(252)
+  const expectedMove1SD = Math.round(((pdc * (effectiveIv / 100)) / Math.sqrt(365)) * 100) / 100;
   const straddleRatio = Math.sqrt(2 / Math.PI); // ~0.79788456
   const expectedMoveStraddle = Math.round(expectedMove1SD * straddleRatio * 100) / 100;
 
@@ -276,7 +303,79 @@ export function computeExpectedMove(pdc: number, ivPct: number): ExpectedMoveRes
     upper1SD: Math.round((pdc + expectedMove1SD) * 100) / 100,
     lower1SD: Math.round((pdc - expectedMove1SD) * 100) / 100,
     upperStraddle: Math.round((pdc + expectedMoveStraddle) * 100) / 100,
-    lowerStraddle: Math.round((pdc - expectedMoveStraddle) * 100) / 100
+    lowerStraddle: Math.round((pdc - expectedMoveStraddle) * 100) / 100,
+    straddleCoveragePercent: 57.5,
+    coverageLabel: "~57.5% Normal Coverage (0.7979 SD)",
+    volSource,
+    volatilityUsed: effectiveIv,
+    annualizationDays: 365
+  };
+}
+
+/**
+ * Computes annualized realized volatility from 5-minute intraday bars.
+ * 78 bars per 6.5h RTH session * 252 trading days = 19,656 bars/year.
+ */
+export function computeIntradayRealizedVol5m(
+  bars5m: OHLCVBar[],
+  barsPerDay: number = 78
+): number {
+  if (!bars5m || bars5m.length < 5) return 22.0;
+
+  const logReturns: number[] = [];
+  for (let i = 1; i < bars5m.length; i++) {
+    const prevC = bars5m[i - 1].close;
+    const curC = bars5m[i].close;
+    if (prevC > 0 && curC > 0) {
+      logReturns.push(Math.log(curC / prevC));
+    }
+  }
+
+  const n = logReturns.length;
+  if (n < 4) return 22.0;
+
+  const mean = logReturns.reduce((acc, r) => acc + r, 0) / n;
+  const variance =
+    logReturns.reduce((acc, r) => acc + Math.pow(r - mean, 2), 0) / (n - 1);
+
+  // Annualize: variance * (barsPerDay * 252)
+  const annualizedVar = variance * barsPerDay * 252;
+  const annualizedVol = Math.sqrt(Math.max(0, annualizedVar)) * 100;
+  return Math.round(annualizedVol * 100) / 100;
+}
+
+export interface DimensionlessVRPResult {
+  vrpRatio: number; // IV / RV (dimensionless ratio, e.g. 1.15)
+  isNegativeVrp: boolean; // RV > IV (ratio < 1.0, tail risk / stop-run dislocation)
+  iv: number;
+  rv: number;
+  interpretation: string;
+}
+
+/**
+ * Computes Variance Risk Premium in dimensionless ratio form (IV / RV)
+ * using intraday realized volatility rather than linear point subtraction.
+ * When IV / RV < 1.0 => RV exceeds IV (tail risk underpriced, negative VRP).
+ */
+export function computeDimensionlessVRP(
+  iv: number,
+  rv: number
+): DimensionlessVRPResult {
+  const safeIv = Math.max(0.1, iv);
+  const safeRv = Math.max(0.1, rv);
+  const vrpRatio = Math.round((safeIv / safeRv) * 100) / 100;
+  const isNegativeVrp = vrpRatio < 1.0;
+
+  const interpretation = isNegativeVrp
+    ? `NEGATIVE VRP (Ratio: ${vrpRatio.toFixed(2)} < 1.00): Realized Vol (${safeRv.toFixed(1)}%) exceeds Implied Vol (${safeIv.toFixed(1)}%). Options underprice tail moves; stop-run / dislocation risk elevated.`
+    : `POSITIVE VRP (Ratio: ${vrpRatio.toFixed(2)} >= 1.00): Implied Vol (${safeIv.toFixed(1)}%) carries a premium over Realized Vol (${safeRv.toFixed(1)}%). Normal volatility cushion active.`;
+
+  return {
+    vrpRatio,
+    isNegativeVrp,
+    iv: safeIv,
+    rv: safeRv,
+    interpretation
   };
 }
 

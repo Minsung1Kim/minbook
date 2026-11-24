@@ -131,7 +131,9 @@ export async function getOpenBrief(options?: {
     qqqProxyQuote: macro.qqqProxyQuote,
     economicEvents: events,
     sessionInfo,
-    factorWeights: activeFactorWeights
+    factorWeights: activeFactorWeights,
+    intradayBars,
+    keyLevels
   });
 
   const ttlSeconds = parseInt(process.env.CACHE_TTL_SECONDS || "10", 10);
@@ -176,7 +178,8 @@ export async function getOpenBrief(options?: {
     },
     intradayBars,
     gex,
-    footprint
+    footprint,
+    ltfTradeCard: tacticalPlan.ltfTradeCard
   };
 
   // Cache in-memory

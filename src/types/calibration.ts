@@ -48,6 +48,13 @@ export interface DailyPrediction {
   createdAt: string;
 }
 
+export type TripleBarrierOutcome =
+  | "HIT_TP1"
+  | "HIT_TP2"
+  | "STOPPED_OUT"
+  | "TIME_EXIT"
+  | "NO_FILL";
+
 export interface PredictionGrade {
   id: string;
   targetTradeDate: string; // YYYY-MM-DD
@@ -64,7 +71,15 @@ export interface PredictionGrade {
   liquidityDrawHit: string[]; // e.g. ['ONH', 'PDH']
   chopWarningCorrect: boolean;
   brierScore: number;
+  logScore?: number;
   compositeScore: number; // 0 to 100
+  tripleBarrierOutcome?: TripleBarrierOutcome;
+  realizedNetR?: number;
+  netPnlDollars?: number;
+  fillPrice?: number;
+  fillTimeET?: string;
+  exitPrice?: number;
+  exitTimeET?: string;
   gradedAt: string;
 }
 
@@ -89,6 +104,9 @@ export interface FactorAttribution {
   liftPercent: number; // winRate - baselineWinRate
   currentWeight: number;
   recommendedWeight?: number;
+  bayesianWeight?: number;
+  posteriorMean?: number;
+  effectiveN?: number;
   performanceByVol: {
     normalVolWinRate: number;
     highVolWinRate: number;

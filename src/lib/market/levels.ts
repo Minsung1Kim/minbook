@@ -169,6 +169,182 @@ export function getBarDateET(timestamp: string): string {
   }).format(dt);
 }
 
+export function getBarETParts(timestamp: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} {
+  const dt = new Date(timestamp);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false
+  }).formatToParts(dt);
+
+  return {
+    year: parseInt(parts.find((p) => p.type === "year")?.value || "2026", 10),
+    month: parseInt(parts.find((p) => p.type === "month")?.value || "1", 10),
+    day: parseInt(parts.find((p) => p.type === "day")?.value || "1", 10),
+    hour: parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10),
+    minute: parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10)
+  };
+}
+
+/**
+ * Anchors Prior Day Close (PDC) strictly to the 16:00 ET settlement close from intraday bars.
+ */
+export function findPriorDay1600Settlement(
+  intradayBars: OHLCVBar[],
+  priorDateET: string
+): { settlementPrice: number; isOfficial1600: boolean } | null {
+  const dayBars = intradayBars.filter((b) => getBarDateET(b.timestamp) === priorDateET);
+  if (dayBars.length === 0) return null;
+
+  // 1. Look for exact bar at 16:00 ET (official settlement)
+  for (const b of dayBars) {
+    const et = getBarETParts(b.timestamp);
+    if (et.hour === 16 && et.minute === 0) {
+      return { settlementPrice: b.close, isOfficial1600: true };
+    }
+  }
+
+  // 2. Look for late RTH bar closest to 16:00 ET (15:45-15:59)
+  const lateRthBars = dayBars
+    .filter((b) => {
+      const et = getBarETParts(b.timestamp);
+      return et.hour === 15 && et.minute >= 45;
+    })
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  if (lateRthBars.length > 0) {
+    return { settlementPrice: lateRthBars[0].close, isOfficial1600: true };
+  }
+
+  // 3. Fallback to the latest bar on priorDateET <= 16:00 ET
+  const rthBars = dayBars.filter((b) => {
+    const et = getBarETParts(b.timestamp);
+    return et.hour < 16 || (et.hour === 16 && et.minute === 0);
+  });
+  if (rthBars.length > 0) {
+    const lastRth = rthBars[rthBars.length - 1];
+    return { settlementPrice: lastRth.close, isOfficial1600: true };
+  }
+
+  return null;
+}
+
+/**
+ * Computes diurnally matched ATR_Open_15m:
+ * Median range (High - Low) of the trailing 15 sessions' 09:30–09:45 ET opening bar.
+ */
+export function computeAtrOpen15m(
+  intraday15mBars: OHLCVBar[],
+  targetTradeDate: string,
+  lookbackSessions: number = 15
+): number {
+  if (!intraday15mBars || intraday15mBars.length === 0) return 32.5;
+
+  const openBarsByDate = new Map<string, number>();
+
+  for (const b of intraday15mBars) {
+    const dateStr = getBarDateET(b.timestamp);
+    if (dateStr >= targetTradeDate) continue; // strictly completed prior sessions
+
+    const et = getBarETParts(b.timestamp);
+    if (et.hour === 9 && et.minute >= 30 && et.minute < 45) {
+      const range = Math.max(0.25, b.high - b.low);
+      openBarsByDate.set(dateStr, range);
+    }
+  }
+
+  const ranges = Array.from(openBarsByDate.values());
+  if (ranges.length === 0) return 32.5;
+
+  const recentRanges = ranges.slice(-lookbackSessions);
+  recentRanges.sort((a, b) => a - b);
+
+  const mid = Math.floor(recentRanges.length / 2);
+  const median =
+    recentRanges.length % 2 !== 0
+      ? recentRanges[mid]
+      : (recentRanges[mid - 1] + recentRanges[mid]) / 2;
+
+  return Math.round(median * 10) / 10;
+}
+
+/**
+ * Computes Prior Day Volume Profile (VAH, POC, VAL) from prior day RTH bars (09:30-16:00 ET).
+ */
+export function computePriorDayVolumeProfile(
+  intradayBars: OHLCVBar[],
+  priorDateET: string
+): { vah: number; poc: number; val: number } | null {
+  const dayBars = intradayBars.filter((b) => {
+    if (getBarDateET(b.timestamp) !== priorDateET) return false;
+    const et = getBarETParts(b.timestamp);
+    const mins = et.hour * 60 + et.minute;
+    return mins >= 570 && mins <= 960; // 09:30 to 16:00 ET
+  });
+
+  if (dayBars.length === 0) return null;
+
+  const binMap = new Map<number, number>();
+  let totalVolume = 0;
+
+  for (const b of dayBars) {
+    const vol = typeof b.volume === "number" && b.volume > 0 ? b.volume : 100;
+    const typ = (b.high + b.low + b.close) / 3;
+    const bin = Math.round(typ / 2.5) * 2.5;
+    binMap.set(bin, (binMap.get(bin) || 0) + vol);
+    totalVolume += vol;
+  }
+
+  if (binMap.size === 0) return null;
+
+  let poc = 0;
+  let maxVol = 0;
+  for (const [bin, v] of binMap) {
+    if (v > maxVol) {
+      maxVol = v;
+      poc = bin;
+    }
+  }
+
+  const sortedBins = Array.from(binMap.keys()).sort((a, b) => a - b);
+  const targetVaVol = totalVolume * 0.7;
+  let accumulated = maxVol;
+  let lowIdx = sortedBins.indexOf(poc);
+  let highIdx = lowIdx;
+
+  while (accumulated < targetVaVol && (lowIdx > 0 || highIdx < sortedBins.length - 1)) {
+    const nextLowVol = lowIdx > 0 ? (binMap.get(sortedBins[lowIdx - 1]) || 0) : -1;
+    const nextHighVol = highIdx < sortedBins.length - 1 ? (binMap.get(sortedBins[highIdx + 1]) || 0) : -1;
+
+    if (nextLowVol >= nextHighVol && lowIdx > 0) {
+      lowIdx--;
+      accumulated += nextLowVol;
+    } else if (highIdx < sortedBins.length - 1) {
+      highIdx++;
+      accumulated += nextHighVol;
+    } else if (lowIdx > 0) {
+      lowIdx--;
+      accumulated += nextLowVol;
+    }
+  }
+
+  return {
+    poc,
+    vah: sortedBins[highIdx] || poc,
+    val: sortedBins[lowIdx] || poc
+  };
+}
+
 export function computeSessionLevels(
   currentPrice: number,
   dailyBars: OHLCVBar[],
@@ -220,9 +396,22 @@ export function computeSessionLevels(
     pdc = priorDay.close;
   }
 
+  // Anchor PDC strictly to the 16:00 ET settlement close from completed intraday bars
+  let pdcSource: SessionMetrics["pdcSource"] = "DAILY_BAR_FALLBACK";
+  const priorCompletedDate =
+    eligiblePriorBars.length > 0
+      ? getBarDateET(eligiblePriorBars[eligiblePriorBars.length - 1].timestamp)
+      : priorTradeDate;
+
+  const settlement1600 = findPriorDay1600Settlement(intradayBars, priorCompletedDate);
+  if (settlement1600) {
+    pdc = settlement1600.settlementPrice;
+    pdcSource = "CME_1600_SETTLEMENT";
+  }
+
   const pdMid = Math.round(((pdh + pdl) / 2) * 100) / 100;
 
-  // 2. Compute 15-minute ATR
+  // 2. Compute 15-minute ATR and diurnally matched ATR_Open_15m
   const intradayTrs: number[] = [];
   for (let i = 1; i < intradayBars.length; i++) {
     const prevC = intradayBars[i - 1].close;
@@ -234,6 +423,14 @@ export function computeSessionLevels(
   const atr15mIntraday = recentIntradayTrs.length > 0
     ? Math.round((recentIntradayTrs.reduce((a, b) => a + b, 0) / recentIntradayTrs.length) * 10) / 10
     : 24.5;
+
+  const atrOpen15m = computeAtrOpen15m(intradayBars, targetTradeDate);
+
+  // Compute Prior Day Volume Profile (VAH / POC / VAL)
+  const priorProfile = computePriorDayVolumeProfile(intradayBars, priorCompletedDate);
+  const priorDayVah = priorProfile?.vah;
+  const priorDayPoc = priorProfile?.poc;
+  const priorDayVal = priorProfile?.val;
 
   // 3. Anchor Overnight Globex Strictly to targetTradeDate
   // Preceding calendar day 18:00 ET to targetTradeDate 09:30 ET
@@ -565,6 +762,13 @@ export function computeSessionLevels(
     overnightRangeConsumedPercent,
     atr14Daily,
     atr15mIntraday,
+    atrOpen15m,
+    priorDayVah,
+    priorDayPoc,
+    priorDayVal,
+    pdcSource,
+    straddleCoveragePercent: expectedMove.straddleCoveragePercent,
+    coverageLabel: expectedMove.coverageLabel,
     overnightRange,
     overnightInventory,
     inventoryPercent,
@@ -668,6 +872,33 @@ export function computeSessionLevels(
       timeframe: "DAILY",
       note: "Prior day 50% midpoint from previous regular trading session."
     },
+    ...(priorDayVah !== undefined ? [{
+      id: "lvl-prior-vah",
+      name: "Prior Day Value Area High (VAH)",
+      shortName: "Prior VAH",
+      price: priorDayVah,
+      role: "RETRACE ZONE" as const,
+      timeframe: "DAILY" as const,
+      note: "Top of prior session 70% volume value area. Key institutional resistance."
+    }] : []),
+    ...(priorDayPoc !== undefined ? [{
+      id: "lvl-prior-poc",
+      name: "Prior Day Point of Control (POC)",
+      shortName: "Prior POC",
+      price: priorDayPoc,
+      role: "EQUILIBRIUM" as const,
+      timeframe: "DAILY" as const,
+      note: "Prior session high-volume node. Institutional fair value gravity anchor."
+    }] : []),
+    ...(priorDayVal !== undefined ? [{
+      id: "lvl-prior-val",
+      name: "Prior Day Value Area Low (VAL)",
+      shortName: "Prior VAL",
+      price: priorDayVal,
+      role: "RETRACE ZONE" as const,
+      timeframe: "DAILY" as const,
+      note: "Bottom of prior session 70% volume value area. Key institutional support."
+    }] : []),
     {
       id: "lvl-htf-50",
       name: `HTF ${htfFib.impulseDirection} 50% Midpoint`,

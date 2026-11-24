@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Header } from "@/components/Header";
+import { LTFTradeCardView } from "@/components/LTFTradeCardView";
 import { Trader5CoreAnswersCard } from "@/components/Trader5CoreAnswersCard";
 import { KeyLevelsTable } from "@/components/KeyLevelsTable";
 import { RiskSizingCard } from "@/components/RiskSizingCard";
@@ -480,6 +481,11 @@ export function Dashboard() {
                     value="playbook"
                     className="mt-0 space-y-3 focus-visible:outline-none max-h-[600px] overflow-y-auto pr-1"
                   >
+                    <LTFTradeCardView
+                      card={plan.ltfTradeCard || brief.ltfTradeCard}
+                      currentPrice={quote.price}
+                    />
+
                     <Trader5CoreAnswersCard
                       answers={plan.trader5Answers}
                       currentPrice={quote.price}

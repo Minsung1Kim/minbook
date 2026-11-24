@@ -268,8 +268,16 @@ function processYahooChains(
   return finalizeGEXData(strikeMap, qqqSpot, nqPrice, totalCallGex, totalPutGex, zeroDteNetGex, "YF_QQQ_MODEL_BS");
 }
 
+export interface GEXSyncOptions {
+  nqTimestamp?: string | number;
+  underlyingTimestamp?: string | number;
+  priorSynchronousSettlementBasis?: number;
+}
+
 /**
  * Common GEX finalizer: finds Call Wall, Put Wall, Gamma Flip, and translates strikes to NQ points.
+ * Enforces synchronous basis ratio: require timestamp delta <= 60 seconds;
+ * otherwise locks basis to prior synchronous 16:00 ET settlement close.
  */
 export function finalizeGEXData(
   strikeMap: Map<number, StrikeAccumulator>,
@@ -278,10 +286,34 @@ export function finalizeGEXData(
   totalCallGex: number,
   totalPutGex: number,
   zeroDteNetGex: number,
-  source: GEXExposureData["source"]
+  source: GEXExposureData["source"],
+  syncOptions?: GEXSyncOptions
 ): GEXExposureData {
   const sortedStrikes = Array.from(strikeMap.keys()).sort((a, b) => a - b);
-  const basisRatio = underlyingSpot > 0 ? nqSpot / underlyingSpot : 41.35;
+  
+  let basisRatio = underlyingSpot > 0 ? nqSpot / underlyingSpot : 41.35;
+  let basisSyncStatus: GEXExposureData["basisSyncStatus"] = "SYNCHRONOUS";
+  let basisTimestampDeltaSeconds: number | undefined = undefined;
+
+  if (syncOptions?.nqTimestamp && syncOptions?.underlyingTimestamp) {
+    const tNq = new Date(syncOptions.nqTimestamp).getTime();
+    const tSpot = new Date(syncOptions.underlyingTimestamp).getTime();
+    if (!isNaN(tNq) && !isNaN(tSpot)) {
+      basisTimestampDeltaSeconds = Math.round(Math.abs(tNq - tSpot) / 1000);
+      if (basisTimestampDeltaSeconds > 60) {
+        // Delta > 60s: Asynchronous mismatch detected! Lock to prior synchronous settlement
+        basisSyncStatus = "LOCKED_TO_PRIOR_SETTLEMENT";
+        if (
+          syncOptions.priorSynchronousSettlementBasis !== undefined &&
+          syncOptions.priorSynchronousSettlementBasis > 0
+        ) {
+          basisRatio = syncOptions.priorSynchronousSettlementBasis;
+        }
+      }
+    }
+  } else if (syncOptions?.priorSynchronousSettlementBasis !== undefined && syncOptions.priorSynchronousSettlementBasis > 0) {
+    basisSyncStatus = "UNVERIFIED";
+  }
 
   let maxCallGex = 0;
   let callWall = underlyingSpot * 1.01;
@@ -383,6 +415,8 @@ export function finalizeGEXData(
     underlyingPrice: Math.round(underlyingSpot * 100) / 100,
     nqSpotPrice: Math.round(nqSpot * 100) / 100,
     basisRatio: Math.round(basisRatio * 1000) / 1000,
+    basisSyncStatus,
+    basisTimestampDeltaSeconds,
     source,
     disclaimer: "DELAYED OI-BASED GEX ESTIMATE (NOT LIVE DEALER INVENTORY)",
     lastUpdated: new Date().toISOString()

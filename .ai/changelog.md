@@ -534,3 +534,36 @@ All notable changes and architectural decisions are logged here.
   - `GET /api/market-data` -> HTTP 200 with live calculation payload
 
 
+
+## [2026-11-24] - MinBook v3.0 Sprint 3: Empirical Grading & Safe Self-Calibration (`feat/v3-core-and-ltf`)
+- **1-Minute Path-Dependent Triple-Barrier R-Expectancy Grader (`src/lib/calibration/grader.ts`, `src/lib/calibration/store.ts`):**
+  - Replaced binary 0.75x ATR vs 1.00x ATR open-to-high grader with realistic 1-minute path-dependent execution simulation:
+    - Isolates 09:30–09:33 ET observation lock bars to establish `orh3m`, `orl3m`, and initial impulse range.
+    - Simulates limit entry execution at the predicted 40%–50% retrace zone between 09:34 and 09:48 ET. If price never retraces, logs outcome honestly as `NO_FILL`.
+    - Evaluates Barrier 1 (Stop Loss): Invalidation stop hit logs realized $-1.0R$ net of friction.
+    - Evaluates Barrier 2 (Take Profit): Scales out 1 contract at TP1, exits runner at TP2 or triggers 1m MSS kill-switch if opposing candle displaces back across entry.
+    - Evaluates Barrier 3 (Time Exit): At 10:00 AM ET, liquidates remaining active contracts at the 10:00 AM close price.
+    - Deducts exact all-in round-trip commissions ($1.30 MNQ) + 3-tick (0.75 pt / $1.50) opening slippage.
+    - Evaluates strictly proper scoring rules: Brier score $(p - y)^2$ and Logarithmic scoring rule $-\sum y \ln(p)$.
+  - Updated SQLite schema for `prediction_grades` table with columns: `log_score`, `triple_barrier_outcome`, `realized_net_r`, `net_pnl_dollars`, `fill_price`, `fill_time_et`, `exit_price`, `exit_time_et`.
+- **Closed-Form Beta-Binomial Bayesian Shrinkage Optimizer (`src/lib/calibration/optimizer.ts`):**
+  - Replaced discrete 21/9 chronological walk-forward optimizer with closed-form conjugate Beta-Binomial Bayesian Shrinkage:
+    $$\hat{\theta}_j^{\text{Bayes}} = \frac{k_j^{(\gamma)} + \alpha_0}{n_j^{(\gamma)} + \alpha_0 + \beta_0}, \quad \alpha_0 = 25, \beta_0 = 25, \gamma = 0.99$$
+  - Clamps production calibrated weights strictly within $[0.6, 1.5]$ ($w_j^* = \text{clip}(2.0 \times \hat{\theta}_j^{\text{Bayes}}, 0.6, 1.5)$).
+  - Enforced strict Sample Size Gate ($N \ge 60$): `EDGE ENHANCER` ($\ge +4\%$) and `NOISE DETRACTOR` ($\le -4\%$) tags remain suppressed (`NEUTRAL`) until effective sample size $N \ge 60$.
+- **Bootstrap MAE Stop Calibration (`src/lib/db/index.ts`):**
+  - Raised MAE collection gate from 50 total trades to $N \ge 150$ total trades AND $\ge 75$ winning trades.
+  - Implemented `computeBootstrapUpperP90`: evaluates 1,000 bootstrap resamples of Winners' P90 MAE and computes the non-parametric upper 90% confidence bound before recommending any stop tightening.
+- **UI Enhancements (`src/app/performance/page.tsx`, `src/app/journal/page.tsx`):**
+  - Performance audit view displays `Beta-Binomial Bayesian Shrinkage active`, showing triple barrier outcome badges (`HIT_TP1`, `HIT_TP2`, `STOPPED_OUT`, `TIME_EXIT`, `NO_FILL`) and realized net R.
+  - Journal view displays an MAE Sample Calibration Banner showing calibration status, trade counts ($N/150$, $N_{\text{wins}}/75$), and upper 90% bootstrap bound.
+- **Documentation Reconciliation (`docs/methodology.md`, `docs/MinBook_Quantitative_Architecture_and_Reasoning_Whitepaper.md`):**
+  - Updated both documents to v3.0.0 unified configuration (session hours, 4 orthogonal factors, LTF target bounds, PropProfile rules, Triple-Barrier grader, Bayesian shrinkage, and bootstrap MAE calibration).
+- **Verification:**
+  - Added unit test suite `src/__tests__/sprint3_calibration_and_grader.test.ts` covering:
+    - Triple-Barrier limit fill, scale-out, MSS kill-switch, and 10:00 AM vertical exit.
+    - Strictly proper Brier and Log scores.
+    - Beta-Binomial shrinkage math ($\alpha_0=25, \beta_0=25, \gamma=0.99$), $[0.6, 1.5]$ weight clip, and $N \ge 60$ status tag gate.
+    - Bootstrap upper 90% confidence bound and $N \ge 150 / N_{\text{wins}} \ge 75$ gate.
+  - Full test suite passed: 15 test files, 103 tests passing (0 failures).
+  - Production Next.js 16 build passed with 0 errors.

@@ -21,7 +21,7 @@ interface RankedLevel extends KeyLevel {
   traderDirective: string;
 }
 
-function computeLevelVitality(level: KeyLevel, currentPrice: number): RankedLevel {
+export function computeLevelVitality(level: KeyLevel, currentPrice: number): RankedLevel {
   const distance = Math.abs(level.price - currentPrice);
 
   // 1. Institutional Structural Weight (Hierarchy of Importance)
@@ -37,12 +37,14 @@ function computeLevelVitality(level: KeyLevel, currentPrice: number): RankedLeve
     structuralWeight = 90; // Prior day inventory line-in-the-sand
   } else if (short === "on mid" || id.includes("on-mid")) {
     structuralWeight = 85; // 50% overnight equilibrium retrace
-  } else if (short.includes("htf 50") || short.includes("htf 61.8")) {
-    structuralWeight = 78; // Higher timeframe structural Fibonacci
-  } else if (short.includes("lon high") || short.includes("lon low")) {
-    structuralWeight = 72; // European session liquidity pivots
+  } else if (short.includes("prior vah") || short.includes("prior val") || short.includes("prior poc") || id.includes("prior-vah") || id.includes("prior-poc") || id.includes("prior-val")) {
+    structuralWeight = 82; // Prior Day Volume Profile (VAH / POC / VAL)
   } else if (short === "pdh" || short === "pdl") {
-    structuralWeight = 68; // Daily extreme expansion targets
+    structuralWeight = 80; // Daily extreme expansion targets
+  } else if (short.includes("lon high") || short.includes("lon low")) {
+    structuralWeight = 70; // European session liquidity pivots
+  } else if (short.includes("htf 50") || short.includes("htf 61.8") || short.includes("htf 70.5") || id.includes("htf-")) {
+    structuralWeight = 60; // Demoted 5-day HTF Fib (below PDH/PDL and Volume Profile)
   } else if (level.role === "EXPECTED MOVE") {
     structuralWeight = 30; // Outer daily implied volatility bands
   }

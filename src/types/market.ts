@@ -42,12 +42,22 @@ export interface GEXExposureData {
   underlyingPrice: number; // QQQ or NDX spot
   nqSpotPrice: number;
   basisRatio: number;
+  basisSyncStatus?: "SYNCHRONOUS" | "LOCKED_TO_PRIOR_SETTLEMENT" | "UNVERIFIED";
+  basisTimestampDeltaSeconds?: number;
   source: "CBOE_NDX_DELAYED" | "CBOE_QQQ_DELAYED" | "YF_QQQ_MODEL_BS" | "SAMPLE_FALLBACK";
   disclaimer: "DELAYED OI-BASED GEX ESTIMATE (NOT LIVE DEALER INVENTORY)";
   lastUpdated: string;
 }
 
-export type FootprintSignalType = "ABS_BUY" | "ABS_SELL" | "IMP_BUY" | "IMP_SELL" | "CVD_DIV_BULL" | "CVD_DIV_BEAR";
+export type FootprintSignalType =
+  | "VWWR_BUY"
+  | "VWWR_SELL"
+  | "IMP_BUY"
+  | "IMP_SELL"
+  | "CVD_DIV_BULL"
+  | "CVD_DIV_BEAR"
+  | "ABS_BUY"
+  | "ABS_SELL";
 
 export interface CandleFootprintData {
   timeSec: number;
@@ -65,7 +75,8 @@ export interface FootprintSummary {
   bars: CandleFootprintData[];
   sessionCvd: number;
   rthCvd: number;
-  disclaimer: "Free 1m-Derived Intrabar Delta Proxy (Delayed — Not CME L2 Tick Flow)";
+  disclaimer: string;
+  hasNativeAggressorSide?: boolean;
   lastUpdated: string;
 }
 
@@ -104,6 +115,7 @@ export interface SMTDivergence {
 
 export interface VolatilitySurface {
   vxn: number; // Nasdaq 30d IV
+  volq?: number; // Nasdaq-100 30d ATM Volatility
   vix: number; // SPX 30d IV
   vix3m: number; // 3-month IV
   vix9d: number; // 9-day IV
@@ -117,15 +129,21 @@ export interface VolatilitySurface {
   realizedVolYZ20d: number; // Yang-Zhang 20d annualized RV
   realizedVolYZ10d: number; // Yang-Zhang 10d annualized RV
   realizedVolGK: number; // Garman-Klass annualized RV
-  vrp: number; // Variance Risk Premium = vxn - realizedVolYZ20d
-  isNegativeVrp: boolean; // RV > IV (stop-run dislocation warning)
+  realizedVol5m?: number; // 5-minute intraday realized volatility
+  vrp: number; // Legacy difference = vxn - realizedVol
+  vrpRatio: number; // Dimensionless VRP ratio = IV / RV (e.g. 1.15)
+  isNegativeVrp: boolean; // RV > IV (vrpRatio < 1.0, stop-run dislocation warning)
 }
 
 export interface MacroRegimeState {
-  stockBondCorrelation60d: number; // Pearson r between NQ and TNX
+  stockBondCorrelation60d: number; // Pearson r between NQ and TNX/ZN
   macroCorrelationRegime: "INFLATION / RATE-SENSITIVE" | "GROWTH-SCARE" | "DECOUPLED / NEUTRAL";
   tnxPrice: number;
   tnxBpsChange: number;
+  znPrice?: number; // 23-hour CME 10Y Note Futures price
+  znChange?: number; // Price change in ZN
+  znPercentChange?: number;
+  rateSource: "CME_ZN_FUTURES_23H" | "TNX_CASH_INDEX";
   dxyPrice: number;
   dxyPercentChange: number;
   macroHeadwindScore: number; // -2 to +2 impact on NQ
@@ -211,6 +229,13 @@ export interface SessionMetrics {
   overnightRangeConsumedPercent: number;
   atr14Daily: number;
   atr15mIntraday: number;
+  atrOpen15m: number; // Median range of trailing 15 sessions' 09:30–09:45 ET opening bar
+  priorDayVah?: number;
+  priorDayPoc?: number;
+  priorDayVal?: number;
+  pdcSource?: "CME_1600_SETTLEMENT" | "DAILY_BAR_FALLBACK";
+  straddleCoveragePercent?: number;
+  coverageLabel?: string;
   overnightRange: number;
   overnightInventory: "BULLISH_IMBALANCE" | "BEARISH_IMBALANCE" | "BALANCED";
   inventoryPercent: number; // 0% to 100% of Globex bars closing above PDC
@@ -240,6 +265,46 @@ export interface FactorScoreItem {
   detail: string;
 }
 
+export interface Layer1RiskGates {
+  sizeMultiplier: 1.0 | 0.5 | 0.0;
+  targetCapMultipleR: number; // e.g. 1.8 for positive gamma/chop pin, 2.2 for normal
+  allowTrading: boolean;
+  activeVetoes: string[];
+  gateDetails: string[];
+  volatilityState: {
+    vrpRatio: number;
+    isNegativeVrp: boolean;
+    termRatio: number;
+    vvix: number;
+    termStructureRegime: string;
+  };
+  gexGate?: {
+    regime: string;
+    targetCapR: number;
+    pinningRisk: boolean;
+  };
+  reversalVetoActive: boolean;
+  reversalVetoReason?: string;
+}
+
+export interface Layer2DirectionalSignal {
+  id: "compositeLocation" | "smtBreadth" | "macroImpulse" | "openingFlow";
+  name: string;
+  score: -1 | 0 | 1;
+  impact: "BULLISH" | "BEARISH" | "NEUTRAL";
+  weight: number; // Baseline 1.0
+  detail: string;
+}
+
+export interface Layer2DirectionalScore {
+  signals: Layer2DirectionalSignal[];
+  totalScore: number; // Sum of score * weight [-4, +4]
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+  verdict: BiasVerdict;
+  confidence: "HIGH" | "MODERATE" | "LOW";
+  summary: string;
+}
+
 export interface BiasRegime {
   verdict: BiasVerdict;
   confidence: "HIGH" | "MODERATE" | "LOW";
@@ -252,6 +317,9 @@ export interface BiasRegime {
   volatilitySurface?: VolatilitySurface;
   macroRegime?: MacroRegimeState;
   gex?: GEXExposureData;
+  layer1RiskGates?: Layer1RiskGates;
+  layer2DirectionalScore?: Layer2DirectionalScore;
+  ltfTradeCard?: LTFTradeCard;
   idealRetraceZone: {
     startPrice: number;
     endPrice: number;
@@ -342,6 +410,9 @@ export interface TacticalExecutionPlan {
   delayedFeedBannerText: string;
   newsBufferWarning?: string;
   qqqLiveProxy?: MarketQuote;
+  layer1RiskGates?: Layer1RiskGates;
+  layer2DirectionalScore?: Layer2DirectionalScore;
+  ltfTradeCard?: LTFTradeCard;
   timelineGuide: {
     observePhase: { timeWindow: "09:30 – 09:33 AM ET"; rule: string };
     entryWindow: { timeWindow: "09:34 – 09:48 AM ET"; rule: string; zone: string };
@@ -430,4 +501,77 @@ export interface OpenBriefData {
   intradayBars?: OHLCVBar[];
   gex?: GEXExposureData;
   footprint?: FootprintSummary;
+  ltfTradeCard?: LTFTradeCard;
+}
+
+// ---------------- LTF Execution & Prop-Firm Risk Engine Types ----------------
+
+export type DrawdownMode = "EOD_TRAILING" | "INTRADAY_UNREALIZED";
+
+export interface PropProfile {
+  id: string;
+  firmName: string;
+  accountName: string;
+  drawdownMode: DrawdownMode;
+  maxTrailingDrawdown: number;
+  currentRemainingDrawdown: number;
+  cycleProfitTarget: number;
+  consistencyRulePercent?: number;
+  dailyLossLimit?: number;
+  mnqFeeRoundTrip: number;
+  nqFeeRoundTrip: number;
+  defaultSlippageTicks: number;
+  newsBlackoutMinutes: number;
+  prohibitOvernight: boolean;
+  slippagePts?: number;
+  feePerContractRT?: number;
+}
+
+export interface ReachabilityTarget {
+  price: number;
+  distancePts: number;
+  hitProb5m: number;
+  hitProb10m: number;
+  hitProb15m: number;
+  rationale: string;
+}
+
+export interface HTFDemotedLevel {
+  name: string;
+  price: number;
+  distancePts: number;
+  hitProb10m: number;
+  badge: string;
+}
+
+export interface LTFTradeCard {
+  status: "OBSERVATION_LOCK" | "ARMED_RETRACE" | "ARMED_SWEEP_REVERSAL" | "STAND_ASIDE";
+  archetype: "RETRACE_CONTINUATION" | "SWEEP_MSS_REVERSAL" | "OBSERVATION_FREEZE";
+  direction: "LONG" | "SHORT";
+  entryZone: {
+    low: number;
+    high: number;
+    mid: number;
+  };
+  stopLoss: number;
+  stopPts: number;
+  antiChaseWarning: boolean;
+  antiChaseMessage?: string;
+  tp1: ReachabilityTarget;
+  tp2: ReachabilityTarget;
+  htfDemotedLevels: HTFDemotedLevel[];
+  killSwitchPrice: number;
+  killSwitchMessage: string;
+  contracts: number;
+  contractSplitDirective: string;
+  netRR: number;
+  netTargetDollars: number;
+  netRiskDollars: number;
+  orh3m?: number;
+  orl3m?: number;
+  initialImpulseRange?: number;
+  propProfile?: PropProfile;
+  phantomDrawdownWarning?: string;
+  consistencyCapWarning?: string;
+  newsBlackoutWarning?: string;
 }

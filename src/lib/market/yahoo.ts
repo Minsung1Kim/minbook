@@ -8,7 +8,13 @@ import {
   MacroRegimeState
 } from "@/types/market";
 import { getUSEconomicEvents } from "./economicCalendar";
-import { computeGarmanKlassVol, computeYangZhangVol, computePearsonCorrelation } from "./math";
+import {
+  computeGarmanKlassVol,
+  computeYangZhangVol,
+  computePearsonCorrelation,
+  computeIntradayRealizedVol5m,
+  computeDimensionlessVRP
+} from "./math";
 import YahooFinance from "yahoo-finance2";
 
 // Initialize yahoo-finance2 client
@@ -206,36 +212,51 @@ export class YahooFinanceProvider implements MarketDataProvider {
 
     // Default fallbacks
     let vxnPrice = 24.5;
+    let volqPrice: number | undefined = undefined;
     let vixPrice = 21.5;
     let vix3mPrice = 22.8;
     let vix9dPrice = 20.8;
     let vix1dPrice = 20.0;
     let vvixPrice = 96.0;
 
+    let znPrice = 110.25;
+    let znChange = 0.05;
+    let znPercentChange = 0.05;
+    let rateSource: MacroRegimeState["rateSource"] = "CME_ZN_FUTURES_23H";
+
     let us10yPrice = 4.45;
     let us10yChange = 0.02;
     let dxyPrice = 104.2;
     let dxyChange = 0.15;
 
-    // Fetch Volatility Surface Quotes in parallel
+    // Fetch Volatility Surface Quotes & 23h ZN in parallel
     try {
-      const [qVxn, qVix, qVix3m, qVix9d, qVix1d, qVvix, qTnx, qDxy] = await Promise.allSettled([
+      const [qVxn, qVolq, qVix, qVix3m, qVix9d, qVix1d, qVvix, qZn, qTnx, qDxy] = await Promise.allSettled([
         yf.quote("^VXN"),
+        yf.quote("^VOLQ"),
         yf.quote("^VIX"),
         yf.quote("^VIX3M"),
         yf.quote("^VIX9D"),
         yf.quote("^VIX1D"),
         yf.quote("^VVIX"),
+        yf.quote("ZN=F"),
         yf.quote("^TNX"),
         yf.quote("DX-Y.NYB")
       ]);
 
       if (qVxn.status === "fulfilled" && qVxn.value?.regularMarketPrice) vxnPrice = qVxn.value.regularMarketPrice;
+      if (qVolq.status === "fulfilled" && qVolq.value?.regularMarketPrice) volqPrice = qVolq.value.regularMarketPrice;
       if (qVix.status === "fulfilled" && qVix.value?.regularMarketPrice) vixPrice = qVix.value.regularMarketPrice;
       if (qVix3m.status === "fulfilled" && qVix3m.value?.regularMarketPrice) vix3mPrice = qVix3m.value.regularMarketPrice;
       if (qVix9d.status === "fulfilled" && qVix9d.value?.regularMarketPrice) vix9dPrice = qVix9d.value.regularMarketPrice;
       if (qVix1d.status === "fulfilled" && qVix1d.value?.regularMarketPrice) vix1dPrice = qVix1d.value.regularMarketPrice;
       if (qVvix.status === "fulfilled" && qVvix.value?.regularMarketPrice) vvixPrice = qVvix.value.regularMarketPrice;
+      if (qZn.status === "fulfilled" && qZn.value?.regularMarketPrice) {
+        znPrice = qZn.value.regularMarketPrice;
+        znChange = qZn.value.regularMarketChange ?? 0;
+        znPercentChange = qZn.value.regularMarketChangePercent ?? 0;
+        rateSource = "CME_ZN_FUTURES_23H";
+      }
       if (qTnx.status === "fulfilled" && qTnx.value?.regularMarketPrice) {
         us10yPrice = qTnx.value.regularMarketPrice;
         us10yChange = qTnx.value.regularMarketChange ?? 0;
@@ -271,29 +292,34 @@ export class YahooFinanceProvider implements MarketDataProvider {
       console.warn("ES=F SMT data fetch error:", e);
     }
 
-    // Fetch 65 daily bars of NQ=F and ^TNX for realized vol & rolling 60d Pearson correlation
+    // Fetch 65 daily bars of NQ=F and ^TNX, plus 5m intraday bars for 5m RV
     let dailyNqBars: OHLCVBar[] = [];
     let dailyTnxBars: OHLCVBar[] = [];
+    let intraday5mBars: OHLCVBar[] = [];
     try {
-      [dailyNqBars, dailyTnxBars] = await Promise.all([
+      [dailyNqBars, dailyTnxBars, intraday5mBars] = await Promise.all([
         this.getDailyBars("NQ=F", 65),
-        this.getDailyBars("^TNX", 65)
+        this.getDailyBars("^TNX", 65),
+        this.getIntradayBars("NQ=F", "5m").catch(() => [])
       ]);
     } catch (e) {
       console.warn("Daily history fetch for realized vol / correlation error:", e);
     }
 
-    // Realized Volatility Estimators (Yang-Zhang & Garman-Klass)
+    // Realized Volatility Estimators (Yang-Zhang, Garman-Klass, and 5-minute Intraday)
     const recent20NqBars = dailyNqBars.slice(-20);
     const recent10NqBars = dailyNqBars.slice(-10);
     const realizedVolYZ20d = computeYangZhangVol(recent20NqBars);
     const realizedVolYZ10d = computeYangZhangVol(recent10NqBars);
     const realizedVolGK = computeGarmanKlassVol(recent20NqBars);
+    const realizedVol5m = computeIntradayRealizedVol5m(intraday5mBars);
 
-    // Variance Risk Premium (VRP = Implied Vol - Realized Vol)
-    // If RV > IV => VRP is negative (underpricing tail risk / stop-run dislocation)
-    const vrp = Math.round((vxnPrice - realizedVolYZ20d) * 100) / 100;
-    const isNegativeVrp = vrp < 0;
+    // Dimensionless Variance Risk Premium (VRP Ratio = IV / RV_5m)
+    const effectiveIv = volqPrice || vxnPrice;
+    const vrpResult = computeDimensionlessVRP(effectiveIv, realizedVol5m > 0 ? realizedVol5m : realizedVolYZ20d);
+    const vrpRatio = vrpResult.vrpRatio;
+    const isNegativeVrp = vrpResult.isNegativeVrp;
+    const vrp = Math.round((effectiveIv - realizedVolYZ20d) * 100) / 100; // legacy difference
 
     // Term Structure & Vol-of-Vol Triggers
     const termRatio = Math.round((vixPrice / (vix3mPrice > 0 ? vix3mPrice : 22)) * 100) / 100;
@@ -312,6 +338,7 @@ export class YahooFinanceProvider implements MarketDataProvider {
 
     const volatilitySurface: VolatilitySurface = {
       vxn: Math.round(vxnPrice * 100) / 100,
+      volq: volqPrice ? Math.round(volqPrice * 100) / 100 : undefined,
       vix: Math.round(vixPrice * 100) / 100,
       vix3m: Math.round(vix3mPrice * 100) / 100,
       vix9d: Math.round(vix9dPrice * 100) / 100,
@@ -325,7 +352,9 @@ export class YahooFinanceProvider implements MarketDataProvider {
       realizedVolYZ20d,
       realizedVolYZ10d,
       realizedVolGK,
+      realizedVol5m,
       vrp,
+      vrpRatio,
       isNegativeVrp
     };
 
@@ -341,23 +370,28 @@ export class YahooFinanceProvider implements MarketDataProvider {
       macroCorrelationRegime = "GROWTH-SCARE";
     }
 
-    // Macro Headwind / Tailwind scoring
+    // Macro Headwind / Tailwind scoring driven by 23h CME ZN Futures pre-market
     const tnxBpsChange = Math.round(us10yChange * 100 * 10) / 10;
     const dxyPercentChange = dxyPrice > 0 ? Math.round((dxyChange / dxyPrice) * 10000) / 100 : 0;
 
     let macroHeadwindScore = 0;
     if (macroCorrelationRegime === "INFLATION / RATE-SENSITIVE") {
-      if (tnxBpsChange > 3) macroHeadwindScore -= 1;
+      // In rate-sensitive regime, rising ZN (falling yields) is tailwind (+1); falling ZN (rising yields) is headwind (-1)
+      if (znPercentChange > 0.15) macroHeadwindScore += 1;
+      else if (znPercentChange < -0.15) macroHeadwindScore -= 1;
+      else if (tnxBpsChange > 3) macroHeadwindScore -= 1;
       else if (tnxBpsChange < -3) macroHeadwindScore += 1;
     } else if (macroCorrelationRegime === "GROWTH-SCARE") {
-      if (tnxBpsChange < -3) macroHeadwindScore -= 1;
+      if (znPercentChange > 0.2) macroHeadwindScore -= 1; // Flight to safety on growth fear
+      else if (znPercentChange < -0.2) macroHeadwindScore += 1;
+      else if (tnxBpsChange < -3) macroHeadwindScore -= 1;
       else if (tnxBpsChange > 3) macroHeadwindScore += 1;
     }
 
     if (dxyPercentChange > 0.3) macroHeadwindScore -= 1;
     else if (dxyPercentChange < -0.3) macroHeadwindScore += 1;
 
-    let macroSummary = `60d NQ-10Y correlation is ${stockBondCorrelation60d.toFixed(2)} (${macroCorrelationRegime}).`;
+    let macroSummary = `60d NQ-Rate correlation is ${stockBondCorrelation60d.toFixed(2)} (${macroCorrelationRegime}). 23h ZN: ${znPrice} (${znPercentChange >= 0 ? "+" : ""}${znPercentChange.toFixed(2)}%).`;
     if (macroCorrelationRegime === "INFLATION / RATE-SENSITIVE") {
       macroSummary += tnxBpsChange > 0 ? " Rising yields act as equity headwinds." : " Falling yields offer equity tailwinds.";
     }
@@ -367,6 +401,10 @@ export class YahooFinanceProvider implements MarketDataProvider {
       macroCorrelationRegime,
       tnxPrice: Math.round(us10yPrice * 1000) / 1000,
       tnxBpsChange,
+      znPrice: Math.round(znPrice * 1000) / 1000,
+      znChange: Math.round(znChange * 1000) / 1000,
+      znPercentChange: Math.round(znPercentChange * 100) / 100,
+      rateSource,
       dxyPrice: Math.round(dxyPrice * 100) / 100,
       dxyPercentChange,
       macroHeadwindScore,

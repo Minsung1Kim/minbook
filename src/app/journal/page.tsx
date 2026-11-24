@@ -360,6 +360,23 @@ export function JournalPage() {
           </div>
         </div>
 
+        {/* MAE Sample Calibration Banner */}
+        {analytics?.sampleSizeGate && (
+          <div className="px-4 py-2 rounded-lg bg-zinc-900/50 border border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+            <div className="flex items-center space-x-2">
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${analytics.sampleSizeGate.isCalibrated ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"}`}>
+                {analytics.sampleSizeGate.isCalibrated ? "CALIBRATED" : "COLLECTING"}
+              </span>
+              <span className="text-zinc-400 text-[11px]">{analytics.sampleSizeGate.statusMessage}</span>
+            </div>
+            {analytics.upper90BootstrapMaeWinners !== undefined && (
+              <span className="text-zinc-300 text-[11px]">
+                Upper 90% Bootstrap P90 MAE: <strong className="text-amber-400">{analytics.upper90BootstrapMaeWinners.toFixed(2)}R</strong>
+              </span>
+            )}
+          </div>
+        )}
+
         {/* 2. SLIM QUIET 1-SCREENSHOT DROP / CMD+V PASTE BAR */}
         <div
           onDrop={handleDrop}

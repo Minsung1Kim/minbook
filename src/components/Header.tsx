@@ -356,5 +356,4 @@ export function Header({
       </nav>
     </>
   );
-  );
 }

@@ -676,21 +676,21 @@ export default function MinBookChart({
     if (layers.footprint && brief.footprint?.bars) {
       for (const fBar of brief.footprint.bars) {
         if (!fBar.signal) continue;
-        if (fBar.signal === "ABS_BUY") {
+        if (fBar.signal === "VWWR_BUY" || fBar.signal === "ABS_BUY") {
           markers.push({
             time: fBar.timeSec as UTCTimestamp,
             position: "belowBar",
             color: "#22d3ee",
             shape: "arrowUp",
-            text: "ABS BUY"
+            text: "VWWR BUY"
           });
-        } else if (fBar.signal === "ABS_SELL") {
+        } else if (fBar.signal === "VWWR_SELL" || fBar.signal === "ABS_SELL") {
           markers.push({
             time: fBar.timeSec as UTCTimestamp,
             position: "aboveBar",
             color: "#f43f5e",
             shape: "arrowDown",
-            text: "ABS SELL"
+            text: "VWWR SELL"
           });
         } else if (fBar.signal === "IMP_BUY") {
           markers.push({

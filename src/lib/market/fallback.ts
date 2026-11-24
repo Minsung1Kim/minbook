@@ -137,11 +137,13 @@ export class SeedFallbackProvider implements MarketDataProvider {
         realizedVolYZ10d: 21.8,
         realizedVolGK: 23.1,
         vrp: 3.0,
+        vrpRatio: 1.13,
         isNegativeVrp: false
       },
       macroRegime: {
         stockBondCorrelation60d: -0.34,
         macroCorrelationRegime: "INFLATION / RATE-SENSITIVE",
+        rateSource: "CME_ZN_FUTURES_23H",
         tnxPrice: 4.918,
         tnxBpsChange: 0.6,
         dxyPrice: 104.34,

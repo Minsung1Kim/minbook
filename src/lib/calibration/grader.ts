@@ -1,11 +1,13 @@
-import { OHLCVBar, OpenBriefData } from "../../types/market";
+import { OHLCVBar, OpenBriefData, PropProfile } from "../../types/market";
 import {
   DailyPrediction,
   PredictionGrade,
+  TripleBarrierOutcome,
   ICalibrationRepository
 } from "../../types/calibration";
 import { getCalibrationRepository } from "./store";
 import { YahooFinanceProvider } from "../market/yahoo";
+import { getBarETParts } from "../market/levels";
 
 /**
  * Maps factor names from playbook factorScorecard to standard factor keys
@@ -171,7 +173,8 @@ export function extractNYOpenBars(bars: OHLCVBar[], targetTradeDate: string): OH
 export function computePredictionGrade(
   pred: DailyPrediction,
   windowBars: OHLCVBar[],
-  atr15m: number = 24.5
+  atr15m: number = 24.5,
+  propProfile?: PropProfile
 ): PredictionGrade | null {
   if (windowBars.length === 0) return null;
 
@@ -185,48 +188,214 @@ export function computePredictionGrade(
   const windowLow = Math.min(...sorted.map((b) => b.low));
   const windowClose1000 = sorted[sorted.length - 1].close;
 
-  const isBull = pred.biasVerdict.toUpperCase().includes("LONG") || pred.biasVerdict.toUpperCase().includes("BULL");
-  const isBear = pred.biasVerdict.toUpperCase().includes("SHORT") || pred.biasVerdict.toUpperCase().includes("BEAR");
-  const isCaution = pred.biasVerdict.toUpperCase().includes("CAUTION") || pred.biasVerdict.toUpperCase().includes("STAND");
+  const isBull =
+    pred.biasVerdict.toUpperCase().includes("LONG") ||
+    pred.biasVerdict.toUpperCase().includes("BULL");
+  const isBear =
+    pred.biasVerdict.toUpperCase().includes("SHORT") ||
+    pred.biasVerdict.toUpperCase().includes("BEAR");
+  const isCaution =
+    pred.biasVerdict.toUpperCase().includes("CAUTION") ||
+    pred.biasVerdict.toUpperCase().includes("STAND");
 
-  // Rule: Expand in predicted direction by at least 0.75 * ATR_15m before invalidating 1.0 * ATR_15m against it
-  const requiredExpansion = Math.max(14, atr15m * 0.75);
-  const invalidationStop = Math.max(18, atr15m * 1.0);
+  // 1. Isolate 09:30–09:33 ET observation lock bars to establish initial impulse range
+  const bars930to933 = sorted.filter((b) => {
+    const et = getBarETParts(b.timestamp);
+    const m = et.hour * 60 + et.minute;
+    return m >= 9 * 60 + 30 && m <= 9 * 60 + 33;
+  });
 
-  let biasCorrect = false;
+  const orh3m =
+    bars930to933.length > 0
+      ? Math.max(...bars930to933.map((b) => b.high))
+      : openPrice930;
+  const orl3m =
+    bars930to933.length > 0
+      ? Math.min(...bars930to933.map((b) => b.low))
+      : openPrice930;
+  const impulseRange = Math.max(8.0, orh3m - orl3m);
+
+  // 2. Define Predicted Limit Retrace Zone & Target / Stop Levels
+  let entryPrice = openPrice930;
+  let stopLoss = isBull ? openPrice930 - atr15m : openPrice930 + atr15m;
+  let tp1Price = isBull ? openPrice930 + 0.35 * atr15m : openPrice930 - 0.35 * atr15m;
+  let tp2Price = isBull ? openPrice930 + 0.65 * atr15m : openPrice930 - 0.65 * atr15m;
 
   if (isBull) {
-    let hitStop = false;
-    let hitTarget = false;
-    for (const b of sorted) {
-      if (b.low <= openPrice930 - invalidationStop) {
-        hitStop = true;
-        break;
-      }
-      if (b.high >= openPrice930 + requiredExpansion) {
-        hitTarget = true;
-        break;
-      }
-    }
-    biasCorrect = hitTarget && !hitStop;
+    const retrace45 = orh3m - 0.45 * impulseRange;
+    entryPrice = Math.round(retrace45 * 100) / 100;
+    stopLoss = Math.round((orl3m - Math.max(3.0, 0.15 * atr15m)) * 100) / 100;
+    tp1Price = Math.round((entryPrice + Math.max(12, 0.35 * atr15m)) * 100) / 100;
+    tp2Price = Math.round((entryPrice + Math.max(22, 0.65 * atr15m)) * 100) / 100;
   } else if (isBear) {
-    let hitStop = false;
-    let hitTarget = false;
-    for (const b of sorted) {
-      if (b.high >= openPrice930 + invalidationStop) {
-        hitStop = true;
+    const retrace45 = orl3m + 0.45 * impulseRange;
+    entryPrice = Math.round(retrace45 * 100) / 100;
+    stopLoss = Math.round((orh3m + Math.max(3.0, 0.15 * atr15m)) * 100) / 100;
+    tp1Price = Math.round((entryPrice - Math.max(12, 0.35 * atr15m)) * 100) / 100;
+    tp2Price = Math.round((entryPrice - Math.max(22, 0.65 * atr15m)) * 100) / 100;
+  }
+
+  // 3. Simulate Limit Order Execution between 09:34 and 09:48 ET
+  const slippagePts =
+    propProfile?.slippagePts ??
+    (propProfile?.defaultSlippageTicks !== undefined
+      ? propProfile.defaultSlippageTicks * 0.25
+      : 0.75); // 3 ticks (0.75 pt)
+  const feePerContractRT =
+    propProfile?.feePerContractRT ?? propProfile?.mnqFeeRoundTrip ?? 1.30;
+  const pointValue = 2.0; // MNQ point value ($2/pt)
+
+  let isFilled = false;
+  let fillBarIdx = -1;
+  let fillPrice = entryPrice;
+  let fillTimeET: string | undefined;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const b = sorted[i];
+    const et = getBarETParts(b.timestamp);
+    const m = et.hour * 60 + et.minute;
+
+    // Execution window: strictly 09:34–09:48 ET (574–588 mins)
+    if (m >= 9 * 60 + 34 && m <= 9 * 60 + 48) {
+      if (isBull && b.low <= entryPrice) {
+        isFilled = true;
+        fillBarIdx = i;
+        fillPrice = Math.round((entryPrice + slippagePts) * 100) / 100;
+        fillTimeET = `${et.hour.toString().padStart(2, "0")}:${et.minute.toString().padStart(2, "0")}:00 ET`;
         break;
-      }
-      if (b.low <= openPrice930 - requiredExpansion) {
-        hitTarget = true;
+      } else if (isBear && b.high >= entryPrice) {
+        isFilled = true;
+        fillBarIdx = i;
+        fillPrice = Math.round((entryPrice - slippagePts) * 100) / 100;
+        fillTimeET = `${et.hour.toString().padStart(2, "0")}:${et.minute.toString().padStart(2, "0")}:00 ET`;
         break;
       }
     }
-    biasCorrect = hitTarget && !hitStop;
-  } else if (isCaution) {
-    // Chop warning correct if total range is compressed <= 1.3x ATR_15m
+  }
+
+  let tripleBarrierOutcome: TripleBarrierOutcome = isFilled ? "TIME_EXIT" : "NO_FILL";
+  let realizedNetR = 0;
+  let netPnlDollars = 0;
+  let exitPrice = windowClose1000;
+  let exitTimeET = "10:00:00 ET";
+  let biasCorrect = false;
+
+  if (isCaution) {
     const totalRange = windowHigh - windowLow;
     biasCorrect = totalRange <= atr15m * 1.35;
+    tripleBarrierOutcome = "NO_FILL";
+  } else if (isFilled && fillBarIdx >= 0) {
+    const stopPts = Math.max(3.0, Math.abs(fillPrice - stopLoss));
+    const initialContracts = 2; // Standard 2-lot scale-out plan
+    const initialRiskDollars =
+      initialContracts * (stopPts * pointValue + slippagePts * pointValue) +
+      initialContracts * feePerContractRT;
+
+    let remainingContracts = initialContracts;
+    let tp1Hit = false;
+    let realizedGrossDollars = 0;
+
+    for (let i = fillBarIdx; i < sorted.length; i++) {
+      const b = sorted[i];
+      const et = getBarETParts(b.timestamp);
+      const m = et.hour * 60 + et.minute;
+
+      // Barrier 1: Stop Loss
+      if ((isBull && b.low <= stopLoss) || (isBear && b.high >= stopLoss)) {
+        const exitPx = isBull ? stopLoss - slippagePts : stopLoss + slippagePts;
+        const pts = isBull ? exitPx - fillPrice : fillPrice - exitPx;
+        realizedGrossDollars += remainingContracts * (pts * pointValue);
+        remainingContracts = 0;
+        exitPrice = exitPx;
+        exitTimeET = `${et.hour.toString().padStart(2, "0")}:${et.minute.toString().padStart(2, "0")}:00 ET`;
+        tripleBarrierOutcome = "STOPPED_OUT";
+        break;
+      }
+
+      // Barrier 2: Take Profit 1 (Scale out 1 contract)
+      if (!tp1Hit && ((isBull && b.high >= tp1Price) || (isBear && b.low <= tp1Price))) {
+        tp1Hit = true;
+        const pts = isBull ? tp1Price - fillPrice : fillPrice - tp1Price;
+        realizedGrossDollars += 1 * (pts * pointValue);
+        remainingContracts = 1;
+        tripleBarrierOutcome = "HIT_TP1";
+      }
+
+      // Barrier 2: Take Profit 2 (Exit remaining runner)
+      if (tp1Hit && ((isBull && b.high >= tp2Price) || (isBear && b.low <= tp2Price))) {
+        const pts = isBull ? tp2Price - fillPrice : fillPrice - tp2Price;
+        realizedGrossDollars += 1 * (pts * pointValue);
+        remainingContracts = 0;
+        exitPrice = tp2Price;
+        exitTimeET = `${et.hour.toString().padStart(2, "0")}:${et.minute.toString().padStart(2, "0")}:00 ET`;
+        tripleBarrierOutcome = "HIT_TP2";
+        break;
+      }
+
+      // 1m MSS Kill-Switch: If trade reached TP1 (>= 0.8R) and opposing bar closes back across entry
+      if (tp1Hit && ((isBull && b.close < entryPrice) || (isBear && b.close > entryPrice))) {
+        const pts = isBull ? entryPrice - fillPrice : fillPrice - entryPrice;
+        realizedGrossDollars += 1 * (pts * pointValue);
+        remainingContracts = 0;
+        exitPrice = entryPrice;
+        exitTimeET = `${et.hour.toString().padStart(2, "0")}:${et.minute.toString().padStart(2, "0")}:00 ET`;
+        tripleBarrierOutcome = "HIT_TP1";
+        break;
+      }
+
+      // Barrier 3: 10:00 AM ET Vertical Time Exit
+      if (m >= 10 * 60) {
+        if (remainingContracts > 0) {
+          const pts = isBull ? b.close - fillPrice : fillPrice - b.close;
+          realizedGrossDollars += remainingContracts * (pts * pointValue);
+          remainingContracts = 0;
+          exitPrice = b.close;
+          exitTimeET = "10:00:00 ET";
+          tripleBarrierOutcome = tp1Hit ? "HIT_TP1" : "TIME_EXIT";
+        }
+        break;
+      }
+    }
+
+    const totalFrictionDollars =
+      initialContracts * feePerContractRT + initialContracts * slippagePts * pointValue;
+    netPnlDollars = Math.round((realizedGrossDollars - totalFrictionDollars) * 100) / 100;
+    realizedNetR = Math.round((netPnlDollars / Math.max(10, initialRiskDollars)) * 100) / 100;
+    biasCorrect = netPnlDollars > 0;
+  } else {
+    // If no limit fill occurred during 09:34–09:48, evaluate directional expansion without invalidation
+    const requiredExpansion = Math.max(14, atr15m * 0.75);
+    const invalidationStop = Math.max(18, atr15m * 1.0);
+
+    if (isBull) {
+      let hitStop = false;
+      let hitTarget = false;
+      for (const b of sorted) {
+        if (b.low <= openPrice930 - invalidationStop) {
+          hitStop = true;
+          break;
+        }
+        if (b.high >= openPrice930 + requiredExpansion) {
+          hitTarget = true;
+          break;
+        }
+      }
+      biasCorrect = hitTarget && !hitStop;
+    } else if (isBear) {
+      let hitStop = false;
+      let hitTarget = false;
+      for (const b of sorted) {
+        if (b.high >= openPrice930 + invalidationStop) {
+          hitStop = true;
+          break;
+        }
+        if (b.low <= openPrice930 - requiredExpansion) {
+          hitTarget = true;
+          break;
+        }
+      }
+      biasCorrect = hitTarget && !hitStop;
+    }
   }
 
   // Favorable & Adverse excursions from 9:30 open
@@ -282,14 +451,17 @@ export function computePredictionGrade(
   // Chop warning check
   const chopWarningCorrect = isCaution ? biasCorrect : (windowHigh - windowLow) <= atr15m * 1.1;
 
-  // Brier score: (p - y)^2
+  // Strictly proper scoring rules: Brier score and Log score
   const pConfidence =
     pred.confidenceTier === "HIGH" ? 0.8 : pred.confidenceTier === "MODERATE" ? 0.65 : 0.5;
   const yActual = biasCorrect ? 1.0 : 0.0;
   const brierScore = Math.round(Math.pow(pConfidence - yActual, 2) * 1000) / 1000;
 
+  const eps = 1e-4;
+  const pSafe = Math.max(eps, Math.min(1 - eps, pConfidence));
+  const logScore = Math.round(-(yActual * Math.log(pSafe) + (1 - yActual) * Math.log(1 - pSafe)) * 1000) / 1000;
+
   // Composite Score (0–100)
-  // 50 pts bias + 20 pts retrace tap + 15 pts magnet hit + 15 pts MFE/MAE ratio
   const mfeRatio = favorableExcursionPts / (favorableExcursionPts + adverseExcursionPts + 0.001);
   const compositeScore = Math.min(
     100,
@@ -317,7 +489,15 @@ export function computePredictionGrade(
     liquidityDrawHit,
     chopWarningCorrect,
     brierScore,
+    logScore,
     compositeScore,
+    tripleBarrierOutcome,
+    realizedNetR,
+    netPnlDollars,
+    fillPrice: isFilled ? fillPrice : undefined,
+    fillTimeET,
+    exitPrice: isFilled ? exitPrice : undefined,
+    exitTimeET: isFilled ? exitTimeET : undefined,
     gradedAt: new Date().toISOString()
   };
 }

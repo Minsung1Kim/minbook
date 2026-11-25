@@ -49,17 +49,17 @@ const STARTER_PROMPTS = [
   {
     title: "Predict live chart (Bias / Retrace / TPs)",
     prompt:
-      "Read this screenshot to catch up to live price. Keep it short and list: Bias, Areas of Retracement, TPs, Things to Be Wary Of (plus Limit/Quant check if a trade box is drawn), and end with a TL;DR.",
+      "Read this screenshot to catch up to live price. Keep it short and list: Bias, Areas of Retracement, TPs, When to go Break Even & Partials vs Full TP, Things to Be Wary Of, and end with a TL;DR.",
   },
   {
     title: "Break down Strat setup",
     prompt:
-      "Break down today's NQ/MNQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, and invalidation concisely. End with a TL;DR.",
+      "Break down today's NQ/MNQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, invalidation, break-even trigger, and partials vs full TP concisely. End with a TL;DR.",
   },
   {
-    title: "Where is invalidation & sizing?",
+    title: "Where is invalidation & management?",
     prompt:
-      "Check today's Volatility/GEX risk gates, ATR stop room, exact invalidation, and recommended MNQ/NQ sizing concisely right now. End with a TL;DR.",
+      "Check today's Volatility/GEX risk gates, ATR stop room, exact invalidation, when to move to break even, and whether to take partials or hold full TP concisely. End with a TL;DR.",
   },
   {
     title: "Check FTFC & key levels",
@@ -566,7 +566,7 @@ export function ChatWorkspace() {
 
     const finalText =
       textToSend ||
-      "Read this screenshot to catch up to live price. Keep it concise: give me Bias, Areas of Retracement, TPs, Things to Be Wary Of (plus Limit/Quant check if a trade is shown), and end with a TL;DR.";
+      "Read this screenshot to catch up to live price. Keep it concise: give me Bias, Areas of Retracement, TPs, When to go Break Even & Partials vs Full TP, Things to Be Wary Of, and end with a TL;DR.";
 
     let threadId = activeThreadIdRef.current;
     if (!threadId) {

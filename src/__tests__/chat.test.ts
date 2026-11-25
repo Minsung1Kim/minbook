@@ -220,6 +220,10 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
     const { snapshot, systemPrompt } = await buildMarketContext({ symbol: "MNQ" });
     expect(systemPrompt).toContain("runMinBookQuantAnalysis");
     expect(systemPrompt).toContain("## TL;DR");
+    // Multi-user neutrality: never inject arbitrary personal daily caps or 1-trade/day rules
+    expect(systemPrompt).not.toContain("Max Daily Trades:");
+    expect(systemPrompt).not.toContain("1 Trade Per Day");
+    expect(systemPrompt).not.toContain("$200–$300");
 
     // Numbers matching user's uploaded Hyperprop MNQZ6 1m Pending Short Limit screenshot:
     // Current live spot 25,159.25; supply box 25,247.75-25,277.50 resting above; target 24,977.00; New Home Sales in 7m
@@ -234,7 +238,7 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
         entryZoneLow: 25247.75,
         entryZoneHigh: 25277.5,
         targetPrice: 24977.0,
-        contracts: 1,
+        contracts: 2,
         accountBalance: 52048.88,
         openPnlDollars: 0,
         newsCountdownMinutes: 7,
@@ -254,15 +258,23 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
     expect(quant.stopLossPrice).toBeGreaterThan(25277.5);
     expect(quant.pullbackNeededToFillPts).toBe(103.38);
     expect(quant.limitSetupVerdict).not.toBe("INVALID");
+    // Break-even and Partials vs Full TP guidance present and non-personalized
+    expect(quant.tradeManagement.breakevenTriggerPrice).not.toBeNull();
+    expect(quant.tradeManagement.breakevenCondition).toContain("Break Even");
+    expect(["TAKE_PARTIALS", "STICK_WITH_FULL_TP"]).toContain(
+      quant.tradeManagement.tpRecommendation
+    );
+    expect(quant.tradeManagement.tpRationale.length).toBeGreaterThan(20);
     // Orange/medium New Home Sales should NOT veto a valid limit setup
     expect(quant.newsSeverity).toBe("ORANGE_MEDIUM");
     expect(quant.newsShouldVetoTrade).toBe(false);
     expect(quant.warnings.some((w) => w.includes("DO NOT CHASE THIS TRADE"))).toBe(false);
     expect(quant.warnings.some((w) => w.includes("missed"))).toBe(false);
+    expect(quant.warnings.some((w) => w.includes("BUDGET EXCEEDED"))).toBe(false);
     expect(quant.candleStats?.rangePts).toBe(31.5);
 
-    // Tier-1 Red-folder news (CPI in 7m) SHOULD trigger veto
-    const redNewsQuant = computeScreenshotQuantMetrics(
+    // 1-contract screenshot handles single-contract BE / full TP or manual trail guidance
+    const singleContractQuant = computeScreenshotQuantMetrics(
       {
         instrument: "MNQ",
         timeframe: "1m",
@@ -279,9 +291,12 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
       },
       snapshot
     );
-    expect(redNewsQuant.newsSeverity).toBe("RED_HIGH");
-    expect(redNewsQuant.newsShouldVetoTrade).toBe(true);
-    expect(redNewsQuant.plannedRewardToRisk).toBe(5.39);
+    expect(singleContractQuant.newsSeverity).toBe("RED_HIGH");
+    expect(singleContractQuant.newsShouldVetoTrade).toBe(true);
+    expect(singleContractQuant.plannedRewardToRisk).toBe(5.39);
+    expect(["SINGLE_CONTRACT_TRAIL", "STICK_WITH_FULL_TP"]).toContain(
+      singleContractQuant.tradeManagement.tpRecommendation
+    );
 
     // Empty 1m chart screenshot (no entry/SL/TP drawn) catching up past delayed MinBook feed
     const emptyChartQuant = computeScreenshotQuantMetrics(

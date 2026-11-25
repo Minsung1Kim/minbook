@@ -51,7 +51,19 @@ export function loadRepoResearchDocs(): string {
   const appendDoc = (fullPath: string, label: string, title: string, maxChars: number) => {
     try {
       if (!fs.existsSync(fullPath)) return;
-      const raw = fs.readFileSync(fullPath, "utf8").trim();
+      const raw = fs
+        .readFileSync(fullPath, "utf8")
+        .split("\n")
+        .filter(
+          (line) =>
+            !line.includes("1 Trade Per Day") &&
+            !line.includes("$200–$300") &&
+            !line.includes("Apex_Intraday") &&
+            !line.includes("TPT_PRO_Intraday") &&
+            !line.includes("MFFU_Rapid_Intraday")
+        )
+        .join("\n")
+        .trim();
       if (!raw) return;
       const excerpt = raw.length > maxChars ? `${raw.slice(0, maxChars)}\n...[truncated]` : raw;
       sections.push(`### ${title} (${label})\n${excerpt}`);
@@ -64,13 +76,7 @@ export function loadRepoResearchDocs(): string {
     path.join(process.cwd(), "docs", "methodology.md"),
     "docs/methodology.md",
     "MinBook v3.0 Quantitative Methodology",
-    5500
-  );
-  appendDoc(
-    path.join(process.cwd(), "AGENT.md"),
-    "AGENT.md",
-    "MinBook System Architecture & Rules",
-    3500
+    4500
   );
 
   cachedRepoDocs = sections.join("\n\n");

@@ -101,14 +101,21 @@ export interface ScreenshotQuantResult {
   openTradeUnrealizedDollars: number | null;
   openTradeCurrentR: number | null;
 
-  // Budget & Layer 1 Quant Sizing
-  userRiskBudgetDollars: number;
-  maxDailyLossDollars: number;
+  // Objective Per-Contract Risk & Layer 1 Quant Sizing (no hardcoded user limits)
+  dollarRiskPerContract: number | null;
+  dollarRewardPerContract: number | null;
   layer1RiskMultiplier: number;
-  regimeAdjustedRiskBudgetDollars: number;
-  maxRecommendedContracts: number | null;
-  exceedsUserRiskBudget: boolean;
-  exceedsRegimeAdjustedBudget: boolean;
+
+  // Deterministic Trade Management (Break Even + Partials vs Full TP)
+  tradeManagement: {
+    breakevenTriggerPrice: number | null;
+    breakevenTriggerPts: number | null;
+    breakevenCondition: string;
+    tpRecommendation: "TAKE_PARTIALS" | "STICK_WITH_FULL_TP" | "SINGLE_CONTRACT_TRAIL";
+    partialTpPrice: number | null;
+    partialTpLabel: string | null;
+    tpRationale: string;
+  };
 
   // Volatility, ATR & Straddle Calibration
   atrOpen15m: number;
@@ -265,7 +272,8 @@ export function computeScreenshotQuantMetrics(
     stopLossPrice !== null ? "CHART_EXPLICIT" : "NONE";
 
   if (stopLossPrice === null && direction !== "NONE") {
-    const bufferPts = Math.max(15, Math.round(atrOpen15m * 0.75 * 4) / 4);
+    // Clean structural buffer beyond the drawn box/entry: bounded [12, 45] pts so suggested SL stays realistic
+    const bufferPts = Math.min(45, Math.max(12, Math.round(atrOpen15m * 0.5 * 4) / 4));
     if (direction === "SHORT") {
       const anchorHigh = zoneHigh ?? effectiveEntry;
       stopLossPrice = round2(anchorHigh + bufferPts);
@@ -373,26 +381,12 @@ export function computeScreenshotQuantMetrics(
     }
   }
 
-  // Risk Budget & Sizing
-  const userRiskBudgetDollars = snapshot.journal.riskBudgetDollars ?? 250;
-  const maxDailyLossDollars = snapshot.journal.maxDailyLossDollars ?? 350;
+  // Objective Per-Contract Risk & Layer 1 Regime Gate
   const layer1RiskMultiplier = snapshot.regime.riskMultiplier;
-  const regimeAdjustedRiskBudgetDollars = round2(userRiskBudgetDollars * layer1RiskMultiplier);
-
-  const relevantStopPts = stopDistancePts;
-  const relevantDollarRisk = dollarRiskPlanned;
-
-  const maxRecommendedContracts =
-    relevantStopPts && relevantStopPts > 0
-      ? Math.max(
-          0,
-          Math.floor(regimeAdjustedRiskBudgetDollars / (relevantStopPts * pointValueDollars))
-        )
-      : null;
-  const exceedsUserRiskBudget =
-    relevantDollarRisk !== null ? relevantDollarRisk > userRiskBudgetDollars : false;
-  const exceedsRegimeAdjustedBudget =
-    relevantDollarRisk !== null ? relevantDollarRisk > regimeAdjustedRiskBudgetDollars : false;
+  const dollarRiskPerContract =
+    stopDistancePts !== null ? round2(stopDistancePts * pointValueDollars) : null;
+  const dollarRewardPerContract =
+    targetDistancePts !== null ? round2(targetDistancePts * pointValueDollars) : null;
 
   const stopInAtr15m =
     stopDistancePts !== null ? round2(stopDistancePts / atrOpen15m) : null;
@@ -538,11 +532,6 @@ export function computeScreenshotQuantMetrics(
       limitSetupReasons.push(
         `Target (${target?.toFixed(2)}) has already been reached before the limit fill; cancel stale limit order.`
       );
-    } else if (exceedsUserRiskBudget && relevantDollarRisk !== null) {
-      limitSetupVerdict = "VALID_WITH_ADJUSTMENTS";
-      limitSetupReasons.push(
-        `Dollar risk ($${relevantDollarRisk.toFixed(2)}) exceeds base risk budget ($${userRiskBudgetDollars}); adjust SL tighter or lower size.`
-      );
     } else if (
       plannedRewardToRisk !== null &&
       plannedRewardToRisk < 1.3
@@ -596,11 +585,11 @@ export function computeScreenshotQuantMetrics(
 
   if (layer1RiskMultiplier === 0) {
     warnings.push(
-      `LAYER 1 RISK VETO (0x SIZE): ${snapshot.regime.activeVetoes.join("; ") || snapshot.regime.biasVerdict}. Volatility surface is stressed — either stand aside or demand ultra-A+ limit absorption at reduced size.`
+      `LAYER 1 RISK VETO (0x SIZE): ${snapshot.regime.activeVetoes.join("; ") || snapshot.regime.biasVerdict}. Volatility surface is stressed — either stand aside or reduce contract size.`
     );
   } else if (layer1RiskMultiplier === 0.5) {
     warnings.push(
-      `LAYER 1 HALF-SIZE GATE (0.5x): Volatility regime reduces effective risk budget from $${userRiskBudgetDollars} to $${regimeAdjustedRiskBudgetDollars.toFixed(2)}; consider taking first partials around 1.8R.`
+      `LAYER 1 HALF-SIZE GATE (0.5x): Volatility regime favors scaling down size (~0.5x normal risk) and taking partials earlier around 1.5R–1.8R.`
     );
   }
 
@@ -624,13 +613,7 @@ export function computeScreenshotQuantMetrics(
     );
   } else if (stopSizingAssessment === "WIDE" && stopDistancePts !== null) {
     warnings.push(
-      `WIDE STOP (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Wider than 2.5x 15m ATR; tighten invalidation or verify size stays within $${userRiskBudgetDollars}.`
-    );
-  }
-
-  if (exceedsUserRiskBudget && relevantDollarRisk !== null) {
-    warnings.push(
-      `RISK BUDGET EXCEEDED: $${relevantDollarRisk.toFixed(2)} risk > $${userRiskBudgetDollars} base budget.`
+      `WIDE STOP (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Wider than 2.5x 15m ATR; consider tightening invalidation or sizing down contracts.`
     );
   }
 
@@ -790,6 +773,94 @@ export function computeScreenshotQuantMetrics(
     );
   }
 
+  // Deterministic Break-Even & Partials vs Full TP Trade Management
+  const dirSign =
+    liveBiasDirection === "BEARISH" ? -1 : liveBiasDirection === "BULLISH" ? 1 : 0;
+  const beAnchor = explicitEntry ?? px;
+  const refStopPts = stopDistancePts ?? Math.max(15, round2(atrOpen15m));
+  const netGammaRegime =
+    snapshot.gex.available && snapshot.gex.netGammaRegime
+      ? snapshot.gex.netGammaRegime
+      : "UNAVAILABLE";
+  const isMeanRevertingOrStressed =
+    netGammaRegime === "POSITIVE_GAMMA" ||
+    snapshot.volatilityAndMacro.isNegativeVrp ||
+    snapshot.volatilityAndMacro.termRatio > 1.0 ||
+    snapshot.volatilityAndMacro.vvix >= 110;
+
+  let breakevenTriggerPrice: number | null = null;
+  let breakevenTriggerPts: number | null = null;
+  let breakevenCondition =
+    "Wait for range expansion & confirm direction before moving stops to entry.";
+
+  if (dirSign !== 0) {
+    const firstMagnet = obstaclesBeforeTarget[0] ?? takeProfitTargets[0] ?? null;
+    const rawRTriggerPts = isMeanRevertingOrStressed
+      ? round2(Math.max(12, refStopPts * 0.75))
+      : round2(Math.max(15, refStopPts * 1.0));
+    const magnetDistPts = firstMagnet ? round2(Math.abs(firstMagnet.price - beAnchor)) : null;
+
+    if (magnetDistPts !== null && magnetDistPts >= Math.max(12, atrOpen15m * 0.5) && magnetDistPts <= rawRTriggerPts * 1.15) {
+      breakevenTriggerPts = magnetDistPts;
+      breakevenTriggerPrice = firstMagnet!.price;
+      breakevenCondition = `Move SL to Break Even (${beAnchor.toFixed(2)}) once price breaks/closes past ${firstMagnet!.shortName} (${firstMagnet!.price.toFixed(2)}, ${isMeanRevertingOrStressed ? "+0.75R+" : "~1.0R"} / +${magnetDistPts.toFixed(1)} pts) — avoid moving to BE inside initial noise.`;
+    } else {
+      breakevenTriggerPts = rawRTriggerPts;
+      breakevenTriggerPrice = round2(beAnchor + dirSign * rawRTriggerPts);
+      breakevenCondition = `Move SL to Break Even (${beAnchor.toFixed(2)}) once price clears ${isMeanRevertingOrStressed ? "+0.75R" : "+1.0R"} at ${breakevenTriggerPrice.toFixed(2)} (+${rawRTriggerPts.toFixed(1)} pts in profit).`;
+    }
+  }
+
+  const isExtendedTarget =
+    (plannedRewardToRisk !== null && plannedRewardToRisk >= 2.3) ||
+    (targetPctOfDailyStraddle !== null && targetPctOfDailyStraddle >= 80);
+  const hasBlockingMagnet = obstaclesBeforeTarget.length > 0;
+  const shouldScalePartials = isExtendedTarget || hasBlockingMagnet || isMeanRevertingOrStressed;
+  const partialMagnet = obstaclesBeforeTarget[0] ?? takeProfitTargets[0] ?? null;
+  const partialTpPrice =
+    partialMagnet?.price ??
+    (dirSign !== 0 ? round2(beAnchor + dirSign * Math.max(25, round2(refStopPts * 1.6))) : null);
+  const partialTpLabel = partialMagnet ? partialMagnet.shortName : "~1.6R Structural Target";
+
+  let tpRecommendation: ScreenshotQuantResult["tradeManagement"]["tpRecommendation"] =
+    "STICK_WITH_FULL_TP";
+  let tpRationale = "";
+
+  if (dirSign === 0) {
+    tpRecommendation = "TAKE_PARTIALS";
+    tpRationale =
+      "Range-bound bias: lock profits at opposing range edges/VWAP instead of holding for breakouts.";
+  } else if (contracts === 1 && shouldScalePartials) {
+    tpRecommendation = "SINGLE_CONTRACT_TRAIL";
+    const drivers = [
+      isMeanRevertingOrStressed ? `${netGammaRegime === "POSITIVE_GAMMA" ? "+Gamma mean reversion" : "elevated volatility stress"}` : "",
+      hasBlockingMagnet ? `magnet ${obstaclesBeforeTarget[0].shortName} (${obstaclesBeforeTarget[0].price.toFixed(2)}) sits ahead of full TP` : "",
+      isExtendedTarget ? `full TP stretches ${plannedRewardToRisk ? `${plannedRewardToRisk.toFixed(2)}R` : `>${targetPctOfDailyStraddle?.toFixed(0)}% Straddle`}` : "",
+    ].filter(Boolean);
+    tpRationale = `On 1 contract you cannot split partials: either take Full TP at ${partialTpLabel} (${partialTpPrice?.toFixed(2)}) OR trail stop tightly behind 5m swings once past ${partialTpPrice?.toFixed(2)} (${drivers.join("; ")}).`;
+  } else if (shouldScalePartials) {
+    tpRecommendation = "TAKE_PARTIALS";
+    const drivers = [
+      isMeanRevertingOrStressed ? `${netGammaRegime === "POSITIVE_GAMMA" ? "+Gamma dampening" : "elevated VRP/volatility"}` : "",
+      hasBlockingMagnet ? `${obstaclesBeforeTarget[0].shortName} (${obstaclesBeforeTarget[0].price.toFixed(2)}) sits in the path` : "",
+      isExtendedTarget ? `target >2.3R / >80% Daily Straddle` : "",
+    ].filter(Boolean);
+    tpRationale = `TAKE PARTIALS (scale 50–70% at ${partialTpLabel} ${partialTpPrice?.toFixed(2)}, trail runner to full TP with SL at BE) because ${drivers.join(" & ")}.`;
+  } else {
+    tpRecommendation = "STICK_WITH_FULL_TP";
+    tpRationale = `STICK WITH FULL TP (${target ? target.toFixed(2) : partialTpPrice?.toFixed(2)}): clear path with no major blocking magnets ahead, R:R fits inside daily expected move, and ${netGammaRegime === "NEGATIVE_GAMMA" ? "-Gamma favors clean trend follow-through" : "normal vol supports full target"}.`;
+  }
+
+  const tradeManagement = {
+    breakevenTriggerPrice,
+    breakevenTriggerPts,
+    breakevenCondition,
+    tpRecommendation,
+    partialTpPrice,
+    partialTpLabel,
+    tpRationale,
+  };
+
   // Action Stance
   let actionStance = "ANALYZE STRUCTURE BEFORE ENTRY";
   if (newsShouldVetoTrade) {
@@ -870,13 +941,10 @@ export function computeScreenshotQuantMetrics(
     openTradeUnrealizedPts,
     openTradeUnrealizedDollars,
     openTradeCurrentR,
-    userRiskBudgetDollars,
-    maxDailyLossDollars,
+    dollarRiskPerContract,
+    dollarRewardPerContract,
     layer1RiskMultiplier,
-    regimeAdjustedRiskBudgetDollars,
-    maxRecommendedContracts,
-    exceedsUserRiskBudget,
-    exceedsRegimeAdjustedBudget,
+    tradeManagement,
     atrOpen15m,
     stopInAtr15m,
     stopSizingAssessment,

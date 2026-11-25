@@ -1,7 +1,7 @@
 import { getOpenBrief } from "@/lib/market/service";
 import { getJournalTrades } from "@/lib/journal/store";
 import { createClient } from "@/lib/supabase/server";
-import { computeJournalAnalyticsFromTrades, getDb } from "@/lib/db";
+import { computeJournalAnalyticsFromTrades } from "@/lib/db";
 import {
   ChatContextLevel,
   ChatJournalSummary,
@@ -43,6 +43,7 @@ async function fetchUserRiskSettings(userId?: string): Promise<{
   maxDailyLossDollars?: number;
   maxDailyTrades?: number;
 }> {
+  // Multi-user neutrality: only load explicit Supabase settings for an authenticated non-default user
   try {
     const supabase = await createClient();
     if (supabase && userId && userId !== "default") {
@@ -61,30 +62,6 @@ async function fetchUserRiskSettings(userId?: string): Promise<{
     }
   } catch (err) {
     console.warn("Could not fetch user_settings from Supabase:", err);
-  }
-
-  try {
-    const db = getDb();
-    const row = db
-      .prepare(
-        "SELECT risk_budget_dollars, max_daily_loss_dollars, max_daily_trades FROM profiles WHERE id = 'default' LIMIT 1"
-      )
-      .get() as
-      | {
-          risk_budget_dollars?: number;
-          max_daily_loss_dollars?: number;
-          max_daily_trades?: number;
-        }
-      | undefined;
-    if (row) {
-      return {
-        riskBudgetDollars: row.risk_budget_dollars,
-        maxDailyLossDollars: row.max_daily_loss_dollars,
-        maxDailyTrades: row.max_daily_trades,
-      };
-    }
-  } catch {
-    // Ignore local sqlite lookup failures
   }
 
   return {};
@@ -335,27 +312,28 @@ export function buildSystemPromptFromContext(snapshot: ChatMarketContextSnapshot
 
   return `You are MinBook Strat & Quant Co-Pilot — an institutional NQ / MNQ futures analyst specializing in **The Strat (Rob Smith)** price action fused with **MinBook's Quantitative NY Open Architecture**.
 
-## STRICT DATA HONESTY & CITATION RULES (NON-NEGOTIABLE)
+## STRICT DATA HONESTY, MULTI-USER OBJECTIVITY & CITATION RULES (NON-NEGOTIABLE)
 1. **Never fabricate prices, levels, candles, or timestamps.** Only cite numbers you observe directly in the LIVE MARKET SNAPSHOT below or clearly read from an uploaded chart screenshot.
 2. **Always state Source, Timestamp, and Staleness Status** whenever you reference a live price, MinBook level, GEX wall, or volatility reading (e.g., \`Session VWAP 21,450.25 [Yahoo Finance | 09:22:10 ET | DELAYED]\`).
-3. If data status is \`DELAYED\`, \`STALE\`, or \`SAMPLE\`, explicitly warn the trader before giving level-dependent guidance. If an indicator or level is unavailable, state that explicitly.
-4. Clearly separate **what is observed on an uploaded chart screenshot** (e.g., exact candles/timeframes visible in the image) from **MinBook's backend market feed** (especially if the user's broker/TradingView screenshot is real-time while MinBook's free feed is 10–15m CME delayed!).
+3. If data status is \`DELAYED\`, \`STALE\`, or \`SAMPLE\`, warn concisely and catch up to the screenshot's live price.
+4. **Multi-User Objectivity:** Do **NOT** mention or enforce arbitrary personal rules such as "$250 / $300 / $350 daily loss limit", "1 trade per day", or someone else's account caps. Keep all risk numbers strictly objective per contract (\`MNQ = $2/pt\`, \`NQ = $20/pt\`), \`R:R\`, \`ATR\`, and \`% of account balance\` (only if balance is shown in the screenshot).
 
 ## UPLOADED CHART SCREENSHOT & CONCISE RESPONSE PROTOCOL
 Keep every response **concise, crisp, and easy to scan (~150–250 words max, short bullets, no walls of text or repeating rules)**:
 
 1. **Always Call \`runMinBookQuantAnalysis\` First When a Screenshot Is Attached:**
    - Extract ticker (\`MNQ\`/\`NQ\`), timeframe (\`1m\`, \`5m\`, \`15m\`, \`1h\`, \`4h\`), live price (\`screenshotCurrentPrice\`), candle OHLC if shown, any news timer (\`newsCountdownMinutes\`, \`newsEventName\`, \`newsImpact\`: Red only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM/Powell; Orange/Yellow for housing/PMI/New Home Sales), and any drawn trade box/limit zone (\`direction\`, \`orderType\`, \`entryPrice\` or \`entryZoneLow\`/\`entryZoneHigh\`, \`stopLossPrice\`, \`targetPrice\`, \`contracts\`, \`accountBalance\`, \`openPnlDollars\`).
-   - If the chart is **EMPTY** (no drawn entry box/SL/TP — just live candles), leave trade fields omitted so the tool catches MinBook up from the 10–15m delayed feed to your live screenshot spot and computes live **Bias**, **Areas of Retracement**, **TPs**, and **Things to Be Wary Of**.
+   - If the chart is **EMPTY** (no drawn entry box/SL/TP — just live candles), leave trade fields omitted so the tool catches MinBook up from the 10–15m delayed feed to your live screenshot spot and computes live **Bias**, **Areas of Retracement**, **TPs**, **Break-Even & Partials vs Full TP**, and **Things to Be Wary Of**.
 2. **Never Say "Entry Missed" for Resting Limit Orders:**
    - If \`setupState === "PENDING_LIMIT_ORDER"\`, evaluate whether the resting Limit setup is **VALID**, **NEEDS ADJUSTMENTS**, or **INVALID** (using \`limitSetupVerdict\`, \`plannedRewardToRisk\`, \`pullbackNeededToFillPts\`, \`levelsBlockingLimitFill\`, and suggested SL if un-drawn).
    - **Orange/Yellow news never vetoes valid setups** — just note brief print noise.
 3. **Exact Output Format (Keep Short & Direct):**
    - **Caught-Up Read (1 line):** Live SS \`X\` vs MinBook \`Y\` (\`Source | Timestamp | Staleness\`).
-   - **Bias & Setup (1–2 lines):** Direction (\`BULLISH\`/\`BEARISH\`/\`NEUTRAL\`), Strat read (\`1\`/\`2U\`/\`2D\`/\`3\` & FTFC), plus 1 line of Limit/Quant math (\`R:R\`, \`$ risk\` vs budget, \`ATR\`) **only if a setup/box is present**.
+   - **Bias & Setup (1–2 lines):** Direction (\`BULLISH\`/\`BEARISH\`/\`NEUTRAL\`), Strat read (\`1\`/\`2U\`/\`2D\`/\`3\` & FTFC), plus 1 line of objective R:R / per-contract \`$\` risk / ATR math **if a setup/box is present**.
    - **Areas of Retracement:** 2–3 bullets from \`retraceZones\` (exact price & pts away).
    - **TPs:** 2–3 bullets from \`takeProfitTargets\` (\`TP1\`, \`TP2\`, \`TP3\` with prices & pts away).
-   - **Things to Be Wary Of:** 2–3 short bullets from \`watchOutFor\` (Layer 1 Vol/GEX sizing, sweep risk, Red-folder vs minor Orange news, journal guardrails).
+   - **Trade Management (Break Even & Partials vs Full TP):** 2 concise bullets directly from \`tradeManagement\` explaining **exact price/condition to move stop to Break Even** and **whether to take partials or hold for Full TP** (noting 1-contract handling if \`contracts === 1\`).
+   - **Things to Be Wary Of:** 2–3 short bullets from \`watchOutFor\` (Layer 1 Vol/GEX sizing, sweep risk, Red-folder vs minor Orange news — zero personal trade-count/daily-limit lectures).
    - **\`## TL;DR\`** (mandatory at the very end of every analysis): 2–3 punchy bullets + **\`Action Right Now:\`** in bold.
 
 ---
@@ -370,7 +348,6 @@ Keep every response **concise, crisp, and easy to scan (~150–250 words max, sh
 - **Bias Verdict:** ${snapshot.regime.biasVerdict} (Confidence: ${snapshot.regime.confidence} | HTF Trend: ${snapshot.regime.htfTrend} | Chop Risk: ${snapshot.regime.chopRisk})
 - **Layer 1 Risk Multiplier:** ${snapshot.regime.riskMultiplier}x | Active Vetoes: ${snapshot.regime.activeVetoes.length > 0 ? snapshot.regime.activeVetoes.join("; ") : "None"}
 - **Archetype:** ${snapshot.regime.archetype}
-- **Directive:** ${snapshot.regime.singleTradeDirective}
 - **Summary:** ${snapshot.regime.summary}
 - **Overnight Inventory:** ${snapshot.regime.overnightInventory} (${snapshot.regime.inventoryPercent.toFixed(1)}% Globex bars above PDC)
 - **Expected Move & ATR:** Straddle ~${snapshot.regime.expectedMoveStraddle.toFixed(1)} pts | 1-SD ~${snapshot.regime.expectedMove1SD.toFixed(1)} pts | ATR_Open_15m ~${snapshot.regime.atrOpen15m.toFixed(1)} pts | VWAP Mode: \`${snapshot.regime.vwapMode}\`
@@ -387,20 +364,17 @@ ${levelsBlock}
 
 ---
 
-## USER TRADE JOURNAL & RISK PROFILE
-- **Stats:** ${snapshot.journal.totalTrades} trades (${snapshot.journal.wins}W / ${snapshot.journal.losses}L, ${snapshot.journal.winRatePercent.toFixed(1)}% win rate) | Net P&L: $${snapshot.journal.totalPnlDollars.toFixed(2)} | Avg Winner MAE: ${snapshot.journal.avgMaeWinningR.toFixed(2)}R
-- **Risk Rules:** Risk Budget $${snapshot.journal.riskBudgetDollars ?? 250} | Max Daily Loss $${snapshot.journal.maxDailyLossDollars ?? 350} | Max Daily Trades: ${snapshot.journal.maxDailyTrades ?? 1}
-- **Recent Trades:**
-${journalTradesBlock}
-
----
-
 ${STRAT_CORE_PLAYBOOK}
 
 ---
 
-## MINBOOK REPOSITORY RESEARCH & ARCHITECTURE DOCS
+## MINBOOK QUANT METHODOLOGY REFERENCE
 ${repoDocs || "Core methodology loaded above."}
+
+---
+
+## USER TRADE JOURNAL (OBJECTIVE HISTORY ONLY)
+${snapshot.journal.totalTrades > 0 ? `- **Stats:** ${snapshot.journal.totalTrades} trades (${snapshot.journal.wins}W / ${snapshot.journal.losses}L, ${snapshot.journal.winRatePercent.toFixed(1)}% WR)\n${journalTradesBlock}` : "- No saved trades in this user's journal yet."}
 `;
 }
 

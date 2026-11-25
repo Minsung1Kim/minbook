@@ -47,24 +47,24 @@ interface StagedAttachment {
 
 const STARTER_PROMPTS = [
   {
-    title: "Analyze screenshot + quant math",
+    title: "Predict live chart (Bias / Retrace / TPs)",
     prompt:
-      "Run full MinBook quant formulas, R:R/sizing math, key level confluence, and Strat structure on this chart. Tell me what to do right now and end with a clear TL;DR.",
+      "Read this screenshot to catch up to live price. Keep it short and list: Bias, Areas of Retracement, TPs, Things to Be Wary Of (plus Limit/Quant check if a trade box is drawn), and end with a TL;DR.",
   },
   {
-    title: "Break down this Strat setup",
+    title: "Break down Strat setup",
     prompt:
-      "Break down today's NQ/MNQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, where invalidation sits, and end with a TL;DR.",
+      "Break down today's NQ/MNQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, and invalidation concisely. End with a TL;DR.",
   },
   {
     title: "Where is invalidation & sizing?",
     prompt:
-      "Check today's Volatility/GEX risk gates, ATR stop room, exact invalidation, and recommended MNQ/NQ contract sizing right now. End with a TL;DR.",
+      "Check today's Volatility/GEX risk gates, ATR stop room, exact invalidation, and recommended MNQ/NQ sizing concisely right now. End with a TL;DR.",
   },
   {
     title: "Check FTFC & key levels",
     prompt:
-      "Check today's key MinBook levels (VWAP, ONH/ONL, PDC, GEX) with timestamps and staleness, map top magnets, and end with a TL;DR.",
+      "Check today's key MinBook levels (VWAP, ONH/ONL, PDC, GEX) with timestamps and staleness, map top magnets concisely, and end with a TL;DR.",
   },
 ];
 
@@ -566,7 +566,7 @@ export function ChatWorkspace() {
 
     const finalText =
       textToSend ||
-      "Analyze this chart screenshot using MinBook quant formulas, key levels, and Strat structure. Give me actionable advice for right now and include a TL;DR summary at the end.";
+      "Read this screenshot to catch up to live price. Keep it concise: give me Bias, Areas of Retracement, TPs, Things to Be Wary Of (plus Limit/Quant check if a trade is shown), and end with a TL;DR.";
 
     let threadId = activeThreadIdRef.current;
     if (!threadId) {

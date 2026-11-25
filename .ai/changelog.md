@@ -830,3 +830,9 @@ All notable changes and architectural decisions are logged here.
   - Separated `ORANGE` (`MEDIUM`) releases (e.g., *New Home Sales*, *PMI*, housing data) into `imminentMedium` so only `RED` / `HIGH` Tier-1 releases (`CPI`, `FOMC`, `NFP`, `PCE`, `PPI`, `GDP`, `Retail Sales`, `ISM`, `Powell`) trigger Risk Gate vetoes or stand-aside warnings; Orange/Yellow news renders as a minor spread-noise note only.
 - **Verification ([chat.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chat.test.ts)):**
   - `npx eslint`: **0 errors, 0 warnings**; `npx tsc --noEmit`: **0 errors**; `npm test`: **19/19 test files, 140/140 tests passing**; `npm run build`: clean (`28` routes).
+
+## [2026-11-25] - Concise Empty-Chart Live Catch-Up Prediction Format
+- **Empty-Chart Catch-Up Engine ([screenshot-quant.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/screenshot-quant.ts), [build-market-context.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/build-market-context.ts), [ChatWorkspace.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chat/ChatWorkspace.tsx)):**
+  - Added `liveBiasAtScreenshot` (re-evaluating Bias against live screenshot price vs Session VWAP, PDC, and ON Mid to catch up 10–15m ahead of delayed quotes), `retraceZones`, `takeProfitTargets` (`TP1` / `TP2` / `TP3`), and `watchOutFor` bullets.
+  - Tightened the system prompt and default screenshot prompt to output shorter, high-signal responses (~150–250 words) structured strictly as **Caught-Up Price Read -> Bias & Setup -> Areas of Retracement -> TPs -> Things to Be Wary Of -> `## TL;DR`**.
+  - Added empty `1m` chart catch-up assertions in [chat.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chat.test.ts); re-verified `eslint` (0 errors/warnings), `tsc --noEmit` (0 errors), `npm test` (`19/19` suites, `140/140` tests), and `npm run build` (`28` routes).

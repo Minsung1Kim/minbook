@@ -282,5 +282,26 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
     expect(redNewsQuant.newsSeverity).toBe("RED_HIGH");
     expect(redNewsQuant.newsShouldVetoTrade).toBe(true);
     expect(redNewsQuant.plannedRewardToRisk).toBe(5.39);
+
+    // Empty 1m chart screenshot (no entry/SL/TP drawn) catching up past delayed MinBook feed
+    const emptyChartQuant = computeScreenshotQuantMetrics(
+      {
+        instrument: "MNQ",
+        timeframe: "1m",
+        screenshotCurrentPrice: snapshot.quote.price - 45,
+        candleOpen: snapshot.quote.price - 30,
+        candleHigh: snapshot.quote.price - 28,
+        candleLow: snapshot.quote.price - 50,
+        candleClose: snapshot.quote.price - 45,
+      },
+      snapshot
+    );
+    expect(emptyChartQuant.setupState).toBe("ANALYSIS_ONLY");
+    expect(emptyChartQuant.feedDeltaPts).toBe(-45);
+    expect(["BULLISH", "BEARISH", "NEUTRAL"]).toContain(
+      emptyChartQuant.liveBiasAtScreenshot.direction
+    );
+    expect(emptyChartQuant.retraceZones.length).toBeGreaterThan(0);
+    expect(emptyChartQuant.watchOutFor.length).toBeGreaterThan(0);
   });
 });

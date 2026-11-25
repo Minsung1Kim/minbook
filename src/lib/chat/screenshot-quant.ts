@@ -140,6 +140,15 @@ export interface ScreenshotQuantResult {
     biasNote: string;
   } | null;
 
+  // Live Empty-Chart Catch-Up Prediction Anchors
+  liveBiasAtScreenshot: {
+    direction: "BULLISH" | "BEARISH" | "NEUTRAL";
+    reason: string;
+  };
+  retraceZones: AnchoredLevelDistance[];
+  takeProfitTargets: Array<AnchoredLevelDistance & { tpLabel: "TP1" | "TP2" | "TP3" }>;
+  watchOutFor: string[];
+
   // Structural Level Anchoring relative to screenshot live price
   nearestLevelsAbove: AnchoredLevelDistance[];
   nearestLevelsBelow: AnchoredLevelDistance[];
@@ -643,6 +652,144 @@ export function computeScreenshotQuantMetrics(
     `Vol Surface: VIX/VIX3M ${snapshot.volatilityAndMacro.termRatio.toFixed(2)} (${snapshot.volatilityAndMacro.termStructureRegime}), VRP ${snapshot.volatilityAndMacro.vrpRatio.toFixed(2)} (${snapshot.volatilityAndMacro.isNegativeVrp ? "RV > IV" : "Normal"}), VVIX ${snapshot.volatilityAndMacro.vvix.toFixed(1)}`
   );
 
+  // Live Catch-Up Bias, Retrace Zones, TPs & Watch-Out-For (especially for empty chart screenshots)
+  const findLevelPrice = (needle: string): number | null => {
+    const match = anchoredLevels.find((l) => l.shortName.toLowerCase().includes(needle));
+    return match ? match.price : null;
+  };
+  const vwapPx = findLevelPrice("vwap");
+  const pdcPx = findLevelPrice("pdc");
+  const onMidPx = findLevelPrice("on mid");
+
+  let locationScore = 0;
+  const locationFacts: string[] = [];
+  if (vwapPx !== null) {
+    if (px >= vwapPx) {
+      locationScore += 1;
+      locationFacts.push(`above Session VWAP (${vwapPx.toFixed(2)})`);
+    } else {
+      locationScore -= 1;
+      locationFacts.push(`below Session VWAP (${vwapPx.toFixed(2)})`);
+    }
+  }
+  if (pdcPx !== null) {
+    if (px >= pdcPx) {
+      locationScore += 1;
+      locationFacts.push(`above PDC (${pdcPx.toFixed(2)})`);
+    } else {
+      locationScore -= 1;
+      locationFacts.push(`below PDC (${pdcPx.toFixed(2)})`);
+    }
+  }
+  if (onMidPx !== null) {
+    if (px >= onMidPx) {
+      locationScore += 1;
+    } else {
+      locationScore -= 1;
+    }
+  }
+
+  const macroTiltBull = snapshot.regime.biasVerdict.includes("BULLISH");
+  const macroTiltBear = snapshot.regime.biasVerdict.includes("BEARISH");
+  const liveBiasDirection: "BULLISH" | "BEARISH" | "NEUTRAL" =
+    direction === "LONG"
+      ? "BULLISH"
+      : direction === "SHORT"
+      ? "BEARISH"
+      : locationScore >= 2
+      ? "BULLISH"
+      : locationScore <= -2
+      ? "BEARISH"
+      : macroTiltBull && locationScore >= 0
+      ? "BULLISH"
+      : macroTiltBear && locationScore <= 0
+      ? "BEARISH"
+      : macroTiltBull
+      ? "BULLISH"
+      : macroTiltBear
+      ? "BEARISH"
+      : "NEUTRAL";
+
+  const liveBiasReason = `At live screenshot spot ${px.toFixed(2)} (${
+    locationFacts.length > 0 ? locationFacts.join(", ") : "anchored to snapshot"
+  }), HTF trend is ${snapshot.regime.htfTrend} and MinBook verdict is ${snapshot.regime.biasVerdict}.`;
+
+  const dedupeByGap = (items: AnchoredLevelDistance[], minGap: number): AnchoredLevelDistance[] => {
+    const out: AnchoredLevelDistance[] = [];
+    for (const item of items) {
+      if (!out.some((k) => Math.abs(k.price - item.price) < minGap)) {
+        out.push(item);
+      }
+    }
+    return out;
+  };
+
+  const retraceRaw =
+    liveBiasDirection === "BEARISH"
+      ? anchoredLevels
+          .filter(
+            (l) =>
+              l.distanceFromScreenshotPts >= 5 &&
+              !l.shortName.toLowerCase().includes("gamma flip") &&
+              !l.shortName.toLowerCase().includes("1-sd")
+          )
+          .sort((a, b) => a.distanceFromScreenshotPts - b.distanceFromScreenshotPts)
+      : liveBiasDirection === "BULLISH"
+      ? anchoredLevels
+          .filter(
+            (l) =>
+              l.distanceFromScreenshotPts <= -5 &&
+              !l.shortName.toLowerCase().includes("gamma flip") &&
+              !l.shortName.toLowerCase().includes("1-sd")
+          )
+          .sort((a, b) => b.distanceFromScreenshotPts - a.distanceFromScreenshotPts)
+      : [...nearestLevelsAbove.slice(0, 2), ...nearestLevelsBelow.slice(0, 2)];
+
+  const retraceZones = dedupeByGap(retraceRaw, 5).slice(0, 3);
+
+  const tpRaw =
+    liveBiasDirection === "BEARISH"
+      ? anchoredLevels
+          .filter((l) => l.distanceFromScreenshotPts <= -8)
+          .sort((a, b) => b.distanceFromScreenshotPts - a.distanceFromScreenshotPts)
+      : liveBiasDirection === "BULLISH"
+      ? anchoredLevels
+          .filter((l) => l.distanceFromScreenshotPts >= 8)
+          .sort((a, b) => a.distanceFromScreenshotPts - b.distanceFromScreenshotPts)
+      : [];
+
+  const tpLabels: Array<"TP1" | "TP2" | "TP3"> = ["TP1", "TP2", "TP3"];
+  const takeProfitTargets = dedupeByGap(tpRaw, 8)
+    .slice(0, 3)
+    .map((item, idx) => ({ ...item, tpLabel: tpLabels[idx] }));
+
+  const watchOutFor: string[] = [];
+  if (layer1RiskMultiplier === 0) {
+    watchOutFor.push(
+      `Layer 1 Volatility Veto (0x size active): ${snapshot.regime.activeVetoes[0] || "High two-way swing risk — protect capital or stay flat."}`
+    );
+  } else if (layer1RiskMultiplier === 0.5) {
+    watchOutFor.push(
+      `0.5x Size Gate (${snapshot.volatilityAndMacro.termStructureRegime}, VRP ${snapshot.volatilityAndMacro.vrpRatio.toFixed(2)}): demand extra stop buffer (~5–8 pts beyond wick).`
+    );
+  }
+  if (newsGuidance) {
+    watchOutFor.push(newsGuidance);
+  }
+  if (Math.abs(px - snapshot.quote.price) >= 5) {
+    watchOutFor.push(
+      `MinBook quote lags by ${(px - snapshot.quote.price) >= 0 ? "+" : ""}${(px - snapshot.quote.price).toFixed(1)} pts (${snapshot.quote.stalenessBadge}); execute off your live chart.`
+    );
+  }
+  if (snapshot.smt.hasDivergence) {
+    watchOutFor.push(`SMT Divergence active: ${snapshot.smt.divergenceType}.`);
+  }
+  if (watchOutFor.length === 0) {
+    watchOutFor.push(
+      `15m ATR is ~${atrOpen15m.toFixed(0)} pts; avoid chasing mid-range candles without a clear retrace or break.`
+    );
+  }
+
   // Action Stance
   let actionStance = "ANALYZE STRUCTURE BEFORE ENTRY";
   if (newsShouldVetoTrade) {
@@ -664,6 +811,13 @@ export function computeScreenshotQuantMetrics(
     }
   } else if (layer1RiskMultiplier === 0) {
     actionStance = "STAND ASIDE / STAY FLAT (LAYER 1 VOLATILITY VETO)";
+  } else if (setupState === "ANALYSIS_ONLY") {
+    const firstRetrace = retraceZones[0];
+    const firstTp = takeProfitTargets[0];
+    actionStance =
+      liveBiasDirection === "NEUTRAL"
+        ? `RANGE-BOUND — WAIT FOR EDGE SWEEP BEFORE ENTERING`
+        : `${liveBiasDirection} BIAS CAUGHT UP @ ${px.toFixed(2)}${firstRetrace ? ` — WATCH RETRACE ${firstRetrace.price.toFixed(2)} (${firstRetrace.shortName})` : ""}${firstTp ? ` → TP1 ${firstTp.price.toFixed(2)}` : ""}`;
   } else if (direction !== "NONE") {
     actionStance =
       layer1RiskMultiplier === 0.5
@@ -743,6 +897,13 @@ export function computeScreenshotQuantMetrics(
     newsShouldVetoTrade,
     newsGuidance,
     candleStats,
+    liveBiasAtScreenshot: {
+      direction: liveBiasDirection,
+      reason: liveBiasReason,
+    },
+    retraceZones,
+    takeProfitTargets,
+    watchOutFor,
     nearestLevelsAbove,
     nearestLevelsBelow,
     obstaclesBeforeTarget,

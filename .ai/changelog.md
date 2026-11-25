@@ -760,3 +760,16 @@ All notable changes and architectural decisions are logged here.
   - Removed model selector dropdown, extra key-level pill row, expandable levels grid, per-bubble metadata/snapshot drawers, follow-up chip spam, and composer footer hints.
   - Kept full Strat + MinBook live level/GEX/VRP/journal grounding in the server prompt and retained clean `Copy`, `Retry`, `Rename`, `Delete`, drag-and-drop, file upload, and `Cmd+V` paste workflows.
   - Verified with `eslint` (0 errors/warnings on chat files), `npx tsc --noEmit` (0 errors), `npm test` (18/18 suites, 133/133 tests passing), and `npm run build` (27/27 routes, 0 warnings).
+
+## [2026-11-24] - On-Site Encrypted API Key Storage & Brief 1H / 4H / Day Outlook
+- **Per-User On-Site Gemini API Key Storage ([0005_user_ai_keys.sql](file:///Users/minsung/Documents/GitHub/minbook/supabase/migrations/0005_user_ai_keys.sql), [key-crypto.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/key-crypto.ts), [key-store.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/key-store.ts), [api/chat/key/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/chat/key/route.ts), [ChatWorkspace.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chat/ChatWorkspace.tsx)):**
+  - Created `public.user_ai_keys` in Supabase (`qpzqftmybortbutxggmv`) with `auth.uid()`-scoped RLS policies (plus SQLite fallback in `src/lib/db/index.ts`).
+  - Added server-side AES-256-GCM encryption (`MINBOOK_KEY_SECRET` provisioned in Vercel Production/Preview and `.env.local`), live Google AI Studio key validation via `x-goog-api-key` header before saving, and masked hints (`AIza••••1234`) so plaintext keys are never returned to the browser.
+  - Added on-site API key input, `Get free key here` link (`https://aistudio.google.com/apikey`), and `Remove` action directly inside `/chat` so users never need to open Vercel or local `.env` files.
+- **1H / 4H / Full Day Predictions on Brief ([plainEnglishBrief.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/plainEnglishBrief.ts), [Dashboard.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/Dashboard.tsx)):**
+  - Added concise 1-sentence `horizonPredictions` (`1H`, `4H`, `DAY`) in `buildPlainEnglishBrief` grounded strictly in live MinBook levels (`Session VWAP`, `ONH`, `ONL`, `PDC`, `PDH`, `PDL`, `Straddle`) and rendered them inside the Brief Hero card alongside source, timestamp, and quote status.
+- **Verification ([chat.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chat.test.ts)):**
+  - `npx eslint` on all chat files and `plainEnglishBrief.ts`: **0 errors, 0 warnings**.
+  - `npx tsc --noEmit`: **0 errors**.
+  - `npm test`: **18/18 suites, 135/135 tests passing** (including AES-256-GCM key storage/masking/redaction and 1H/4H/Day prediction tests).
+  - `npm run build`: **28/28 routes compiled cleanly with 0 warnings**.

@@ -16,6 +16,15 @@ import {
   toUIMessages,
   uploadChartScreenshot,
 } from "../lib/chat/store";
+import { decryptApiKey, encryptApiKey, maskApiKey } from "../lib/chat/key-crypto";
+import {
+  deleteUserGeminiApiKey,
+  getUserGeminiApiKeyStatus,
+  resolveServerGeminiApiKey,
+  saveUserGeminiApiKey,
+} from "../lib/chat/key-store";
+import { buildPlainEnglishBrief } from "../lib/market/plainEnglishBrief";
+import { getOpenBrief } from "../lib/market/service";
 
 describe("MinBook Strat AI Chat Grounding & Helpers", () => {
   it("resolves staleness badges honestly from status and age", () => {
@@ -164,6 +173,45 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
       expect(uiMessages[1].metadata?.createdAt).toBeTruthy();
     } finally {
       await deleteChatThread(thread.id, testUser);
+    }
+  });
+
+  it("encrypts, saves, masks, resolves, and deletes per-user Gemini API keys safely", async () => {
+    process.env.MINBOOK_KEY_SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const sampleKey = "AIzaSyTestExampleKeyForUnitTesting1234";
+    const encrypted = encryptApiKey(sampleKey);
+    expect(encrypted.startsWith("enc:v1:")).toBe(true);
+    expect(encrypted).not.toContain(sampleKey);
+    expect(decryptApiKey(encrypted)).toBe(sampleKey);
+    expect(maskApiKey(sampleKey)).toBe("AIza••••1234");
+
+    const testUser = "vitest-key-user";
+    try {
+      const savedStatus = await saveUserGeminiApiKey(testUser, sampleKey);
+      expect(savedStatus.aiConfigured).toBe(true);
+      expect(savedStatus.keyHint).toBe("AIza••••1234");
+      expect(savedStatus.keySource).toBe("USER");
+
+      const statusCheck = await getUserGeminiApiKeyStatus(testUser);
+      expect(statusCheck.aiConfigured).toBe(true);
+      expect(statusCheck.keyHint).toBe("AIza••••1234");
+      expect(JSON.stringify(statusCheck)).not.toContain(sampleKey);
+
+      const resolved = await resolveServerGeminiApiKey(testUser);
+      expect(resolved).toBe(sampleKey);
+    } finally {
+      await deleteUserGeminiApiKey(testUser);
+    }
+  });
+
+  it("generates concise 1H, 4H, and Day horizon predictions on the Brief", async () => {
+    const brief = await getOpenBrief({ symbol: "NQ" });
+    const plain = buildPlainEnglishBrief(brief);
+    expect(plain.horizonPredictions).toHaveLength(3);
+    expect(plain.horizonPredictions.map((p) => p.horizon)).toEqual(["1H", "4H", "DAY"]);
+    for (const item of plain.horizonPredictions) {
+      expect(item.summary.length).toBeGreaterThan(15);
+      expect(["BULLISH", "BEARISH", "NEUTRAL"]).toContain(item.bias);
     }
   });
 });

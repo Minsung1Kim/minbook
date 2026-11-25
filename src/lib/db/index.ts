@@ -119,6 +119,13 @@ export function getDb(): DatabaseSync {
       market_context_snapshot_json TEXT DEFAULT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS user_ai_keys (
+      user_id TEXT PRIMARY KEY,
+      gemini_api_key TEXT NOT NULL,
+      key_hint TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Auto-migrate schema for v2.0

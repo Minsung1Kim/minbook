@@ -8,6 +8,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { resolveChatUser } from "@/lib/chat/auth";
 import { buildMarketContext } from "@/lib/chat/build-market-context";
+import { resolveServerGeminiApiKey } from "@/lib/chat/key-store";
 import {
   deriveThreadTitle,
   ensureChatThread,
@@ -21,14 +22,6 @@ import { CHAT_MODEL_ID, StratUIMessage } from "@/types/chat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-function getServerGeminiApiKey(): string {
-  return (
-    process.env.GEMINI_API_KEY?.trim() ||
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ||
-    ""
-  );
-}
 
 function extractTextFromParts(parts: StratUIMessage["parts"] | undefined): string {
   if (!Array.isArray(parts)) return "";
@@ -77,13 +70,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = getServerGeminiApiKey();
+    const apiKey = await resolveServerGeminiApiKey(auth.userId);
     if (!apiKey) {
       return NextResponse.json(
         {
           success: false,
           error:
-            "GEMINI_API_KEY is not configured. Add a free Google AI Studio key to your server environment variables.",
+            "No Gemini API key saved yet. Paste your free Google AI Studio key in the bar above to start chatting.",
         },
         { status: 503 }
       );

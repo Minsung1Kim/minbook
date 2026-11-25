@@ -107,10 +107,16 @@ export function ChatWorkspace() {
 
   const [selectedInstrument, setSelectedInstrument] = useState<"NQ" | "MNQ">("NQ");
 
-  // Live Context State
+  // Live Context & On-Site API Key State
   const [contextSnapshot, setContextSnapshot] =
     useState<ChatMarketContextSnapshot | null>(null);
   const [aiConfigured, setAiConfigured] = useState<boolean>(true);
+  const [keyHint, setKeyHint] = useState<string | null>(null);
+  const [keySource, setKeySource] = useState<"USER" | "ENV" | "NONE">("NONE");
+  const [showKeyPanel, setShowKeyPanel] = useState<boolean>(false);
+  const [apiKeyInput, setApiKeyInput] = useState<string>("");
+  const [savingKey, setSavingKey] = useState<boolean>(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [contextLoading, setContextLoading] = useState<boolean>(true);
   const [contextError, setContextError] = useState<string | null>(null);
 
@@ -227,6 +233,8 @@ export function ChatWorkspace() {
         if (typeof json.aiConfigured === "boolean") {
           setAiConfigured(json.aiConfigured);
         }
+        if ("keyHint" in json) setKeyHint(json.keyHint ?? null);
+        if ("keySource" in json) setKeySource(json.keySource ?? "NONE");
       } catch (err: unknown) {
         setContextError(err instanceof Error ? err.message : "Failed to load market context");
       } finally {
@@ -288,6 +296,8 @@ export function ChatWorkspace() {
             if (typeof json.aiConfigured === "boolean") {
               setAiConfigured(json.aiConfigured);
             }
+            if ("keyHint" in json) setKeyHint(json.keyHint ?? null);
+            if ("keySource" in json) setKeySource(json.keySource ?? "NONE");
             setContextError(null);
           } else {
             setContextError(json.error || "Failed to load market context");
@@ -630,6 +640,55 @@ export function ChatWorkspace() {
     } catch {}
   };
 
+  const handleSaveApiKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed || savingKey) return;
+
+    setSavingKey(true);
+    setKeyError(null);
+    try {
+      const res = await fetch("/api/chat/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: trimmed }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to save key");
+      }
+      setAiConfigured(true);
+      setKeyHint(json.keyHint ?? null);
+      setKeySource(json.keySource ?? "USER");
+      setApiKeyInput("");
+      setShowKeyPanel(false);
+    } catch (err: unknown) {
+      setKeyError(err instanceof Error ? err.message : "Failed to save key");
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleRemoveApiKey = async () => {
+    if (savingKey) return;
+    setSavingKey(true);
+    setKeyError(null);
+    try {
+      const res = await fetch("/api/chat/key", { method: "DELETE" });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setAiConfigured(Boolean(json.aiConfigured));
+        setKeyHint(json.keyHint ?? null);
+        setKeySource(json.keySource ?? "NONE");
+        setShowKeyPanel(false);
+      }
+    } catch (err: unknown) {
+      setKeyError(err instanceof Error ? err.message : "Failed to remove key");
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
   const quote = contextSnapshot?.quote;
   const regime = contextSnapshot?.regime;
   const lastAssistantMsgId = useMemo(() => {
@@ -887,6 +946,25 @@ export function ChatWorkspace() {
               )}
               <button
                 type="button"
+                onClick={() => {
+                  setKeyError(null);
+                  setShowKeyPanel((v) => !v);
+                }}
+                className={`px-2 py-1 rounded border text-[11px] font-mono flex items-center space-x-1 transition-colors ${
+                  aiConfigured
+                    ? "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                    : "bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300"
+                }`}
+                title="Manage your encrypted Gemini API key"
+              >
+                <KeyRound className="w-3 h-3" />
+                <span className="hidden md:inline">
+                  {aiConfigured ? keyHint || "Key Ready" : "Add Key"}
+                </span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => fetchContext(true)}
                 disabled={contextLoading}
                 className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
@@ -900,33 +978,87 @@ export function ChatWorkspace() {
             </div>
           </div>
 
-          {/* Setup Notice if GEMINI_API_KEY is not yet configured */}
-          {!aiConfigured && (
-            <div className="mx-3 sm:mx-6 mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-start space-x-2.5">
-                <KeyRound className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-                <div>
-                  <span className="font-semibold">Free Gemini API key needed:</span>{" "}
-                  Add{" "}
-                  <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
-                    GEMINI_API_KEY
-                  </code>{" "}
-                  to Vercel Environment Variables (or{" "}
-                  <code className="px-1 py-0.5 rounded bg-zinc-950 border border-zinc-800 font-mono text-[11px]">
-                    .env.local
-                  </code>
-                  ) to enable chat.
+          {/* On-Site Encrypted API Key Setup / Manager */}
+          {(!aiConfigured || showKeyPanel) && (
+            <div className="mx-3 sm:mx-6 mt-3 rounded-lg border border-zinc-800 bg-[#111113] px-3.5 py-3 text-xs space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center space-x-2 text-zinc-200">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="font-medium">
+                    {aiConfigured
+                      ? `Gemini API Key (${keySource === "USER" ? `Saved ${keyHint || ""}` : "Server Env"})`
+                      : "Add your free Gemini API key to start chatting"}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <a
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center space-x-1 px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 font-medium text-[11px] transition-colors"
+                  >
+                    <span>Get free key here</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                  {aiConfigured && (
+                    <button
+                      type="button"
+                      onClick={() => setShowKeyPanel(false)}
+                      className="p-1 text-zinc-500 hover:text-zinc-200"
+                      aria-label="Close key settings"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center space-x-1 px-2.5 py-1 rounded bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 text-amber-200 font-medium text-[11px] transition-colors shrink-0"
+
+              <form
+                onSubmit={handleSaveApiKey}
+                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
               >
-                <span>Get free key here</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="Paste Gemini API key (AIza...)"
+                  className="flex-1 px-3 py-1.5 rounded bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={savingKey || !apiKeyInput.trim()}
+                    className="px-3 py-1.5 rounded bg-zinc-100 hover:bg-white text-zinc-950 font-semibold text-xs transition-colors disabled:opacity-40 flex items-center space-x-1.5"
+                  >
+                    {savingKey && <Loader2 className="w-3 h-3 animate-spin" />}
+                    <span>{savingKey ? "Verifying..." : "Save Key"}</span>
+                  </button>
+                  {keySource === "USER" && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveApiKey}
+                      disabled={savingKey}
+                      className="px-2.5 py-1.5 rounded bg-zinc-900 hover:bg-rose-500/15 border border-zinc-800 hover:border-rose-500/30 text-zinc-400 hover:text-rose-300 text-xs transition-colors"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {keyError && (
+                <div className="text-[11px] text-rose-400 flex items-center space-x-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{keyError}</span>
+                </div>
+              )}
+
+              <p className="text-[11px] text-zinc-500">
+                Encrypted with AES-256-GCM on the server and scoped strictly to your account. Never exposed to the browser.
+              </p>
             </div>
           )}
 

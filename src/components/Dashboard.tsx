@@ -394,6 +394,46 @@ export function Dashboard() {
                 </div>
               </div>
 
+              {/* 1H / 4H / Full Day Simple Predictions */}
+              <div className="pt-3 border-t border-zinc-800/70 space-y-2">
+                <div className="flex items-center justify-between gap-2 text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+                  <span>Horizon Outlook (1H / 4H / Day)</span>
+                  <span>
+                    {brief.dataSource.providerName} ·{" "}
+                    {formattedExchangeTime ? `${formattedExchangeTime} ${timezoneCode} · ` : ""}
+                    {brief.dataSource.quoteStatus}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                  {plainBrief.horizonPredictions.map((item) => (
+                    <div
+                      key={item.horizon}
+                      className="px-3 py-2.5 rounded-md bg-zinc-950/70 border border-zinc-800/80 space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400">
+                          {item.label}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                            item.bias === "BULLISH"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : item.bias === "BEARISH"
+                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          }`}
+                        >
+                          {item.bias}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-200 leading-snug">
+                        {item.summary}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Quant Facts & Math Grid (Plain English + Real Numbers) */}
               {showQuantMath && (
                 <div className="pt-3 border-t border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">

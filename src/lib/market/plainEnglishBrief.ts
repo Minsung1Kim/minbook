@@ -47,6 +47,13 @@ export interface FuturesGameplan {
   }>;
 }
 
+export interface HorizonPrediction {
+  horizon: "1H" | "4H" | "DAY";
+  label: string;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  summary: string;
+}
+
 export interface PlainEnglishBrief {
   direction: BiasDirectionLabel;
   verdictTitle: string;
@@ -58,6 +65,7 @@ export interface PlainEnglishBrief {
     reason: string;
     sizeMultiplier: 1.0 | 0.5 | 0.0;
   };
+  horizonPredictions: HorizonPrediction[];
   gameplan: FuturesGameplan;
   quantFacts: QuantFactItem[];
   bounceAreas: ActionableArea[];
@@ -796,15 +804,126 @@ export function buildPlainEnglishBrief(
     ]
   };
 
+  const dedupedBounces = deduplicateAreas(bouncePool, 4).slice(0, 5);
+  const dedupedTargets = deduplicateAreas(targetPool, 4).slice(0, 5);
+
+  const fmtPrice = (p: number) =>
+    p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const horizonPredictions: HorizonPrediction[] = (() => {
+    const fallbackSupport =
+      dedupedBounces.find((b) => b.price <= spot) || {
+        shortName: "Session VWAP",
+        price: metrics.sessionVwap,
+      };
+    const fallbackResist =
+      dedupedBounces.find((b) => b.price >= spot) || {
+        shortName: "Session VWAP",
+        price: metrics.sessionVwap,
+      };
+
+    const nearTargetUp =
+      dedupedTargets.find((t) => t.price > spot + 3) || {
+        shortName: metrics.onh > spot ? "ONH" : "PDH",
+        price: metrics.onh > spot ? metrics.onh : metrics.pdh,
+      };
+    const nearTargetDown =
+      dedupedTargets.find((t) => t.price < spot - 3) || {
+        shortName: metrics.onl < spot ? "ONL" : "PDL",
+        price: metrics.onl < spot ? metrics.onl : metrics.pdl,
+      };
+
+    const macroTargetUp =
+      dedupedTargets.find((t) => t.price > nearTargetUp.price + 5) ||
+      (metrics.pdh > nearTargetUp.price + 5
+        ? { shortName: "PDH", price: metrics.pdh }
+        : { shortName: "Upper Straddle", price: metrics.upperStraddle });
+    const macroTargetDown =
+      dedupedTargets.find((t) => t.price < nearTargetDown.price - 5) ||
+      (metrics.pdl < nearTargetDown.price - 5
+        ? { shortName: "PDL", price: metrics.pdl }
+        : { shortName: "Lower Straddle", price: metrics.lowerStraddle });
+
+    if (direction === "BULLISH") {
+      return [
+        {
+          horizon: "1H",
+          label: "Next 1 Hr",
+          bias: "BULLISH",
+          summary: `Expecting a retrace to ${fmtPrice(fallbackSupport.price)} (${fallbackSupport.shortName}), then continue bullish toward ${fmtPrice(nearTargetUp.price)}.`,
+        },
+        {
+          horizon: "4H",
+          label: "Next 4 Hr",
+          bias: "BULLISH",
+          summary: `Holding ${fmtPrice(fallbackSupport.price)} targets ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}) next.`,
+        },
+        {
+          horizon: "DAY",
+          label: "Full Day",
+          bias: "BULLISH",
+          summary: `Above ${fmtPrice(metrics.pdc)} (PDC) keeps the day bullish toward ${fmtPrice(Math.max(metrics.pdh, macroTargetUp.price))}.`,
+        },
+      ];
+    }
+
+    if (direction === "BEARISH") {
+      return [
+        {
+          horizon: "1H",
+          label: "Next 1 Hr",
+          bias: "BEARISH",
+          summary: `Expecting a retrace to ${fmtPrice(fallbackResist.price)} (${fallbackResist.shortName}), then continue bearish toward ${fmtPrice(nearTargetDown.price)}.`,
+        },
+        {
+          horizon: "4H",
+          label: "Next 4 Hr",
+          bias: "BEARISH",
+          summary: `Staying capped under ${fmtPrice(fallbackResist.price)} targets ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}) next.`,
+        },
+        {
+          horizon: "DAY",
+          label: "Full Day",
+          bias: "BEARISH",
+          summary: `Below ${fmtPrice(metrics.pdc)} (PDC) keeps the day bearish toward ${fmtPrice(Math.min(metrics.pdl, macroTargetDown.price))}.`,
+        },
+      ];
+    }
+
+    const lowEdge = Math.min(metrics.onl, fallbackSupport.price);
+    const highEdge = Math.max(metrics.onh, fallbackResist.price);
+    return [
+      {
+        horizon: "1H",
+        label: "Next 1 Hr",
+        bias: "NEUTRAL",
+        summary: `Expecting two-way chop between ${fmtPrice(lowEdge)} and ${fmtPrice(highEdge)} until a break holds.`,
+      },
+      {
+        horizon: "4H",
+        label: "Next 4 Hr",
+        bias: "NEUTRAL",
+        summary: `Range-bound near ${fmtPrice(metrics.sessionVwap)} (VWAP); wait for a sweep of ${fmtPrice(lowEdge)} or ${fmtPrice(highEdge)}.`,
+      },
+      {
+        horizon: "DAY",
+        label: "Full Day",
+        bias: "NEUTRAL",
+        summary: `Balanced inside ${fmtPrice(metrics.pdl)}–${fmtPrice(metrics.pdh)}; fade range edges or stay flat.`,
+      },
+    ];
+  })();
+
   return {
     direction,
     verdictTitle,
     verdictSubtitle,
     scoreSummary,
     riskStatus,
+    horizonPredictions,
     gameplan,
     quantFacts,
-    bounceAreas: deduplicateAreas(bouncePool, 4).slice(0, 5),
-    targetAreas: deduplicateAreas(targetPool, 4).slice(0, 5)
+    bounceAreas: dedupedBounces,
+    targetAreas: dedupedTargets
   };
 }

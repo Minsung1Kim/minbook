@@ -392,13 +392,15 @@ export function checkTier1NewsBlackout(
 }
 
 export interface UpcomingSessionNewsResult {
-  imminent: EconomicEvent[];
+  imminent: EconomicEvent[]; // RED / HIGH impact events only (used for Risk Gate vetoes)
+  imminentMedium: EconomicEvent[]; // ORANGE / MEDIUM impact events (informational only, not a trade veto)
   laterToday: EconomicEvent[];
 }
 
 /**
  * Evaluates which high/medium impact USD events are actually imminent or still ahead
  * relative to `nowDate` (avoids stale 09:45/10:00 AM open alerts during afternoon or Asia sessions).
+ * Orange/Medium events are separated into `imminentMedium` so they never falsely veto setups.
  */
 export function getUpcomingSessionNews(
   events: EconomicEvent[],
@@ -407,24 +409,23 @@ export function getUpcomingSessionNews(
   imminentMinutesAhead: number = 75
 ): UpcomingSessionNewsResult {
   if (!events || events.length === 0) {
-    return { imminent: [], laterToday: [] };
+    return { imminent: [], imminentMedium: [], laterToday: [] };
   }
 
   const nowMs = nowDate.getTime();
   const etNow = getETParts(nowDate);
   const effectiveDate = targetTradeDate || etNow.dateStr;
   const imminent: EconomicEvent[] = [];
+  const imminentMedium: EconomicEvent[] = [];
   const laterToday: EconomicEvent[] = [];
 
   for (const ev of events) {
     if (ev.country && ev.country !== "USD") continue;
-    const isHighOrMed =
-      ev.folderColor === "RED" ||
-      ev.folderColor === "ORANGE" ||
-      ev.impact === "HIGH" ||
-      ev.impact === "MEDIUM" ||
-      ev.alert;
-    if (!isHighOrMed) continue;
+    const isRedHigh =
+      ev.folderColor === "RED" || ev.impact === "HIGH" || isTier1Event(ev.event);
+    const isOrangeMed =
+      !isRedHigh && (ev.folderColor === "ORANGE" || ev.impact === "MEDIUM");
+    if (!isRedHigh && !isOrangeMed) continue;
 
     const evDateStr = ev.date || effectiveDate;
     if (evDateStr !== etNow.dateStr && evDateStr !== targetTradeDate) continue;
@@ -439,12 +440,16 @@ export function getUpcomingSessionNews(
     if (diffMins < -10 || (ev.actual && diffMins < 0)) continue;
 
     if (diffMins <= imminentMinutesAhead) {
-      imminent.push(ev);
-    } else if (evDateStr === etNow.dateStr) {
+      if (isRedHigh) {
+        imminent.push(ev);
+      } else {
+        imminentMedium.push(ev);
+      }
+    } else if (evDateStr === etNow.dateStr && isRedHigh) {
       laterToday.push(ev);
     }
   }
 
-  return { imminent, laterToday };
+  return { imminent, imminentMedium, laterToday };
 }
 

@@ -200,20 +200,33 @@ export async function POST(request: NextRequest) {
               direction: {
                 type: "string",
                 enum: ["LONG", "SHORT", "NONE"],
-                description: "Trade setup direction shown by position tool, order panel, or bias.",
+                description: "Trade setup direction shown by position tool, sketched path, order panel, or bias.",
+              },
+              orderType: {
+                type: "string",
+                enum: ["LIMIT", "MARKET", "STOP", "UNKNOWN"],
+                description: "Order type selected (e.g. LIMIT if Limit tab is active or waiting on a pullback zone).",
               },
               positionStatus: {
                 type: "string",
                 enum: ["OPEN", "PLANNED_FLAT", "UNKNOWN"],
-                description: "PLANNED_FLAT if Open P&L is $0.00 or setup is a drawn box; OPEN if actively filled.",
+                description: "PLANNED_FLAT if Open P&L is $0.00 or setup is a drawn box/pending limit; OPEN if actively filled.",
               },
               entryPrice: {
                 type: "number",
-                description: "Planned or actual entry price visible on chart.",
+                description: "Planned limit entry price or actual fill price visible on chart.",
+              },
+              entryZoneLow: {
+                type: "number",
+                description: "Lower price bound of a drawn supply/demand entry zone box if present.",
+              },
+              entryZoneHigh: {
+                type: "number",
+                description: "Upper price bound of a drawn supply/demand entry zone box if present.",
               },
               stopLossPrice: {
                 type: "number",
-                description: "Stop loss / invalidation price on chart.",
+                description: "Stop loss / invalidation price on chart (omit if none drawn so MinBook computes a structural bracket stop).",
               },
               targetPrice: {
                 type: "number",
@@ -233,7 +246,16 @@ export async function POST(request: NextRequest) {
               },
               newsCountdownMinutes: {
                 type: "number",
-                description: "Minutes remaining until an upcoming news release shown on screenshot (e.g. 22).",
+                description: "Minutes remaining until an upcoming news release shown on screenshot (e.g. 7 or 22).",
+              },
+              newsImpact: {
+                type: "string",
+                enum: ["RED_HIGH", "ORANGE_MEDIUM", "YELLOW_LOW", "UNKNOWN"],
+                description: "Folder color/tier: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM; ORANGE_MEDIUM/YELLOW_LOW for New Home Sales, housing, PMI, inventories.",
+              },
+              newsEventName: {
+                type: "string",
+                description: "Name of upcoming news event visible in footer/calendar (e.g. New Home Sales).",
               },
               candleOpen: { type: "number" },
               candleHigh: { type: "number" },

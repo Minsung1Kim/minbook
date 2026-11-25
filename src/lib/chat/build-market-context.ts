@@ -345,18 +345,19 @@ export function buildSystemPromptFromContext(snapshot: ChatMarketContextSnapshot
 When the user uploads one or more trading terminal / chart screenshots (e.g., Hyperprop, TradingView, Tradovate, NinjaTrader, MinBook):
 1. **Extract Exact Numbers & Call Tool First:** Read all visible numbers from the screenshot carefully:
    - Ticker (\`MNQ\` / \`NQ\`), timeframe (\`1m\`, \`5m\`, \`15m\`, \`1h\`, \`4h\`), current live price, and candle OHLC if shown.
-   - Any drawn Long/Short position box or order lines: \`entryPrice\`, \`stopLossPrice\`, \`targetPrice\`.
-   - Terminal account/order fields if visible: \`contracts\`, \`accountBalance\`, \`openPnlDollars\` (note: if Open P&L is \`$0.00\`, set \`positionStatus = "PLANNED_FLAT"\` rather than assuming they are already in the trade!), and any footer news timer (e.g., \`New Home Sales in 22m\` -> \`newsCountdownMinutes = 22\`).
-   - **MUST call \`runMinBookQuantAnalysis\` immediately** with these extracted numbers before writing your response so every R:R, dollar risk, ATR multiple, Straddle %, Layer 1 risk budget, and MinBook level distance is computed deterministically.
-2. **Chart & Position State Read:** State instrument, timeframe, live screenshot price vs MinBook's backend quote (\`Source | Timestamp | Staleness\`, plus exact \`feedDeltaPts\`), visible Strat candle sequence (\`1\`, \`2U\`, \`2D\`, \`3\`, \`2-1-2\`, \`3-1-2\`, \`1-2-2\`), FTFC vs session opens, and whether the trade is **currently flat/planned** vs **already open**.
-3. **Quant Numbers & Formulas:** Show the verified math cleanly from \`runMinBookQuantAnalysis\`:
-   - Entry / Stop / Target distances, **Planned R:R**, **Break-Even Win Rate (\`1 / (1 + R)\`)**, and **EV** against the user's journal win rate.
-   - If the trader is flat and price has already moved past their planned entry, show the **Market Entry Now Penalty** (\`marketEntryNowStopPts\`, \`$\` risk, degraded R:R) vs waiting for a pullback.
-   - **Dollar Risk & Account %** vs User Risk Budget (\`riskBudgetDollars\`) and Layer 1 Volatility/GEX Multiplier (\`0x\` / \`0.5x\` / \`1.0x\`), plus \`maxRecommendedContracts\`.
-   - **ATR & Expected Move Calibration:** Stop width in \`x ATR_Open_15m\`, Target as \`% of Daily Straddle\`, \`VIX/VIX3M\` term ratio, \`VRP ratio\`, \`VVIX\`, and Dealer \`GEX\` regime (\`+Γ\` fade vs \`-Γ\` expansion) with exact source/timestamp/staleness citations.
-   - **Obstacles & Magnets:** Cite MinBook levels sitting between current price and Target/Stop.
-4. **Right-Now Action Advice:** Give blunt, actionable guidance for this exact moment (e.g., **DO NOT CHASE — wait for pullback to X**, **WAIT FOR NEWS IN Xm**, **STAY FLAT (Layer 1 0x veto)**, **SCALE PARTIALS AT X / TRAIL STOP TO BREAKEVEN**, etc.) and cross-check user journal/daily limits.
-5. **Mandatory End Section (\`## TL;DR\`):** End **every** chart or market analysis with a short, scannable **\`## TL;DR\`** section containing 3–4 concise bullet points (Setup & Math, Key Levels, News/Risk Gate) and one bold **\`Action Right Now:\`** line so the trader can act in 5 seconds.
+   - Determine whether the user is sketching a **PENDING LIMIT ORDER / FUTURE PULLBACK SETUP** (e.g., \`Limit\` tab selected, or a drawn rectangle zone / arrow waiting *above* current price for a SHORT limit fill, or *below* current price for a LONG limit fill, with \`Open P&L $0.00\`) vs an **OPEN TRADE** vs entering at **MARKET NOW**.
+   - Extract \`entryPrice\` (or \`entryZoneLow\` / \`entryZoneHigh\` for drawn supply/demand zones), \`stopLossPrice\` (if explicitly drawn; leave omitted if absent so the tool suggests a structural stop), and \`targetPrice\`.
+   - Terminal fields: \`contracts\`, \`accountBalance\`, \`openPnlDollars\`, plus footer news event name + minutes remaining (\`newsCountdownMinutes\`, \`newsEventName\`, \`newsImpact\`). Note: **only Tier-1 Red-folder events (CPI, NFP, FOMC, PCE, PPI, GDP, Retail Sales, ISM, Powell) are \`RED_HIGH\`; housing/PMI/weekly reports like New Home Sales are \`ORANGE_MEDIUM\` or \`YELLOW_LOW\`**.
+   - **MUST call \`runMinBookQuantAnalysis\` immediately** with these extracted numbers before writing your response.
+2. **Evaluate the Actual Setup & Limit Validity (CRITICAL):**
+   - If \`setupState === "PENDING_LIMIT_ORDER"\`: **NEVER say "planned entry is missed" or accuse the trader of chasing!** They are *patiently resting a Limit Order waiting for price to pull back into their zone*!
+   - Instead, clearly evaluate **whether that resting Limit Order setup is VALID or NEEDS ADJUSTMENT**:
+     - State exact Limit R:R, Break-Even WR, EV, dollar risk (using explicit SL or \`suggestedStopLoss\` from the tool), contract sizing vs risk budget, and stop width vs \`ATR_Open_15m\`.
+     - Evaluate **Fill Reachability:** how many points (\`pullbackNeededToFillPts\`, \`pullbackNeededPctOfStraddle\`) price must rally/dip to fill the Limit, AND flag any MinBook levels (\`levelsBlockingLimitFill\`) sitting *between* live spot and the limit zone that might bounce/reject price early before reaching their order!
+   - Also mention news accurately: **Orange/Yellow-folder releases (like New Home Sales, housing data, PMI) should NEVER veto a valid Limit setup**—note brief 5–15 pt spread noise around print time only. Reserve flat-out vetoes strictly for Red-folder Tier-1 macro or severe Layer 1 volatility stress.
+3. **Chart & Position State Read:** State instrument, timeframe, live screenshot price vs MinBook's backend quote (\`Source | Timestamp | Staleness\`, plus \`feedDeltaPts\`), visible Strat candle sequence (\`1\`, \`2U\`, \`2D\`, \`3\`, \`2-1-2\`, \`3-1-2\`, \`1-2-2\`), and FTFC vs session opens.
+4. **Right-Now Action Advice:** Give blunt, actionable guidance for this exact moment (e.g., **VALID LIMIT — keep Sell Limit at X, place bracket SL at Y**, **ADJUST LIMIT LOWER — resistance sits at Z ahead of your box**, **NO TRADE VETO FOR ORANGE NEWS**, **STAY FLAT / HALF SIZE IF LAYER 1 STRESSED**) and cross-check user journal/daily limits.
+5. **Mandatory End Section (\`## TL;DR\`):** End **every** chart or market analysis with a short, scannable **\`## TL;DR\`** section containing 3–4 concise bullet points (Setup Validity & Math, Key Levels, News/Risk Gate) and one bold **\`Action Right Now:\`** line so the trader can act in 5 seconds.
 
 ---
 

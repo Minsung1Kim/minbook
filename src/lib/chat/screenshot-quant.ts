@@ -1,18 +1,24 @@
 import { ChatMarketContextSnapshot } from "@/types/chat";
+import { isTier1Event } from "@/lib/market/economicCalendar";
 
 export interface ScreenshotQuantInput {
   instrument?: "NQ" | "MNQ";
   timeframe?: string;
   screenshotCurrentPrice: number;
   direction?: "LONG" | "SHORT" | "NONE";
+  orderType?: "LIMIT" | "MARKET" | "STOP" | "UNKNOWN";
   positionStatus?: "OPEN" | "PLANNED_FLAT" | "UNKNOWN";
   entryPrice?: number;
+  entryZoneLow?: number;
+  entryZoneHigh?: number;
   stopLossPrice?: number;
   targetPrice?: number;
   contracts?: number;
   accountBalance?: number;
   openPnlDollars?: number;
   newsCountdownMinutes?: number;
+  newsImpact?: "RED_HIGH" | "ORANGE_MEDIUM" | "YELLOW_LOW" | "UNKNOWN";
+  newsEventName?: string;
   candleOpen?: number;
   candleHigh?: number;
   candleLow?: number;
@@ -30,6 +36,19 @@ export interface AnchoredLevelDistance {
   staleness: string;
 }
 
+export type SetupState =
+  | "OPEN_POSITION"
+  | "PENDING_LIMIT_ORDER"
+  | "MARKET_ENTRY_NOW"
+  | "ANALYSIS_ONLY";
+
+export type LimitSetupVerdict =
+  | "VALID"
+  | "VALID_WITH_ADJUSTMENTS"
+  | "STRETCHED_LOW_FILL_ODDS"
+  | "INVALID"
+  | "NOT_APPLICABLE";
+
 export interface ScreenshotQuantResult {
   instrument: "NQ" | "MNQ";
   timeframe: string;
@@ -43,11 +62,20 @@ export interface ScreenshotQuantResult {
   quoteTimestamp: string;
   quoteStaleness: string;
 
-  // Position & R:R math
+  // Position / Order Classification
   direction: "LONG" | "SHORT" | "NONE";
+  orderType: "LIMIT" | "MARKET" | "STOP" | "UNKNOWN";
   positionStatus: "OPEN" | "PLANNED_FLAT" | "UNKNOWN";
+  setupState: SetupState;
+  limitSetupVerdict: LimitSetupVerdict;
+  limitSetupReasons: string[];
+
+  // Entry, Zone, Stop & Target Math
   entryPrice: number | null;
+  entryZoneLow: number | null;
+  entryZoneHigh: number | null;
   stopLossPrice: number | null;
+  stopLossSource: "CHART_EXPLICIT" | "SUGGESTED_STRUCTURAL" | "NONE";
   targetPrice: number | null;
   stopDistancePts: number | null;
   targetDistancePts: number | null;
@@ -61,8 +89,10 @@ export interface ScreenshotQuantResult {
   winRateAssumedPct: number;
   winRateSource: "JOURNAL" | "BASELINE_45PCT";
 
-  // Live current-second execution check
-  missedFromPlannedEntryPts: number | null;
+  // Limit Pullback / Fill Reachability & Market Alternative Math
+  pullbackNeededToFillPts: number | null;
+  pullbackNeededPctOfStraddle: number | null;
+  levelsBlockingLimitFill: AnchoredLevelDistance[];
   marketEntryNowStopPts: number | null;
   marketEntryNowTargetPts: number | null;
   marketEntryNowRewardToRisk: number | null;
@@ -95,6 +125,11 @@ export interface ScreenshotQuantResult {
   netGammaRegime: string;
   gammaFlipNq: number | null;
 
+  // News Severity Classification
+  newsSeverity: "RED_HIGH" | "ORANGE_MEDIUM" | "YELLOW_LOW" | "NONE";
+  newsShouldVetoTrade: boolean;
+  newsGuidance: string | null;
+
   // Candle structure read from OHLC if present
   candleStats: {
     rangePts: number;
@@ -109,7 +144,7 @@ export interface ScreenshotQuantResult {
   nearestLevelsAbove: AnchoredLevelDistance[];
   nearestLevelsBelow: AnchoredLevelDistance[];
   obstaclesBeforeTarget: AnchoredLevelDistance[];
-  protectingLevelsBetweenPriceAndStop: AnchoredLevelDistance[];
+  protectingLevelsBetweenEntryAndStop: AnchoredLevelDistance[];
 
   // Synthesized Verdict & Warnings
   actionStance: string;
@@ -119,6 +154,29 @@ export interface ScreenshotQuantResult {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function classifyNewsSeverity(
+  input: ScreenshotQuantInput
+): "RED_HIGH" | "ORANGE_MEDIUM" | "YELLOW_LOW" | "NONE" {
+  if (typeof input.newsCountdownMinutes !== "number") return "NONE";
+  if (input.newsImpact === "RED_HIGH") return "RED_HIGH";
+  if (input.newsEventName && isTier1Event(input.newsEventName)) return "RED_HIGH";
+  if (input.newsImpact === "YELLOW_LOW") return "YELLOW_LOW";
+  if (input.newsImpact === "ORANGE_MEDIUM") return "ORANGE_MEDIUM";
+  // Known medium/low US housing & weekly data should never trigger Red vetoes
+  const evLower = (input.newsEventName || "").toLowerCase();
+  if (
+    evLower.includes("home sales") ||
+    evLower.includes("housing") ||
+    evLower.includes("mortgage") ||
+    evLower.includes("building permits") ||
+    evLower.includes("inventories") ||
+    evLower.includes("pmi")
+  ) {
+    return "ORANGE_MEDIUM";
+  }
+  return "ORANGE_MEDIUM";
 }
 
 export function computeScreenshotQuantMetrics(
@@ -140,22 +198,80 @@ export function computeScreenshotQuantMetrics(
   const px = input.screenshotCurrentPrice;
   const direction = input.direction || "NONE";
   const positionStatus = input.positionStatus || "UNKNOWN";
-  const entry =
+  const orderType = input.orderType || "UNKNOWN";
+
+  const zLow =
+    typeof input.entryZoneLow === "number" && Number.isFinite(input.entryZoneLow)
+      ? input.entryZoneLow
+      : null;
+  const zHigh =
+    typeof input.entryZoneHigh === "number" && Number.isFinite(input.entryZoneHigh)
+      ? input.entryZoneHigh
+      : null;
+  const zoneLow = zLow !== null && zHigh !== null ? Math.min(zLow, zHigh) : zLow;
+  const zoneHigh = zLow !== null && zHigh !== null ? Math.max(zLow, zHigh) : zHigh;
+
+  const explicitEntry =
     typeof input.entryPrice === "number" && Number.isFinite(input.entryPrice)
       ? input.entryPrice
-      : null;
-  const stop =
-    typeof input.stopLossPrice === "number" && Number.isFinite(input.stopLossPrice)
-      ? input.stopLossPrice
-      : null;
+      : zoneLow !== null && zoneHigh !== null
+      ? round2((zoneLow + zoneHigh) / 2)
+      : zoneLow ?? zoneHigh;
+
   const target =
     typeof input.targetPrice === "number" && Number.isFinite(input.targetPrice)
       ? input.targetPrice
       : null;
 
-  const effectiveEntry = entry ?? px;
-  const stopDistancePts = stop !== null ? round2(Math.abs(effectiveEntry - stop)) : null;
-  const targetDistancePts = target !== null ? round2(Math.abs(target - effectiveEntry)) : null;
+  const atrOpen15m = snapshot.regime.atrOpen15m || 25;
+  const expectedMoveStraddle = snapshot.regime.expectedMoveStraddle || 80;
+  const expectedMove1SD = snapshot.regime.expectedMove1SD || 120;
+
+  // Determine whether entry is a resting Pending Limit waiting to be filled vs an Open Trade vs Market Entry
+  const isRestingShortLimit =
+    direction === "SHORT" && explicitEntry !== null && explicitEntry >= px + 3;
+  const isRestingLongLimit =
+    direction === "LONG" && explicitEntry !== null && explicitEntry <= px - 3;
+
+  let setupState: SetupState = "ANALYSIS_ONLY";
+  if (positionStatus === "OPEN") {
+    setupState = "OPEN_POSITION";
+  } else if (
+    orderType !== "MARKET" &&
+    (isRestingShortLimit || isRestingLongLimit)
+  ) {
+    setupState = "PENDING_LIMIT_ORDER";
+  } else if (direction !== "NONE" && explicitEntry !== null) {
+    setupState = "MARKET_ENTRY_NOW";
+  }
+
+  const effectiveEntry = explicitEntry ?? px;
+
+  // Resolve Stop Loss: explicit or suggested structural bracket stop outside zone/entry
+  let stopLossPrice: number | null =
+    typeof input.stopLossPrice === "number" && Number.isFinite(input.stopLossPrice)
+      ? input.stopLossPrice
+      : null;
+  let stopLossSource: ScreenshotQuantResult["stopLossSource"] =
+    stopLossPrice !== null ? "CHART_EXPLICIT" : "NONE";
+
+  if (stopLossPrice === null && direction !== "NONE") {
+    const bufferPts = Math.max(15, Math.round(atrOpen15m * 0.75 * 4) / 4);
+    if (direction === "SHORT") {
+      const anchorHigh = zoneHigh ?? effectiveEntry;
+      stopLossPrice = round2(anchorHigh + bufferPts);
+      stopLossSource = "SUGGESTED_STRUCTURAL";
+    } else if (direction === "LONG") {
+      const anchorLow = zoneLow ?? effectiveEntry;
+      stopLossPrice = round2(anchorLow - bufferPts);
+      stopLossSource = "SUGGESTED_STRUCTURAL";
+    }
+  }
+
+  const stopDistancePts =
+    stopLossPrice !== null ? round2(Math.abs(effectiveEntry - stopLossPrice)) : null;
+  const targetDistancePts =
+    target !== null ? round2(Math.abs(target - effectiveEntry)) : null;
   const plannedRewardToRisk =
     stopDistancePts && targetDistancePts && stopDistancePts > 0
       ? round2(targetDistancePts / stopDistancePts)
@@ -191,23 +307,25 @@ export function computeScreenshotQuantMetrics(
       ? round2(expectedValueR * dollarRiskPlanned)
       : null;
 
-  // Live current-price delta vs planned entry & market-entry recalculation
-  let missedFromPlannedEntryPts: number | null = null;
-  if (entry !== null && direction !== "NONE") {
-    missedFromPlannedEntryPts = round2(
-      direction === "SHORT" ? entry - px : px - entry
-    );
-  }
+  // Distance needed for pending limit fill vs market-at-current alternative
+  const pullbackNeededToFillPts =
+    setupState === "PENDING_LIMIT_ORDER" && explicitEntry !== null
+      ? round2(Math.abs(explicitEntry - px))
+      : null;
+  const pullbackNeededPctOfStraddle =
+    pullbackNeededToFillPts !== null
+      ? round2((pullbackNeededToFillPts / expectedMoveStraddle) * 100)
+      : null;
 
   let marketEntryNowStopPts: number | null = null;
   let marketEntryNowTargetPts: number | null = null;
-  if (stop !== null) {
+  if (stopLossPrice !== null) {
     marketEntryNowStopPts = round2(
       direction === "SHORT"
-        ? stop - px
+        ? stopLossPrice - px
         : direction === "LONG"
-        ? px - stop
-        : Math.abs(stop - px)
+        ? px - stopLossPrice
+        : Math.abs(stopLossPrice - px)
     );
   }
   if (target !== null) {
@@ -234,9 +352,13 @@ export function computeScreenshotQuantMetrics(
   let openTradeUnrealizedPts: number | null = null;
   let openTradeUnrealizedDollars: number | null = null;
   let openTradeCurrentR: number | null = null;
-  if (positionStatus === "OPEN" && entry !== null && direction !== "NONE") {
-    openTradeUnrealizedPts = round2(direction === "SHORT" ? entry - px : px - entry);
-    openTradeUnrealizedDollars = round2(openTradeUnrealizedPts * pointValueDollars * contracts);
+  if (setupState === "OPEN_POSITION" && explicitEntry !== null && direction !== "NONE") {
+    openTradeUnrealizedPts = round2(
+      direction === "SHORT" ? explicitEntry - px : px - explicitEntry
+    );
+    openTradeUnrealizedDollars = round2(
+      openTradeUnrealizedPts * pointValueDollars * contracts
+    );
     if (stopDistancePts && stopDistancePts > 0) {
       openTradeCurrentR = round2(openTradeUnrealizedPts / stopDistancePts);
     }
@@ -248,37 +370,23 @@ export function computeScreenshotQuantMetrics(
   const layer1RiskMultiplier = snapshot.regime.riskMultiplier;
   const regimeAdjustedRiskBudgetDollars = round2(userRiskBudgetDollars * layer1RiskMultiplier);
 
-  const activeRiskPts =
-    positionStatus === "PLANNED_FLAT" &&
-    missedFromPlannedEntryPts !== null &&
-    missedFromPlannedEntryPts > 0 &&
-    marketEntryNowStopPts !== null &&
-    marketEntryNowStopPts > 0
-      ? marketEntryNowStopPts
-      : stopDistancePts;
-
-  const activeDollarRisk =
-    positionStatus === "PLANNED_FLAT" &&
-    missedFromPlannedEntryPts !== null &&
-    missedFromPlannedEntryPts > 0 &&
-    marketEntryNowDollarRisk !== null
-      ? marketEntryNowDollarRisk
-      : dollarRiskPlanned;
+  const relevantStopPts = stopDistancePts;
+  const relevantDollarRisk = dollarRiskPlanned;
 
   const maxRecommendedContracts =
-    activeRiskPts && activeRiskPts > 0
-      ? Math.max(0, Math.floor(regimeAdjustedRiskBudgetDollars / (activeRiskPts * pointValueDollars)))
+    relevantStopPts && relevantStopPts > 0
+      ? Math.max(
+          0,
+          Math.floor(regimeAdjustedRiskBudgetDollars / (relevantStopPts * pointValueDollars))
+        )
       : null;
   const exceedsUserRiskBudget =
-    activeDollarRisk !== null ? activeDollarRisk > userRiskBudgetDollars : false;
+    relevantDollarRisk !== null ? relevantDollarRisk > userRiskBudgetDollars : false;
   const exceedsRegimeAdjustedBudget =
-    activeDollarRisk !== null ? activeDollarRisk > regimeAdjustedRiskBudgetDollars : false;
+    relevantDollarRisk !== null ? relevantDollarRisk > regimeAdjustedRiskBudgetDollars : false;
 
-  // Volatility, ATR & Expected Move
-  const atrOpen15m = snapshot.regime.atrOpen15m || 25;
-  const expectedMoveStraddle = snapshot.regime.expectedMoveStraddle || 80;
-  const expectedMove1SD = snapshot.regime.expectedMove1SD || 120;
-  const stopInAtr15m = stopDistancePts !== null ? round2(stopDistancePts / atrOpen15m) : null;
+  const stopInAtr15m =
+    stopDistancePts !== null ? round2(stopDistancePts / atrOpen15m) : null;
   const stopSizingAssessment: ScreenshotQuantResult["stopSizingAssessment"] =
     stopInAtr15m === null
       ? "UNSPECIFIED"
@@ -309,9 +417,9 @@ export function computeScreenshotQuantMetrics(
     const closeInRangePct = round2(((input.candleClose - input.candleLow) / rangePts) * 100);
     let biasNote = "Balanced bar";
     if (lowerWickPts > bodyPts * 1.3 && closeInRangePct >= 60) {
-      biasNote = "Strong lower-wick buyer rejection (hammer/absorption)";
+      biasNote = "Lower-wick buying response inside bar";
     } else if (upperWickPts > bodyPts * 1.3 && closeInRangePct <= 40) {
-      biasNote = "Strong upper-wick seller rejection (shooter/supply)";
+      biasNote = "Upper-wick selling rejection inside bar";
     } else if (closeInRangePct >= 75) {
       biasNote = "Bullish close near high";
     } else if (closeInRangePct <= 25) {
@@ -327,7 +435,7 @@ export function computeScreenshotQuantMetrics(
     };
   }
 
-  // Re-anchor all MinBook structural levels relative to screenshot's live price
+  // Re-anchor all MinBook structural levels relative to screenshot live price
   const anchoredLevels: AnchoredLevelDistance[] = snapshot.keyLevels.map((l) => ({
     shortName: l.shortName,
     name: l.name,
@@ -349,96 +457,183 @@ export function computeScreenshotQuantMetrics(
     .sort((a, b) => b.distanceFromScreenshotPts - a.distanceFromScreenshotPts)
     .slice(0, 5);
 
+  const pathAnchor = explicitEntry ?? px;
   const obstaclesBeforeTarget =
     target !== null && direction !== "NONE"
       ? anchoredLevels
           .filter((l) =>
             direction === "SHORT"
-              ? l.price < px - 3 && l.price > target + 3
-              : l.price > px + 3 && l.price < target - 3
+              ? l.price < pathAnchor - 3 && l.price > target + 3
+              : l.price > pathAnchor + 3 && l.price < target - 3
           )
-          .sort((a, b) =>
-            direction === "SHORT" ? b.price - a.price : a.price - b.price
-          )
+          .sort((a, b) => (direction === "SHORT" ? b.price - a.price : a.price - b.price))
       : [];
 
-  const protectingLevelsBetweenPriceAndStop =
-    stop !== null && direction !== "NONE"
+  const protectingLevelsBetweenEntryAndStop =
+    stopLossPrice !== null && direction !== "NONE"
       ? anchoredLevels
           .filter((l) =>
             direction === "SHORT"
-              ? l.price > px + 2 && l.price < stop - 2
-              : l.price < px - 2 && l.price > stop + 2
+              ? l.price > effectiveEntry + 2 && l.price < stopLossPrice - 2
+              : l.price < effectiveEntry - 2 && l.price > stopLossPrice + 2
           )
-          .sort((a, b) =>
-            direction === "SHORT" ? a.price - b.price : b.price - a.price
-          )
+          .sort((a, b) => (direction === "SHORT" ? a.price - b.price : b.price - a.price))
       : [];
 
-  // Warnings & Verdict Synthesis
+  // Levels between live price and pending limit entry that could block fill
+  const levelsBlockingLimitFill =
+    setupState === "PENDING_LIMIT_ORDER" && explicitEntry !== null
+      ? anchoredLevels
+          .filter((l) =>
+            direction === "SHORT"
+              ? l.price > px + 5 && l.price < (zoneLow ?? explicitEntry) - 3
+              : l.price < px - 5 && l.price > (zoneHigh ?? explicitEntry) + 3
+          )
+          .sort((a, b) => (direction === "SHORT" ? a.price - b.price : b.price - a.price))
+      : [];
+
+  // News classification (Red = real veto/flatten threat; Orange/Yellow = noise note only!)
+  const newsSeverity = classifyNewsSeverity(input);
+  const newsShouldVetoTrade =
+    newsSeverity === "RED_HIGH" &&
+    typeof input.newsCountdownMinutes === "number" &&
+    input.newsCountdownMinutes <= 20;
+
+  let newsGuidance: string | null = null;
+  if (typeof input.newsCountdownMinutes === "number") {
+    const evLabel = input.newsEventName || "scheduled news";
+    if (newsSeverity === "RED_HIGH") {
+      newsGuidance = `HIGH-IMPACT RED-FOLDER (${evLabel} in ${input.newsCountdownMinutes}m): High spike/slippage risk — pause new entries inside ±15m and protect open positions.`;
+    } else {
+      newsGuidance = `ORANGE/YELLOW FOLDER (${evLabel} in ${input.newsCountdownMinutes}m): Medium/low-impact release only — NOT strong enough to veto a valid Limit setup; just expect brief 5–15 pt spread noise at print.`;
+    }
+  }
+
+  // Evaluate Pending Limit Setup Validity
+  let limitSetupVerdict: LimitSetupVerdict = "NOT_APPLICABLE";
+  const limitSetupReasons: string[] = [];
+  if (setupState === "PENDING_LIMIT_ORDER" && explicitEntry !== null) {
+    const targetWrongSide =
+      target !== null &&
+      ((direction === "SHORT" && target >= effectiveEntry) ||
+        (direction === "LONG" && target <= effectiveEntry));
+    const targetAlreadyBrokenBeforeFill =
+      target !== null &&
+      ((direction === "SHORT" && px <= target) || (direction === "LONG" && px >= target));
+
+    if (targetWrongSide) {
+      limitSetupVerdict = "INVALID";
+      limitSetupReasons.push("Target lies on the wrong side of the planned limit entry.");
+    } else if (targetAlreadyBrokenBeforeFill) {
+      limitSetupVerdict = "INVALID";
+      limitSetupReasons.push(
+        `Target (${target?.toFixed(2)}) has already been reached before the limit fill; cancel stale limit order.`
+      );
+    } else if (exceedsUserRiskBudget && relevantDollarRisk !== null) {
+      limitSetupVerdict = "VALID_WITH_ADJUSTMENTS";
+      limitSetupReasons.push(
+        `Dollar risk ($${relevantDollarRisk.toFixed(2)}) exceeds base risk budget ($${userRiskBudgetDollars}); adjust SL tighter or lower size.`
+      );
+    } else if (
+      plannedRewardToRisk !== null &&
+      plannedRewardToRisk < 1.3
+    ) {
+      limitSetupVerdict = "INVALID";
+      limitSetupReasons.push(
+        `Limit R:R is only ${plannedRewardToRisk.toFixed(2)}R (< 1.3R minimum threshold).`
+      );
+    } else if (
+      pullbackNeededPctOfStraddle !== null &&
+      pullbackNeededPctOfStraddle > 85
+    ) {
+      limitSetupVerdict = "STRETCHED_LOW_FILL_ODDS";
+      limitSetupReasons.push(
+        `Entry sits ${pullbackNeededToFillPts?.toFixed(1)} pts (${pullbackNeededPctOfStraddle.toFixed(0)}% of daily Straddle) away — valid structural zone, but lower probability of filling if momentum stays heavy.`
+      );
+    } else {
+      limitSetupVerdict =
+        stopLossSource === "SUGGESTED_STRUCTURAL" || layer1RiskMultiplier === 0.5
+          ? "VALID_WITH_ADJUSTMENTS"
+          : "VALID";
+    }
+
+    if (stopLossSource === "SUGGESTED_STRUCTURAL" && stopLossPrice !== null) {
+      limitSetupReasons.push(
+        `No bracket stop shown on chart — pair this limit with a structural invalidation stop near ${stopLossPrice.toFixed(2)} (${stopDistancePts?.toFixed(1)} pts = $${dollarRiskPlanned?.toFixed(2)}).`
+      );
+    }
+    if (levelsBlockingLimitFill.length > 0) {
+      limitSetupReasons.push(
+        `${levelsBlockingLimitFill.map((l) => `${l.shortName} (${l.price.toFixed(2)})`).slice(0, 2).join(", ")} sit between live spot (${px.toFixed(2)}) and your limit zone (${effectiveEntry.toFixed(2)}) — rallies could stall there before filling you.`
+      );
+    }
+    if (plannedRewardToRisk !== null && plannedRewardToRisk >= 1.5) {
+      limitSetupReasons.push(
+        `Limit math clears ${plannedRewardToRisk.toFixed(2)}R (${breakEvenWinRatePct?.toFixed(1)}% break-even WR, +${expectedValueR?.toFixed(2)}R EV at ${winRateAssumedPct.toFixed(0)}% WR).`
+      );
+    }
+  }
+
+  // Warnings & Quant Highlights
   const warnings: string[] = [];
   const quantHighlights: string[] = [];
 
   if (snapshot.quote.stalenessBadge === "DELAYED" || snapshot.quote.stalenessBadge === "STALE") {
     const feedDeltaPts = round2(px - snapshot.quote.price);
     warnings.push(
-      `MinBook quote is ${snapshot.quote.stalenessBadge} (${snapshot.quote.price.toFixed(2)}, delta vs screenshot ${feedDeltaPts >= 0 ? "+" : ""}${feedDeltaPts.toFixed(2)} pts); structural levels below were re-anchored to your live screenshot price ${px.toFixed(2)}.`
+      `MinBook quote is ${snapshot.quote.stalenessBadge} (${snapshot.quote.price.toFixed(2)}, delta vs screenshot ${feedDeltaPts >= 0 ? "+" : ""}${feedDeltaPts.toFixed(2)} pts); structural levels below are anchored to your live screenshot price ${px.toFixed(2)}.`
     );
   }
 
   if (layer1RiskMultiplier === 0) {
     warnings.push(
-      `LAYER 1 RISK VETO (0x SIZE): ${snapshot.regime.activeVetoes.join("; ") || snapshot.regime.biasVerdict}. Quant rules require staying flat until volatility stabilizes.`
+      `LAYER 1 RISK VETO (0x SIZE): ${snapshot.regime.activeVetoes.join("; ") || snapshot.regime.biasVerdict}. Volatility surface is stressed — either stand aside or demand ultra-A+ limit absorption at reduced size.`
     );
   } else if (layer1RiskMultiplier === 0.5) {
     warnings.push(
-      `LAYER 1 HALF-SIZE GATE (0.5x): Adjusted risk budget drops from $${userRiskBudgetDollars} to $${regimeAdjustedRiskBudgetDollars.toFixed(2)}; target cap ~1.8R unless runners trail cleanly.`
+      `LAYER 1 HALF-SIZE GATE (0.5x): Volatility regime reduces effective risk budget from $${userRiskBudgetDollars} to $${regimeAdjustedRiskBudgetDollars.toFixed(2)}; consider taking first partials around 1.8R.`
     );
   }
 
-  if (typeof input.newsCountdownMinutes === "number" && input.newsCountdownMinutes <= 30) {
-    warnings.push(
-      `IMMINENT MACRO NEWS IN ${input.newsCountdownMinutes}m: High-impact release window ahead — flatten, trim size, or lock stops to breakeven before the print.`
-    );
+  if (newsGuidance) {
+    if (newsShouldVetoTrade) {
+      warnings.push(newsGuidance);
+    } else {
+      quantHighlights.push(newsGuidance);
+    }
   }
 
-  if (
-    positionStatus === "PLANNED_FLAT" &&
-    missedFromPlannedEntryPts !== null &&
-    missedFromPlannedEntryPts > 15 &&
-    marketEntryNowStopPts !== null &&
-    marketEntryNowStopPts > 0
-  ) {
-    warnings.push(
-      `DO NOT CHASE AT MARKET: Price is already ${missedFromPlannedEntryPts.toFixed(2)} pts past your planned entry (${entry?.toFixed(2)}). Entering at ${px.toFixed(2)} expands your stop to ${marketEntryNowStopPts.toFixed(2)} pts ($${marketEntryNowDollarRisk?.toFixed(2)}) and drops R:R from ${plannedRewardToRisk ?? "?"}R down to ${marketEntryNowRewardToRisk ?? "?"}R.`
+  if (setupState === "PENDING_LIMIT_ORDER" && explicitEntry !== null) {
+    quantHighlights.push(
+      `Pending ${direction} Limit Zone (${zoneLow && zoneHigh ? `${zoneLow.toFixed(2)}–${zoneHigh.toFixed(2)}` : explicitEntry.toFixed(2)}) needs a ${pullbackNeededToFillPts?.toFixed(2)} pt (${pullbackNeededPctOfStraddle?.toFixed(0)}% Straddle) bounce to fill. Do not front-run at market (${px.toFixed(2)}).`
     );
   }
 
   if (stopSizingAssessment === "TOO_TIGHT_SWEEP_RISK" && stopDistancePts !== null) {
     warnings.push(
-      `STOP TOO TIGHT (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Below 0.5x 15m ATR (~${(atrOpen15m * 0.5).toFixed(1)} pts) risks normal opening noise sweeping you out.`
+      `STOP TOO TIGHT (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Below 0.5x 15m ATR (~${(atrOpen15m * 0.5).toFixed(1)} pts) risks normal wiggle tagging you.`
     );
   } else if (stopSizingAssessment === "WIDE" && stopDistancePts !== null) {
     warnings.push(
-      `WIDE STOP (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Wider than 2.5x 15m ATR; tighten invalidation to a closer structure level or reduce contracts.`
+      `WIDE STOP (${stopDistancePts.toFixed(2)} pts = ${stopInAtr15m}x ATR_Open_15m): Wider than 2.5x 15m ATR; tighten invalidation or verify size stays within $${userRiskBudgetDollars}.`
     );
   }
 
-  if (exceedsRegimeAdjustedBudget && activeDollarRisk !== null) {
+  if (exceedsUserRiskBudget && relevantDollarRisk !== null) {
     warnings.push(
-      `RISK BUDGET EXCEEDED: $${activeDollarRisk.toFixed(2)} risk > $${regimeAdjustedRiskBudgetDollars.toFixed(2)} Layer-1 adjusted budget ($${userRiskBudgetDollars} base × ${layer1RiskMultiplier}x).`
+      `RISK BUDGET EXCEEDED: $${relevantDollarRisk.toFixed(2)} risk > $${userRiskBudgetDollars} base budget.`
     );
   }
 
   if (targetPctOfDailyStraddle !== null && targetPctOfDailyStraddle > 120) {
     warnings.push(
-      `EXTENDED TARGET (${targetPctOfDailyStraddle.toFixed(0)}% of daily expected Straddle ${expectedMoveStraddle.toFixed(1)} pts): Take partial profits at nearer MinBook magnets along the path.`
+      `EXTENDED TARGET (${targetPctOfDailyStraddle.toFixed(0)}% of daily expected Straddle ${expectedMoveStraddle.toFixed(1)} pts): Take partial profits at nearer MinBook magnets before final TP.`
     );
   }
 
   if (plannedRewardToRisk !== null && breakEvenWinRatePct !== null) {
     quantHighlights.push(
-      `Planned R:R ${plannedRewardToRisk.toFixed(2)}R (${stopDistancePts?.toFixed(2)} pt SL / ${targetDistancePts?.toFixed(2)} pt TP) | Break-even win rate ${breakEvenWinRatePct.toFixed(1)}% | EV ${expectedValueR !== null && expectedValueR >= 0 ? "+" : ""}${expectedValueR?.toFixed(2)}R at ${winRateAssumedPct.toFixed(0)}% WR`
+      `Limit/Planned R:R ${plannedRewardToRisk.toFixed(2)}R (${stopDistancePts?.toFixed(2)} pt SL${stopLossSource === "SUGGESTED_STRUCTURAL" ? " suggested" : ""} / ${targetDistancePts?.toFixed(2)} pt TP) | Break-even WR ${breakEvenWinRatePct.toFixed(1)}% | EV ${expectedValueR !== null && expectedValueR >= 0 ? "+" : ""}${expectedValueR?.toFixed(2)}R at ${winRateAssumedPct.toFixed(0)}% WR`
     );
   }
   quantHighlights.push(
@@ -448,29 +643,27 @@ export function computeScreenshotQuantMetrics(
     `Vol Surface: VIX/VIX3M ${snapshot.volatilityAndMacro.termRatio.toFixed(2)} (${snapshot.volatilityAndMacro.termStructureRegime}), VRP ${snapshot.volatilityAndMacro.vrpRatio.toFixed(2)} (${snapshot.volatilityAndMacro.isNegativeVrp ? "RV > IV" : "Normal"}), VVIX ${snapshot.volatilityAndMacro.vvix.toFixed(1)}`
   );
 
-  // Determine clear Action Stance
+  // Action Stance
   let actionStance = "ANALYZE STRUCTURE BEFORE ENTRY";
-  if (layer1RiskMultiplier === 0) {
-    actionStance = "STAND ASIDE / STAY FLAT (LAYER 1 RISK VETO)";
-  } else if (
-    positionStatus === "OPEN" &&
-    openTradeUnrealizedPts !== null &&
-    openTradeUnrealizedPts > 0
-  ) {
+  if (newsShouldVetoTrade) {
+    actionStance = `WAIT FOR RED-FOLDER NEWS (${input.newsCountdownMinutes}m)`;
+  } else if (setupState === "OPEN_POSITION" && openTradeUnrealizedPts !== null) {
     actionStance =
-      typeof input.newsCountdownMinutes === "number" && input.newsCountdownMinutes <= 30
-        ? "IN PROFIT — LOCK BREAKEVEN / SCALE PARTIALS AHEAD OF NEWS"
-        : `HOLD & TRAIL STOP (${openTradeCurrentR !== null ? `+${openTradeCurrentR.toFixed(2)}R` : `+${openTradeUnrealizedPts.toFixed(1)} pts`} unrealized)`;
-  } else if (
-    positionStatus === "PLANNED_FLAT" &&
-    missedFromPlannedEntryPts !== null &&
-    missedFromPlannedEntryPts > 15
-  ) {
-    actionStance = `DO NOT CHASE NOW — WAIT FOR PULLBACK TOWARD ${entry?.toFixed(2)} OR FRESH TRIGGER`;
-  } else if (typeof input.newsCountdownMinutes === "number" && input.newsCountdownMinutes <= 15) {
-    actionStance = `WAIT FOR NEWS RELEASE (${input.newsCountdownMinutes}m)`;
-  } else if (plannedRewardToRisk !== null && plannedRewardToRisk < 1.3) {
-    actionStance = "SKIP OR REFINE ENTRY — R:R TOO LOW";
+      openTradeUnrealizedPts > 0
+        ? `IN PROFIT — TRAIL STOP / PARTIAL AT MAGNET (${openTradeCurrentR !== null ? `+${openTradeCurrentR.toFixed(2)}R` : `+${openTradeUnrealizedPts.toFixed(1)} pts`})`
+        : `OPEN IN DRAWDOWN (${openTradeUnrealizedPts.toFixed(1)} pts) — HONOR HARD STOP`;
+  } else if (setupState === "PENDING_LIMIT_ORDER") {
+    if (limitSetupVerdict === "INVALID") {
+      actionStance = `CANCEL / REVISE LIMIT ORDER — INVALID SETUP GEOMETRY`;
+    } else if (limitSetupVerdict === "STRETCHED_LOW_FILL_ODDS") {
+      actionStance = `LIMIT ZONE VALID BUT FAR (+${pullbackNeededToFillPts?.toFixed(1)} pts away) — KEEP LIMIT OR WATCH CLOSER REJECTION LEVEL`;
+    } else if (limitSetupVerdict === "VALID_WITH_ADJUSTMENTS") {
+      actionStance = `RESTING LIMIT SETUP VALID WITH ADJUSTMENTS — SET BRACKET SL @ ${stopLossPrice?.toFixed(2)} & WAIT FOR FILL`;
+    } else {
+      actionStance = `VALID LIMIT SETUP — KEEP LIMIT ORDER AT ${effectiveEntry.toFixed(2)} & WAIT FOR FILL`;
+    }
+  } else if (layer1RiskMultiplier === 0) {
+    actionStance = "STAND ASIDE / STAY FLAT (LAYER 1 VOLATILITY VETO)";
   } else if (direction !== "NONE") {
     actionStance =
       layer1RiskMultiplier === 0.5
@@ -491,9 +684,16 @@ export function computeScreenshotQuantMetrics(
     quoteTimestamp: snapshot.quote.timestamp,
     quoteStaleness: snapshot.quote.stalenessBadge,
     direction,
+    orderType,
     positionStatus,
-    entryPrice: entry,
-    stopLossPrice: stop,
+    setupState,
+    limitSetupVerdict,
+    limitSetupReasons,
+    entryPrice: explicitEntry,
+    entryZoneLow: zoneLow,
+    entryZoneHigh: zoneHigh,
+    stopLossPrice,
+    stopLossSource,
     targetPrice: target,
     stopDistancePts,
     targetDistancePts,
@@ -506,7 +706,9 @@ export function computeScreenshotQuantMetrics(
     expectedValueDollars,
     winRateAssumedPct,
     winRateSource,
-    missedFromPlannedEntryPts,
+    pullbackNeededToFillPts,
+    pullbackNeededPctOfStraddle,
+    levelsBlockingLimitFill,
     marketEntryNowStopPts,
     marketEntryNowTargetPts,
     marketEntryNowRewardToRisk,
@@ -537,11 +739,14 @@ export function computeScreenshotQuantMetrics(
         ? snapshot.gex.netGammaRegime
         : "UNAVAILABLE",
     gammaFlipNq: snapshot.gex.gammaFlipNq ?? null,
+    newsSeverity,
+    newsShouldVetoTrade,
+    newsGuidance,
     candleStats,
     nearestLevelsAbove,
     nearestLevelsBelow,
     obstaclesBeforeTarget,
-    protectingLevelsBetweenPriceAndStop,
+    protectingLevelsBetweenEntryAndStop,
     actionStance,
     warnings,
     quantHighlights,

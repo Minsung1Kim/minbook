@@ -764,8 +764,14 @@ export function buildPlainEnglishBrief(
     upcomingNews.imminent.length > 0
       ? {
           label: "News",
-          value: `Upcoming release: ${upcomingNews.imminent[0].timeET} ET ${upcomingNews.imminent[0].event} — flatten or lock breakeven ahead of print.`,
+          value: `High-impact Red-folder release ahead: ${upcomingNews.imminent[0].timeET} ET ${upcomingNews.imminent[0].event} — flatten or lock breakeven ahead of print.`,
           tone: "rose" as const
+        }
+      : upcomingNews.imminentMedium.length > 0
+      ? {
+          label: "News",
+          value: `Orange-folder release ahead (${upcomingNews.imminentMedium[0].timeET} ET ${upcomingNews.imminentMedium[0].event}) — minor spread bump possible, NOT a trade veto.`,
+          tone: "amber" as const
         }
       : upcomingNews.laterToday.length > 0
       ? {

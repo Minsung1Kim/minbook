@@ -221,41 +221,66 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
     expect(systemPrompt).toContain("runMinBookQuantAnalysis");
     expect(systemPrompt).toContain("## TL;DR");
 
-    // Numbers matching user's uploaded Hyperprop MNQZ6 1m terminal screenshot
+    // Numbers matching user's uploaded Hyperprop MNQZ6 1m Pending Short Limit screenshot:
+    // Current live spot 25,159.25; supply box 25,247.75-25,277.50 resting above; target 24,977.00; New Home Sales in 7m
     const quant = computeScreenshotQuantMetrics(
       {
         instrument: "MNQ",
         timeframe: "1m",
-        screenshotCurrentPrice: 25214.0,
+        screenshotCurrentPrice: 25159.25,
         direction: "SHORT",
+        orderType: "LIMIT",
         positionStatus: "PLANNED_FLAT",
-        entryPrice: 25286.25,
-        stopLossPrice: 25401.75,
-        targetPrice: 24980.0,
+        entryZoneLow: 25247.75,
+        entryZoneHigh: 25277.5,
+        targetPrice: 24977.0,
         contracts: 1,
         accountBalance: 52048.88,
         openPnlDollars: 0,
-        newsCountdownMinutes: 22,
-        candleOpen: 25231.0,
-        candleHigh: 25244.5,
-        candleLow: 25175.75,
-        candleClose: 25214.0,
+        newsCountdownMinutes: 7,
+        newsEventName: "New Home Sales",
+        candleOpen: 25149.25,
+        candleHigh: 25163.5,
+        candleLow: 25132.0,
+        candleClose: 25159.25,
       },
       snapshot
     );
 
     expect(quant.pointValueDollars).toBe(2);
-    expect(quant.stopDistancePts).toBe(115.5);
-    expect(quant.targetDistancePts).toBe(306.25);
-    expect(quant.plannedRewardToRisk).toBe(2.65);
-    expect(quant.dollarRiskPlanned).toBe(231);
-    expect(quant.dollarRewardPlanned).toBe(612.5);
-    expect(quant.missedFromPlannedEntryPts).toBe(72.25);
-    expect(quant.marketEntryNowStopPts).toBe(187.75);
-    expect(quant.marketEntryNowDollarRisk).toBe(375.5);
-    expect(quant.exceedsUserRiskBudget).toBe(true);
-    expect(quant.candleStats?.rangePts).toBe(68.75);
-    expect(quant.warnings.some((w) => w.includes("DO NOT CHASE AT MARKET"))).toBe(true);
-    expect(quant.warnings.some((w) => w.includes("NEWS IN 22m"))).toBe(true);
+    expect(quant.setupState).toBe("PENDING_LIMIT_ORDER");
+    expect(quant.entryPrice).toBe(25262.63);
+    expect(quant.stopLossSource).toBe("SUGGESTED_STRUCTURAL");
+    expect(quant.stopLossPrice).toBeGreaterThan(25277.5);
+    expect(quant.pullbackNeededToFillPts).toBe(103.38);
+    expect(quant.limitSetupVerdict).not.toBe("INVALID");
+    // Orange/medium New Home Sales should NOT veto a valid limit setup
+    expect(quant.newsSeverity).toBe("ORANGE_MEDIUM");
+    expect(quant.newsShouldVetoTrade).toBe(false);
+    expect(quant.warnings.some((w) => w.includes("DO NOT CHASE THIS TRADE"))).toBe(false);
+    expect(quant.warnings.some((w) => w.includes("missed"))).toBe(false);
+    expect(quant.candleStats?.rangePts).toBe(31.5);
+
+    // Tier-1 Red-folder news (CPI in 7m) SHOULD trigger veto
+    const redNewsQuant = computeScreenshotQuantMetrics(
+      {
+        instrument: "MNQ",
+        timeframe: "1m",
+        screenshotCurrentPrice: 25159.25,
+        direction: "SHORT",
+        orderType: "LIMIT",
+        positionStatus: "PLANNED_FLAT",
+        entryPrice: 25277.5,
+        stopLossPrice: 25333.25,
+        targetPrice: 24977.0,
+        contracts: 1,
+        newsCountdownMinutes: 7,
+        newsEventName: "CPI y/y",
+      },
+      snapshot
+    );
+    expect(redNewsQuant.newsSeverity).toBe("RED_HIGH");
+    expect(redNewsQuant.newsShouldVetoTrade).toBe(true);
+    expect(redNewsQuant.plannedRewardToRisk).toBe(5.39);
   });
 });

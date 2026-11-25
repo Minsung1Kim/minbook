@@ -24,6 +24,7 @@ import {
   saveUserGeminiApiKey,
 } from "../lib/chat/key-store";
 import { buildPlainEnglishBrief } from "../lib/market/plainEnglishBrief";
+import { computeScreenshotQuantMetrics } from "../lib/chat/screenshot-quant";
 import { getOpenBrief } from "../lib/market/service";
 
 describe("MinBook Strat AI Chat Grounding & Helpers", () => {
@@ -213,5 +214,48 @@ describe("MinBook Strat AI Chat Grounding & Helpers", () => {
       expect(item.summary.length).toBeGreaterThan(15);
       expect(["BULLISH", "BEARISH", "NEUTRAL"]).toContain(item.bias);
     }
+  });
+
+  it("computes deterministic quant formulas & live re-anchored advice from screenshot numbers", async () => {
+    const { snapshot, systemPrompt } = await buildMarketContext({ symbol: "MNQ" });
+    expect(systemPrompt).toContain("runMinBookQuantAnalysis");
+    expect(systemPrompt).toContain("## TL;DR");
+
+    // Numbers matching user's uploaded Hyperprop MNQZ6 1m terminal screenshot
+    const quant = computeScreenshotQuantMetrics(
+      {
+        instrument: "MNQ",
+        timeframe: "1m",
+        screenshotCurrentPrice: 25214.0,
+        direction: "SHORT",
+        positionStatus: "PLANNED_FLAT",
+        entryPrice: 25286.25,
+        stopLossPrice: 25401.75,
+        targetPrice: 24980.0,
+        contracts: 1,
+        accountBalance: 52048.88,
+        openPnlDollars: 0,
+        newsCountdownMinutes: 22,
+        candleOpen: 25231.0,
+        candleHigh: 25244.5,
+        candleLow: 25175.75,
+        candleClose: 25214.0,
+      },
+      snapshot
+    );
+
+    expect(quant.pointValueDollars).toBe(2);
+    expect(quant.stopDistancePts).toBe(115.5);
+    expect(quant.targetDistancePts).toBe(306.25);
+    expect(quant.plannedRewardToRisk).toBe(2.65);
+    expect(quant.dollarRiskPlanned).toBe(231);
+    expect(quant.dollarRewardPlanned).toBe(612.5);
+    expect(quant.missedFromPlannedEntryPts).toBe(72.25);
+    expect(quant.marketEntryNowStopPts).toBe(187.75);
+    expect(quant.marketEntryNowDollarRisk).toBe(375.5);
+    expect(quant.exceedsUserRiskBudget).toBe(true);
+    expect(quant.candleStats?.rangePts).toBe(68.75);
+    expect(quant.warnings.some((w) => w.includes("DO NOT CHASE AT MARKET"))).toBe(true);
+    expect(quant.warnings.some((w) => w.includes("NEWS IN 22m"))).toBe(true);
   });
 });

@@ -47,19 +47,24 @@ interface StagedAttachment {
 
 const STARTER_PROMPTS = [
   {
-    title: "Break down this Strat setup",
+    title: "Analyze screenshot + quant math",
     prompt:
-      "Break down today's NQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, and where invalidation sits.",
+      "Run full MinBook quant formulas, R:R/sizing math, key level confluence, and Strat structure on this chart. Tell me what to do right now and end with a clear TL;DR.",
   },
   {
-    title: "Where is invalidation?",
+    title: "Break down this Strat setup",
     prompt:
-      "Based on today's structure and key levels, where is the exact invalidation level and what confirms a valid NY open trigger?",
+      "Break down today's NQ/MNQ setup using The Strat (1/2/3 candles, 2-1-2 / 3-1-2, FTFC), key levels, where invalidation sits, and end with a TL;DR.",
+  },
+  {
+    title: "Where is invalidation & sizing?",
+    prompt:
+      "Check today's Volatility/GEX risk gates, ATR stop room, exact invalidation, and recommended MNQ/NQ contract sizing right now. End with a TL;DR.",
   },
   {
     title: "Check FTFC & key levels",
     prompt:
-      "Check today's key MinBook levels (VWAP, ONH/ONL, PDC, GEX) with their timestamps and staleness, and map the highest-probability magnets.",
+      "Check today's key MinBook levels (VWAP, ONH/ONL, PDC, GEX) with timestamps and staleness, map top magnets, and end with a TL;DR.",
   },
 ];
 
@@ -560,7 +565,8 @@ export function ChatWorkspace() {
     if (!textToSend && readyAttachments.length === 0) return;
 
     const finalText =
-      textToSend || "Break down this NQ/MNQ chart screenshot using The Strat and MinBook levels.";
+      textToSend ||
+      "Analyze this chart screenshot using MinBook quant formulas, key levels, and Strat structure. Give me actionable advice for right now and include a TL;DR summary at the end.";
 
     let threadId = activeThreadIdRef.current;
     if (!threadId) {
@@ -1190,6 +1196,23 @@ export function ChatWorkspace() {
                                   key={`${message.id}-md-${idx}`}
                                   content={part.text}
                                 />
+                              );
+                            }
+
+                            if (
+                              part.type === "tool-runMinBookQuantAnalysis" ||
+                              (part.type === "dynamic-tool" &&
+                                "toolName" in part &&
+                                part.toolName === "runMinBookQuantAnalysis")
+                            ) {
+                              return (
+                                <div
+                                  key={`${message.id}-tool-${idx}`}
+                                  className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-zinc-400"
+                                >
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                  <span>MinBook Quant Engine executed</span>
+                                </div>
                               );
                             }
 

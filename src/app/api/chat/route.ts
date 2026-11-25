@@ -2,13 +2,20 @@ import { createGoogle } from "@ai-sdk/google";
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
+  isStepCount,
+  jsonSchema,
   streamText,
+  tool,
   toUIMessageStream,
 } from "ai";
 import { NextRequest, NextResponse } from "next/server";
 import { resolveChatUser } from "@/lib/chat/auth";
 import { buildMarketContext } from "@/lib/chat/build-market-context";
 import { resolveServerGeminiApiKey } from "@/lib/chat/key-store";
+import {
+  computeScreenshotQuantMetrics,
+  ScreenshotQuantInput,
+} from "@/lib/chat/screenshot-quant";
 import {
   deriveThreadTitle,
   ensureChatThread,
@@ -169,6 +176,75 @@ export async function POST(request: NextRequest) {
       model: google(CHAT_MODEL_ID),
       instructions: systemPrompt,
       messages: modelMessages,
+      stopWhen: isStepCount(4),
+      tools: {
+        runMinBookQuantAnalysis: tool({
+          description:
+            "Computes deterministic MinBook quantitative trade metrics, R:R, break-even win rate, EV, ATR/Straddle multiples, Layer 1 volatility/GEX sizing limits, feed sync delta, and live distance to MinBook key levels anchored to the screenshot's live price.",
+          inputSchema: jsonSchema<ScreenshotQuantInput>({
+            type: "object",
+            properties: {
+              instrument: {
+                type: "string",
+                enum: ["NQ", "MNQ"],
+                description: "Futures contract visible on the chart (e.g., MNQ for MNQZ6, NQ for NQZ6).",
+              },
+              timeframe: {
+                type: "string",
+                description: "Chart timeframe visible (e.g., 1m, 5m, 15m, 1h, 4h).",
+              },
+              screenshotCurrentPrice: {
+                type: "number",
+                description: "Current live price visible on the screenshot right now.",
+              },
+              direction: {
+                type: "string",
+                enum: ["LONG", "SHORT", "NONE"],
+                description: "Trade setup direction shown by position tool, order panel, or bias.",
+              },
+              positionStatus: {
+                type: "string",
+                enum: ["OPEN", "PLANNED_FLAT", "UNKNOWN"],
+                description: "PLANNED_FLAT if Open P&L is $0.00 or setup is a drawn box; OPEN if actively filled.",
+              },
+              entryPrice: {
+                type: "number",
+                description: "Planned or actual entry price visible on chart.",
+              },
+              stopLossPrice: {
+                type: "number",
+                description: "Stop loss / invalidation price on chart.",
+              },
+              targetPrice: {
+                type: "number",
+                description: "Target / take profit price on chart.",
+              },
+              contracts: {
+                type: "number",
+                description: "Selected or open contract quantity (default 1).",
+              },
+              accountBalance: {
+                type: "number",
+                description: "Account balance visible in terminal header if readable.",
+              },
+              openPnlDollars: {
+                type: "number",
+                description: "Open P&L in dollars if visible.",
+              },
+              newsCountdownMinutes: {
+                type: "number",
+                description: "Minutes remaining until an upcoming news release shown on screenshot (e.g. 22).",
+              },
+              candleOpen: { type: "number" },
+              candleHigh: { type: "number" },
+              candleLow: { type: "number" },
+              candleClose: { type: "number" },
+            },
+            required: ["screenshotCurrentPrice"],
+          }),
+          execute: async (input) => computeScreenshotQuantMetrics(input, snapshot),
+        }),
+      },
     });
 
     return createUIMessageStreamResponse({

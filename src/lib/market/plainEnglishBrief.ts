@@ -897,17 +897,32 @@ export function buildPlainEnglishBrief(
         ? { shortName: "Lower Straddle", price: metrics.lowerStraddle }
         : { shortName: "4H Expansion", price: nearTargetDown.price - Math.max(40, Math.round(atr15 * 1.5)) });
 
+    const isRunawayArchetype =
+      plan.retraceAnalysis.archetype === "OPEN-DRIVE (RUNAWAY / SHALLOW RETRACE ONLY)" ||
+      !plan.retraceAnalysis.isRetraceProbable;
+    const retraceStretchLimit = Math.max(38, atr15 * 1.3);
+
     if (direction === "BULLISH") {
       const bullFloor =
         retraceDown ||
         (metrics.sessionVwap < spot
           ? { shortName: "Session VWAP", price: metrics.sessionVwap }
           : { shortName: "ONL", price: Math.min(metrics.onl, spot - 10) });
-      const summary1h = retraceDown
-        ? `Expecting a retrace to ${fmtPrice(retraceDown.price)} (${retraceDown.shortName}), then continue bullish toward ${fmtPrice(nearTargetUp.price)}.`
-        : nearAtSpot
-        ? `Right on ${fmtPrice(nearAtSpot.price)} (${nearAtSpot.shortName}); holding here favors bullish continuation toward ${fmtPrice(nearTargetUp.price)}.`
-        : `Holding above ${fmtPrice(bullFloor.price)} (${bullFloor.shortName}) favors direct bullish continuation toward ${fmtPrice(nearTargetUp.price)}.`;
+
+      const directPump =
+        isRunawayArchetype ||
+        (layer2?.totalScore ?? 0) >= 3 ||
+        !retraceDown ||
+        spot - retraceDown.price > retraceStretchLimit ||
+        (gex?.netGammaRegime === "NEGATIVE_GAMMA" &&
+          spot > metrics.sessionVwap + 15 &&
+          spot > metrics.onMid + 10);
+
+      const summary1h = directPump
+        ? `Buying momentum favors a direct pump toward ${fmtPrice(nearTargetUp.price)} (${nearTargetUp.shortName}) without a deep pullback while holding above ${fmtPrice(bullFloor.price)}.`
+        : nearAtSpot && spot - retraceDown.price > atr15 * 0.9
+        ? `Holding ${fmtPrice(nearAtSpot.price)} (${nearAtSpot.shortName}) right now favors bullish continuation toward ${fmtPrice(nearTargetUp.price)}.`
+        : `Expecting a pullback to ${fmtPrice(retraceDown.price)} (${retraceDown.shortName}), then continue bullish toward ${fmtPrice(nearTargetUp.price)}.`;
 
       return [
         {
@@ -920,7 +935,9 @@ export function buildPlainEnglishBrief(
           horizon: "4H",
           label: "Next 4 Hr",
           bias: "BULLISH",
-          summary: `Holding above ${fmtPrice(bullFloor.price)} targets ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}) next.`,
+          summary: directPump
+            ? `Bullish expansion above ${fmtPrice(bullFloor.price)} (${bullFloor.shortName}) targets a push up to ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}).`
+            : `Holding above ${fmtPrice(bullFloor.price)} targets ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}) next.`,
         },
         {
           horizon: "DAY",
@@ -937,11 +954,21 @@ export function buildPlainEnglishBrief(
         (metrics.sessionVwap > spot
           ? { shortName: "Session VWAP", price: metrics.sessionVwap }
           : { shortName: "ONH", price: Math.max(metrics.onh, spot + 10) });
-      const summary1h = retraceUp
-        ? `Expecting a retrace to ${fmtPrice(retraceUp.price)} (${retraceUp.shortName}), then continue bearish toward ${fmtPrice(nearTargetDown.price)}.`
-        : nearAtSpot
+
+      const directDump =
+        isRunawayArchetype ||
+        (layer2?.totalScore ?? 0) <= -3 ||
+        !retraceUp ||
+        retraceUp.price - spot > retraceStretchLimit ||
+        (gex?.netGammaRegime === "NEGATIVE_GAMMA" &&
+          spot < metrics.sessionVwap - 15 &&
+          spot < metrics.onMid - 10);
+
+      const summary1h = directDump
+        ? `Selling pressure favors a direct dump toward ${fmtPrice(nearTargetDown.price)} (${nearTargetDown.shortName}) without a deep bounce while capped under ${fmtPrice(bearCap.price)}.`
+        : nearAtSpot && retraceUp.price - spot > atr15 * 0.9
         ? `Testing ${fmtPrice(nearAtSpot.price)} (${nearAtSpot.shortName}) right now; rejecting here favors bearish continuation toward ${fmtPrice(nearTargetDown.price)}.`
-        : `Staying below ${fmtPrice(bearCap.price)} (${bearCap.shortName}) favors direct bearish continuation toward ${fmtPrice(nearTargetDown.price)}.`;
+        : `Expecting a bounce to ${fmtPrice(retraceUp.price)} (${retraceUp.shortName}), then continue bearish toward ${fmtPrice(nearTargetDown.price)}.`;
 
       return [
         {
@@ -954,7 +981,9 @@ export function buildPlainEnglishBrief(
           horizon: "4H",
           label: "Next 4 Hr",
           bias: "BEARISH",
-          summary: `Staying capped under ${fmtPrice(bearCap.price)} targets ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}) next.`,
+          summary: directDump
+            ? `Bearish momentum under ${fmtPrice(bearCap.price)} (${bearCap.shortName}) targets a continuation dump to ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}).`
+            : `Staying capped under ${fmtPrice(bearCap.price)} targets ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}) next.`,
         },
         {
           horizon: "DAY",

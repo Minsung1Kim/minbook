@@ -803,3 +803,21 @@ All notable changes and architectural decisions are logged here.
   - `npx tsc --noEmit`: **0 errors**.
   - `npm test`: **19/19 test files, 139/139 tests passing** (`replay_and_horizon.test.ts`: 2 new tests passing).
   - `npm run build`: compiled cleanly with 0 errors (`28` app routes).
+
+## [2026-11-25] - Deterministic Screenshot Quant Engine Tool (`runMinBookQuantAnalysis`) & Mandatory TL;DR
+- **Deterministic Quant Calculator ([screenshot-quant.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/screenshot-quant.ts), [api/chat/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/chat/route.ts)):**
+  - Built `computeScreenshotQuantMetrics` and wired it as the `runMinBookQuantAnalysis` AI SDK tool inside `/api/chat` (`stopWhen: isStepCount(4)`).
+  - Computes contract math (`NQ $20/pt`, `MNQ $2/pt`), planned R:R, break-even win rate (`1 / (1 + R)`), journal EV, active vs planned (`PLANNED_FLAT` when `Open P&L = $0.00`) missed-entry penalty (`marketEntryNowStopPts`, degraded R:R, dollar risk vs Layer 1 adjusted risk budget), `ATR_Open_15m` stop sizing, Daily Straddle target %, Volatility/GEX constraints, candle wick stats, and MinBook key levels re-anchored directly to the screenshot's live price.
+- **Screenshot Protocol & Mandatory `## TL;DR` ([build-market-context.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/build-market-context.ts), [ChatWorkspace.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chat/ChatWorkspace.tsx)):**
+  - Updated system prompt instructions so chart/terminal screenshots trigger `runMinBookQuantAnalysis` automatically, deliver blunt right-now action advice (including imminent news countdowns and late-chase warnings), and end every analysis with a crisp `## TL;DR` section.
+  - Added a `MinBook Quant Engine executed` status indicator inside assistant message parts and updated starter/default screenshot prompts.
+- **Verification ([chat.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chat.test.ts)):**
+  - `npx eslint` on `screenshot-quant.ts`, `build-market-context.ts`, `api/chat/route.ts`, `ChatWorkspace.tsx`, `chat.test.ts`: **0 errors, 0 warnings**.
+  - `npx tsc --noEmit`: **0 errors**.
+  - `npm test`: **19/19 test files, 140/140 tests passing** (including Hyperprop `MNQZ6` screenshot quant calculation unit test).
+  - `npm run build`: compiled cleanly with 0 errors (`28` app routes).
+
+## [2026-11-25] - Direct Pump / Dump Horizon Predictions
+- **Momentum Expansion vs Pullback Logic ([plainEnglishBrief.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/plainEnglishBrief.ts), [replay_and_horizon.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/replay_and_horizon.test.ts)):**
+  - Updated `horizonPredictions` (`1H` and `4H`) so strong momentum, runaway `OPEN-DRIVE` archetypes, stretched distances past pullback levels (`> max(38, 1.3x ATR_Open_15m)`), or `-Γ` momentum breakdowns/breakouts output direct **dump** / **pump** continuation calls without forcing an unrealistic bounce/pullback step first.
+  - Verified with `npx eslint` (0 errors/warnings), `npx tsc --noEmit` (0 errors), `npm test` (**19/19 suites, 140/140 tests passing**), and `npm run build` (`28` app routes).

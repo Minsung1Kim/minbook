@@ -263,26 +263,58 @@ describe("Whipsaw removal, Horizon Outlook sanity, and 12H Hourly Replay", () =>
     gex,
   };
 
-  it("removes whipsaw wording in favor of plain-English risk explanations and never suggests retracing to spot price", () => {
+  it("removes whipsaw wording in favor of plain-English risk explanations and supports both pullback and direct dump/pump predictions", () => {
     const highVolOut = buildPlainEnglishBrief(baseBrief, anchorDate);
     expect(JSON.stringify(highVolOut).toLowerCase()).not.toContain("whipsaw");
     expect(JSON.stringify(highVolOut).toLowerCase()).not.toContain("wipsaw");
     expect(highVolOut.verdictTitle).not.toContain("Whipsaw");
 
-    // Force BEARISH direction to verify bearish 1H pullback logic never says retrace to spot (Gamma Flip)
-    const bearishBrief: OpenBriefData = {
+    // 1. Moderate bearish pullback setup (+Gamma, -2 score): never picks spot Gamma Flip as retrace
+    const bearishPullbackBrief: OpenBriefData = {
       ...baseBrief,
       bias: {
         ...baseBrief.bias,
         verdict: "CONTINUATION FAVORED (BEARISH)",
         regimeRiskMultiplier: 0.5,
       },
+      gex: {
+        ...baseBrief.gex!,
+        netGammaRegime: "POSITIVE_GAMMA",
+      },
     };
-    const bearishOut = buildPlainEnglishBrief(bearishBrief, anchorDate);
-    const h1 = bearishOut.horizonPredictions.find((p) => p.horizon === "1H");
-    expect(h1).toBeDefined();
-    expect(h1?.summary).not.toContain("retrace to 25,981.50 (Gamma Flip)");
-    expect(h1?.summary).toContain("26,000.13 (ON Mid)");
+    const bearishPullbackOut = buildPlainEnglishBrief(bearishPullbackBrief, anchorDate);
+    const h1Pullback = bearishPullbackOut.horizonPredictions.find((p) => p.horizon === "1H");
+    expect(h1Pullback).toBeDefined();
+    expect(h1Pullback?.summary).not.toContain("25,981.50 (Gamma Flip)");
+    expect(h1Pullback?.summary).toContain("26,000.13 (ON Mid)");
+
+    // 2. Strong bearish / runaway Open-Drive -> predicts direct dump without deep bounce
+    const directDumpBrief: OpenBriefData = {
+      ...bearishPullbackBrief,
+      tacticalPlan: {
+        ...bearishPullbackBrief.tacticalPlan,
+        retraceAnalysis: {
+          ...bearishPullbackBrief.tacticalPlan.retraceAnalysis,
+          archetype: "OPEN-DRIVE (RUNAWAY / SHALLOW RETRACE ONLY)",
+          isRetraceProbable: false,
+        },
+      },
+    };
+    const directDumpOut = buildPlainEnglishBrief(directDumpBrief, anchorDate);
+    const h1Dump = directDumpOut.horizonPredictions.find((p) => p.horizon === "1H");
+    expect(h1Dump?.summary.toLowerCase()).toContain("direct dump");
+
+    // 3. Strong bullish / runaway Open-Drive -> predicts direct pump without deep pullback
+    const directPumpBrief: OpenBriefData = {
+      ...directDumpBrief,
+      bias: {
+        ...directDumpBrief.bias,
+        verdict: "CONTINUATION FAVORED (BULLISH)",
+      },
+    };
+    const directPumpOut = buildPlainEnglishBrief(directPumpBrief, anchorDate);
+    const h1Pump = directPumpOut.horizonPredictions.find((p) => p.horizon === "1H");
+    expect(h1Pump?.summary.toLowerCase()).toContain("direct pump");
   });
 
   it("builds up to 12 causal hour-by-hour replay frames without lookahead leakage and computes realized outcomes", () => {

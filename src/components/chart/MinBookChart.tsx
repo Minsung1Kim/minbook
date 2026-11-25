@@ -30,10 +30,11 @@ import {
   RectDrawing,
   DrawingDragMode,
   DrawingScreenBox,
+  timeSecToLogicalIndex,
   timeSecToChartX,
   chartXToTimeSec,
   hitTestScreenBoxes,
-  applyDrawingDrag
+  applyDrawingDragLogical
 } from "./primitives";
 import { OpenBriefData, KeyLevel, OHLCVBar } from "../../types/market";
 import { useTimezone } from "../../context/TimezoneContext";
@@ -67,6 +68,11 @@ export interface MinBookChartProps {
   focusedLevel?: KeyLevel | null;
   onClearFocusedLevel?: () => void;
   onSelectLevel?: (level: KeyLevel) => void;
+  replayCutoffMs?: number | null;
+  replayLabel?: string;
+  fullIntradayBars?: OHLCVBar[];
+  showReplayOutcome?: boolean;
+  onToggleReplayOutcome?: () => void;
 }
 
 export type OpenPulseChartProps = MinBookChartProps;
@@ -237,7 +243,12 @@ export default function MinBookChart({
   brief,
   selectedInstrument,
   focusedLevel,
-  onClearFocusedLevel
+  onClearFocusedLevel,
+  replayCutoffMs = null,
+  replayLabel,
+  fullIntradayBars,
+  showReplayOutcome = false,
+  onToggleReplayOutcome
 }: MinBookChartProps) {
   const { timezone, timezoneCode, config } = useTimezone();
 
@@ -249,6 +260,7 @@ export default function MinBookChart({
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const userHLineRefs = useRef<IPriceLine[]>([]);
+  const userHLineMapRef = useRef<Record<string, IPriceLine>>({});
   const focusedLineRef = useRef<IPriceLine | null>(null);
 
   // Primitives
@@ -283,16 +295,20 @@ export default function MinBookChart({
   const barTimesRef = useRef<number[]>([]);
   const intervalSecRef = useRef<number>(900);
   const isDraggingRectRef = useRef<boolean>(false);
+  const chartNavDisabledRef = useRef<boolean>(false);
+  const liveDrawingsRef = useRef<ChartDrawing[]>([]);
   const activeDragRef = useRef<{
     id: string;
+    type: ChartDrawing["type"];
     mode: DrawingDragMode;
-    startTimeSec: number;
+    startLogical: number;
     startPrice: number;
     snapshot: ChartDrawing;
   } | null>(null);
 
   // Timeframe state
-  const [timeframe, setTimeframe] = useState<"15m" | "5m">("15m");
+  type ChartTimeframe = "5m" | "15m" | "1h" | "4h";
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>("15m");
   const [loadingTimeframe, setLoadingTimeframe] = useState<boolean>(false);
   const [cachedBarsByTf, setCachedBarsByTf] = useState<Record<string, OHLCVBar[]>>({});
 
@@ -361,28 +377,49 @@ export default function MinBookChart({
     setLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
   };
 
-  // Fetch or retrieve bars for selected timeframe + instrument
+  // Fetch or retrieve bars for selected timeframe + instrument (causally sliced when in 12H Replay)
   const activeBars = useMemo(() => {
-    const key15 = `${selectedInstrument}_15m`;
-    const key5 = `${selectedInstrument}_5m`;
-    if (timeframe === "15m") {
-      return cachedBarsByTf[key15] || brief.intradayBars || [];
-    }
-    return cachedBarsByTf[key5] || [];
-  }, [timeframe, cachedBarsByTf, brief.intradayBars, selectedInstrument]);
+    const key = `${selectedInstrument}_${timeframe}`;
+    const raw =
+      timeframe === "15m"
+        ? showReplayOutcome && fullIntradayBars && fullIntradayBars.length > 0
+          ? fullIntradayBars
+          : brief.intradayBars || cachedBarsByTf[key] || []
+        : cachedBarsByTf[key] || [];
 
-  // Populate 15m bars cleanly per instrument on brief update
+    if (!replayCutoffMs || showReplayOutcome) {
+      return raw;
+    }
+
+    if (timeframe === "5m" || timeframe === "15m") {
+      return raw.filter((b) => Date.parse(b.timestamp) < replayCutoffMs);
+    }
+    if (timeframe === "1h") {
+      return raw.filter((b) => Date.parse(b.timestamp) + 3600_000 <= replayCutoffMs);
+    }
+    return raw.filter((b) => Date.parse(b.timestamp) + 14400_000 <= replayCutoffMs);
+  }, [
+    timeframe,
+    cachedBarsByTf,
+    brief.intradayBars,
+    fullIntradayBars,
+    selectedInstrument,
+    replayCutoffMs,
+    showReplayOutcome
+  ]);
+
+  // Populate full 15m cache only from live brief (never overwrite with replay slice)
   useEffect(() => {
-    if (brief.intradayBars && brief.intradayBars.length > 0) {
+    if (!replayCutoffMs && brief.intradayBars && brief.intradayBars.length > 0) {
       setCachedBarsByTf((prev) => ({
         ...prev,
         [`${selectedInstrument}_15m`]: brief.intradayBars!
       }));
     }
-  }, [brief.intradayBars, selectedInstrument]);
+  }, [brief.intradayBars, selectedInstrument, replayCutoffMs]);
 
   const fetchTimeframeBars = useCallback(
-    async (tf: "15m" | "5m", forceFresh: boolean = false) => {
+    async (tf: ChartTimeframe, forceFresh: boolean = false) => {
       setLoadingTimeframe(true);
       try {
         const res = await fetch(
@@ -405,16 +442,16 @@ export default function MinBookChart({
     [selectedInstrument]
   );
 
-  // Keep 5m chart dynamically synced whenever parent brief refreshes or instrument toggles
+  // Keep non-15m charts synced with live feed without refetching on replay scrub
   useEffect(() => {
-    if (timeframe === "5m") {
-      fetchTimeframeBars("5m", true);
+    if (timeframe !== "15m" && !replayCutoffMs) {
+      fetchTimeframeBars(timeframe, true);
     }
-  }, [timeframe, brief.generatedAt, selectedInstrument, fetchTimeframeBars]);
+  }, [timeframe, brief.dataSource.lastUpdated, selectedInstrument, replayCutoffMs, fetchTimeframeBars]);
 
-  // Fetch 5m or 15m on switcher click
+  // Fetch selected timeframe on switcher click
   const handleSelectTimeframe = useCallback(
-    async (tf: "15m" | "5m") => {
+    async (tf: ChartTimeframe) => {
       setTimeframe(tf);
       if (tf === "15m" && brief.intradayBars && brief.intradayBars.length > 0) {
         return;
@@ -679,6 +716,7 @@ export default function MinBookChart({
       userDrawingsPrimitiveRef.current = null;
       priceLinesRef.current = [];
       userHLineRefs.current = [];
+      userHLineMapRef.current = {};
       focusedLineRef.current = null;
     };
   }, [isTwapMode]);
@@ -722,7 +760,14 @@ export default function MinBookChart({
 
     // Update Vertical Highlight Primitive & User Drawings Coordinate Context
     const barTimes = candleData.map((c) => c.time as number);
-    const intervalSec = timeframe === "5m" ? 300 : 900;
+    const intervalSec =
+      timeframe === "5m"
+        ? 300
+        : timeframe === "15m"
+        ? 900
+        : timeframe === "1h"
+        ? 3600
+        : 14400;
     barTimesRef.current = barTimes;
     intervalSecRef.current = intervalSec;
     if (verticalPrimitiveRef.current) {
@@ -735,31 +780,33 @@ export default function MinBookChart({
     // Build Markers (v5 API: createSeriesMarkers(series, markers))
     const markers: SeriesMarker<Time>[] = [];
 
-    // 1. Find 09:30 AM ET bar to place Opening Bell Marker
-    for (const b of activeBars) {
-      const dt = new Date(b.timestamp);
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York",
-        hour: "numeric",
-        minute: "numeric",
-        hour12: false
-      }).formatToParts(dt);
-      const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
-      const m = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+    // 1. Find 09:30 AM ET bar to place Opening Bell Marker (5m / 15m intraday only)
+    if (timeframe === "5m" || timeframe === "15m") {
+      for (const b of activeBars) {
+        const dt = new Date(b.timestamp);
+        const parts = new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          hour: "numeric",
+          minute: "numeric",
+          hour12: false
+        }).formatToParts(dt);
+        const h = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+        const m = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
 
-      if (h === 9 && m === 30) {
-        markers.push({
-          time: Math.floor(dt.getTime() / 1000) as UTCTimestamp,
-          position: "aboveBar",
-          color: "#38bdf8",
-          shape: "arrowDown",
-          text: "09:30 OPEN"
-        });
+        if (h === 9 && m === 30) {
+          markers.push({
+            time: Math.floor(dt.getTime() / 1000) as UTCTimestamp,
+            position: "aboveBar",
+            color: "#38bdf8",
+            shape: "arrowDown",
+            text: "09:30 OPEN"
+          });
+        }
       }
     }
 
-    // 2. Free 1m-Derived Footprint & Absorption Markers
-    if (layers.footprint && brief.footprint?.bars) {
+    // 2. Free 1m-Derived Footprint & Absorption Markers (intraday 5m / 15m)
+    if (layers.footprint && (timeframe === "5m" || timeframe === "15m") && brief.footprint?.bars) {
       for (const fBar of brief.footprint.bars) {
         if (!fBar.signal) continue;
         if (fBar.signal === "VWWR_BUY" || fBar.signal === "ABS_BUY") {
@@ -855,6 +902,24 @@ export default function MinBookChart({
       }
     }
 
+    // Optional Replay Pivot Marker at selected hour cutoff
+    if (replayCutoffMs && candleData.length > 0) {
+      const cutoffSec = Math.floor(replayCutoffMs / 1000);
+      let pivotCandle = candleData[candleData.length - 1];
+      for (const c of candleData) {
+        if ((c.time as number) < cutoffSec) {
+          pivotCandle = c;
+        }
+      }
+      markers.push({
+        time: pivotCandle.time,
+        position: "aboveBar",
+        color: "#fbbf24",
+        shape: "arrowDown",
+        text: replayLabel ? `REPLAY ${replayLabel}` : "REPLAY"
+      });
+    }
+
     // Strict ascending order required by Lightweight Charts
     markers.sort((a, b) => Number(a.time) - Number(b.time));
 
@@ -869,9 +934,16 @@ export default function MinBookChart({
       markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
     }
 
-    // Fit content smoothly on initial data load
-    chartRef.current.timeScale().fitContent();
-  }, [activeBars, isTwapMode, layers.footprint, layers.smt, brief.footprint, brief.sessionMetrics.smtDivergence]);
+    // Fit content cleanly; for higher timeframes with long lookbacks, focus recent ~120 candles
+    if ((timeframe === "1h" || timeframe === "4h") && candleData.length > 130) {
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: candleData.length - 120,
+        to: candleData.length + 4
+      });
+    } else {
+      chartRef.current.timeScale().fitContent();
+    }
+  }, [activeBars, timeframe, replayCutoffMs, replayLabel, isTwapMode, layers.footprint, layers.smt, brief.footprint, brief.sessionMetrics.smtDivergence]);
 
   // Update Chart Timezone Localization dynamically when user switches ET / CT / PT
   useEffect(() => {
@@ -1108,6 +1180,7 @@ export default function MinBookChart({
   }, [selectedInstrument]);
 
   useEffect(() => {
+    liveDrawingsRef.current = drawings;
     try {
       localStorage.setItem(
         `minbook_chart_drawings_${selectedInstrument}`,
@@ -1131,6 +1204,7 @@ export default function MinBookChart({
       } catch {}
     }
     userHLineRefs.current = [];
+    userHLineMapRef.current = {};
 
     for (const d of drawings) {
       if (d.type === "hline") {
@@ -1146,6 +1220,7 @@ export default function MinBookChart({
             title: isSelected ? "★ LINE" : "LINE"
           });
           userHLineRefs.current.push(line);
+          userHLineMapRef.current[d.id] = line;
         } catch {}
       }
     }
@@ -1171,6 +1246,26 @@ export default function MinBookChart({
     }
   }, [pendingTextAnchor]);
 
+  const setChartNavigationEnabled = useCallback((enabled: boolean) => {
+    const wantDisabled = !enabled;
+    if (chartNavDisabledRef.current === wantDisabled) return;
+    chartNavDisabledRef.current = wantDisabled;
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: enabled,
+        horzTouchDrag: enabled,
+        vertTouchDrag: enabled
+      },
+      handleScale: {
+        axisPressedMouseMove: enabled,
+        mouseWheel: true,
+        pinch: enabled
+      }
+    });
+  }, []);
+
   // Escape key cancels active drawing / clears selection; Delete/Backspace removes selected object
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -1181,6 +1276,8 @@ export default function MinBookChart({
         setRectDraftStart(null);
         isDraggingRectRef.current = false;
         activeDragRef.current = null;
+        setChartNavigationEnabled(true);
+        setCanvasCursor("default");
         setPendingTextAnchor(null);
         setPendingTextValue("");
         setEditingTextId(null);
@@ -1192,13 +1289,16 @@ export default function MinBookChart({
 
       if (!isTyping && (e.key === "Delete" || e.key === "Backspace") && selectedDrawingId) {
         e.preventDefault();
+        activeDragRef.current = null;
+        setChartNavigationEnabled(true);
+        setCanvasCursor("default");
         setDrawings((prev) => prev.filter((d) => d.id !== selectedDrawingId));
         setSelectedDrawingId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedDrawingId]);
+  }, [selectedDrawingId, setChartNavigationEnabled]);
 
   const getChartPointFromEvent = useCallback(
     (clientX: number, clientY: number) => {
@@ -1208,8 +1308,12 @@ export default function MinBookChart({
       if (!container || !chart || !series) return null;
 
       const rect = container.getBoundingClientRect();
-      const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
-      const y = Math.max(0, Math.min(clientY - rect.top, rect.height));
+      // Clamp within actual plot pane (exclude right price axis & bottom time axis)
+      const plotWidth = Math.max(1, chart.timeScale().width() || rect.width);
+      const plotHeight = Math.max(1, chart.paneSize().height || rect.height);
+      const x = Math.max(0, Math.min(clientX - rect.left, plotWidth - 1));
+      const y = Math.max(0, Math.min(clientY - rect.top, plotHeight - 1));
+
       const rawPrice = series.coordinateToPrice(y);
       if (rawPrice === null || !Number.isFinite(rawPrice)) return null;
 
@@ -1223,18 +1327,26 @@ export default function MinBookChart({
       );
       if (timeSec === null || !Number.isFinite(timeSec)) return null;
 
-      return { x, y, price, timeSec, width: rect.width, height: rect.height };
+      const rawLogical = chart.timeScale().coordinateToLogical(x);
+      const logical =
+        rawLogical !== null && Number.isFinite(rawLogical)
+          ? (rawLogical as number)
+          : timeSecToLogicalIndex(barTimesRef.current, intervalSecRef.current, timeSec);
+      if (logical === null || !Number.isFinite(logical)) return null;
+
+      return { x, y, price, timeSec, logical, width: plotWidth, height: plotHeight };
     },
     []
   );
 
-  const computeCurrentScreenBoxes = useCallback((): DrawingScreenBox[] => {
+  const computeCurrentScreenBoxes = useCallback((sourceDrawings?: ChartDrawing[]): DrawingScreenBox[] => {
     const chart = chartRef.current;
     const series = candleSeriesRef.current;
     if (!chart || !series) return [];
+    const list = sourceDrawings ?? liveDrawingsRef.current;
     const boxes: DrawingScreenBox[] = [];
 
-    for (const d of drawings) {
+    for (const d of list) {
       if (d.type === "hline") {
         const y1 = series.priceToCoordinate(d.price);
         if (y1 !== null) boxes.push({ drawing: d, y1: y1 as number });
@@ -1253,24 +1365,45 @@ export default function MinBookChart({
       }
     }
     return boxes;
-  }, [drawings]);
-
-  const setChartNavigationEnabled = useCallback((enabled: boolean) => {
-    if (!chartRef.current) return;
-    chartRef.current.applyOptions({
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: enabled,
-        horzTouchDrag: enabled,
-        vertTouchDrag: enabled
-      },
-      handleScale: {
-        axisPressedMouseMove: enabled,
-        mouseWheel: true,
-        pinch: enabled
-      }
-    });
   }, []);
+
+  const getCursorForHit = (hit: ReturnType<typeof hitTestScreenBoxes>, isDragging: boolean): string => {
+    if (!hit) return "default";
+    if (hit.mode === "NW" || hit.mode === "SE") return "nwse-resize";
+    if (hit.mode === "NE" || hit.mode === "SW") return "nesw-resize";
+    if (hit.mode === "N" || hit.mode === "S" || hit.type === "hline") return "ns-resize";
+    if (hit.mode === "E" || hit.mode === "W") return "ew-resize";
+    return isDragging ? "grabbing" : "grab";
+  };
+
+  const commitActiveDrag = useCallback(() => {
+    if (!activeDragRef.current) return;
+    activeDragRef.current = null;
+    setChartNavigationEnabled(true);
+    setCanvasCursor("default");
+    setDrawings([...liveDrawingsRef.current]);
+  }, [setChartNavigationEnabled]);
+
+  // Block Lightweight Charts native mousedown pan when interacting with a drawing
+  const handleCanvasMouseDownCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (activeTool !== "cursor" || pendingTextAnchor) return;
+    if ((e.target as HTMLElement | null)?.closest("[data-chart-hud='true']")) return;
+    if (activeDragRef.current) {
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation?.();
+      e.preventDefault();
+      return;
+    }
+    const pt = getChartPointFromEvent(e.clientX, e.clientY);
+    if (!pt) return;
+    const hit = hitTestScreenBoxes(pt.x, pt.y, computeCurrentScreenBoxes(drawings), 9);
+    if (hit) {
+      setChartNavigationEnabled(false);
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation?.();
+      e.preventDefault();
+    }
+  };
 
   const handleCanvasPointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
     // Do not intercept HUD clicks, inline text editor clicks, or active draw-mode overlay clicks
@@ -1280,11 +1413,13 @@ export default function MinBookChart({
     const pt = getChartPointFromEvent(e.clientX, e.clientY);
     if (!pt) return;
 
-    const boxes = computeCurrentScreenBoxes();
+    liveDrawingsRef.current = drawings;
+    const boxes = computeCurrentScreenBoxes(drawings);
     const hit = hitTestScreenBoxes(pt.x, pt.y, boxes, 9);
 
     if (!hit) {
       setSelectedDrawingId(null);
+      setChartNavigationEnabled(true);
       return; // Let Lightweight Charts pan normally!
     }
 
@@ -1292,15 +1427,22 @@ export default function MinBookChart({
     if (!hitDrawing) return;
 
     e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation?.();
     e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
     setSelectedDrawingId(hitDrawing.id);
     setDrawingColor(hitDrawing.color);
     setChartNavigationEnabled(false);
+    setCanvasCursor(getCursorForHit(hit, true));
 
     activeDragRef.current = {
       id: hitDrawing.id,
+      type: hitDrawing.type,
       mode: hit.mode,
-      startTimeSec: pt.timeSec,
+      startLogical: pt.logical,
       startPrice: pt.price,
       snapshot: { ...hitDrawing }
     };
@@ -1313,47 +1455,62 @@ export default function MinBookChart({
     if (drag) {
       const pt = getChartPointFromEvent(e.clientX, e.clientY);
       if (!pt) return;
-      const deltaTimeSec = pt.timeSec - drag.startTimeSec;
+      const deltaLogical = pt.logical - drag.startLogical;
       const deltaPrice = pt.price - drag.startPrice;
-      const updated = applyDrawingDrag(drag.snapshot, drag.mode, deltaTimeSec, deltaPrice, 0.25);
-      setDrawings((prev) => prev.map((d) => (d.id === drag.id ? updated : d)));
+      const updated = applyDrawingDragLogical(
+        drag.snapshot,
+        drag.mode,
+        deltaLogical,
+        deltaPrice,
+        barTimesRef.current,
+        intervalSecRef.current,
+        0.25
+      );
+      const nextList = liveDrawingsRef.current.map((d) => (d.id === drag.id ? updated : d));
+      liveDrawingsRef.current = nextList;
+
+      if (updated.type === "hline") {
+        const line = userHLineMapRef.current[drag.id];
+        if (line) {
+          line.applyOptions({ price: updated.price });
+        }
+        userDrawingsPrimitiveRef.current?.setDrawings(nextList);
+      } else {
+        userDrawingsPrimitiveRef.current?.setDrawings(nextList);
+      }
       return;
     }
 
-    // Hover cursor feedback when over selectable objects
+    // Hover cursor feedback & pre-lock chart scroll while pointing at a drawing
     const pt = getChartPointFromEvent(e.clientX, e.clientY);
     if (!pt || drawings.length === 0) {
       if (canvasCursor !== "default") setCanvasCursor("default");
+      setChartNavigationEnabled(true);
       return;
     }
-    const hit = hitTestScreenBoxes(pt.x, pt.y, computeCurrentScreenBoxes(), 8);
+    const hit = hitTestScreenBoxes(pt.x, pt.y, computeCurrentScreenBoxes(drawings), 8);
     if (!hit) {
       if (canvasCursor !== "default") setCanvasCursor("default");
-    } else if (hit.mode === "NW" || hit.mode === "SE") {
-      setCanvasCursor("nwse-resize");
-    } else if (hit.mode === "NE" || hit.mode === "SW") {
-      setCanvasCursor("nesw-resize");
-    } else if (hit.type === "hline") {
-      setCanvasCursor("ns-resize");
+      setChartNavigationEnabled(true);
     } else {
-      setCanvasCursor("grab");
+      setChartNavigationEnabled(false);
+      setCanvasCursor(getCursorForHit(hit, false));
     }
   };
 
   useEffect(() => {
     const endActiveDrag = () => {
-      if (activeDragRef.current) {
-        activeDragRef.current = null;
-        setChartNavigationEnabled(true);
-      }
+      commitActiveDrag();
     };
     window.addEventListener("pointerup", endActiveDrag);
     window.addEventListener("pointercancel", endActiveDrag);
+    window.addEventListener("blur", endActiveDrag);
     return () => {
       window.removeEventListener("pointerup", endActiveDrag);
       window.removeEventListener("pointercancel", endActiveDrag);
+      window.removeEventListener("blur", endActiveDrag);
     };
-  }, [setChartNavigationEnabled]);
+  }, [commitActiveDrag]);
 
   const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool !== "cursor") return;
@@ -1424,6 +1581,9 @@ export default function MinBookChart({
 
     if (activeTool === "rect") {
       if (!rectDraftStart) {
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
         setRectDraftStart({
           timeSec: pt.timeSec,
           price: pt.price,
@@ -1443,6 +1603,7 @@ export default function MinBookChart({
           color: drawingColor
         };
         setDrawings((prev) => [...prev, next]);
+        setSelectedDrawingId(next.id);
         setRectDraftStart(null);
         isDraggingRectRef.current = false;
         userDrawingsPrimitiveRef.current?.setPreview(null, null);
@@ -1479,6 +1640,11 @@ export default function MinBookChart({
   const handleDrawingPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (activeTool !== "rect" || !rectDraftStart || !isDraggingRectRef.current) return;
     isDraggingRectRef.current = false;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {}
     const pt = getChartPointFromEvent(e.clientX, e.clientY);
     if (!pt) return;
 
@@ -1495,6 +1661,7 @@ export default function MinBookChart({
         color: drawingColor
       };
       setDrawings((prev) => [...prev, next]);
+      setSelectedDrawingId(next.id);
       setRectDraftStart(null);
       userDrawingsPrimitiveRef.current?.setPreview(null, null);
       setActiveTool("cursor");
@@ -1619,32 +1786,45 @@ export default function MinBookChart({
             <span className="px-1.5 py-0.2 rounded bg-zinc-900 text-zinc-400 text-[10px] border border-zinc-800">
               {quote.symbol}
             </span>
+            {replayCutoffMs && (
+              <div className="flex items-center space-x-1">
+                <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[10px] border border-amber-500/30 font-semibold">
+                  REPLAY {replayLabel || ""}
+                </span>
+                {onToggleReplayOutcome && (
+                  <button
+                    type="button"
+                    onClick={onToggleReplayOutcome}
+                    className={`px-1.5 py-0.2 rounded text-[10px] border transition-colors ${
+                      showReplayOutcome
+                        ? "bg-sky-500/15 text-sky-300 border-sky-500/30 font-semibold"
+                        : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:text-zinc-200"
+                    }`}
+                    title="Toggle seeing candles after the selected replay hour"
+                  >
+                    {showReplayOutcome ? "Showing After" : "Reveal After"}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Timeframe Switcher (5m / 15m) */}
+          {/* Timeframe Switcher (5m / 15m / 1h / 4h) */}
           <div className="flex items-center rounded bg-zinc-900 p-0.5 border border-zinc-800">
-            <button
-              onClick={() => handleSelectTimeframe("5m")}
-              disabled={loadingTimeframe}
-              className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-colors ${
-                timeframe === "5m"
-                  ? "bg-zinc-700 text-zinc-100 font-bold shadow-xs"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              5m
-            </button>
-            <button
-              onClick={() => handleSelectTimeframe("15m")}
-              disabled={loadingTimeframe}
-              className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-colors ${
-                timeframe === "15m"
-                  ? "bg-zinc-700 text-zinc-100 font-bold shadow-xs"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              15m
-            </button>
+            {(["5m", "15m", "1h", "4h"] as const).map((tf) => (
+              <button
+                key={tf}
+                onClick={() => handleSelectTimeframe(tf)}
+                disabled={loadingTimeframe}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-colors ${
+                  timeframe === tf
+                    ? "bg-zinc-700 text-zinc-100 font-bold shadow-xs"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {tf}
+              </button>
+            ))}
             {loadingTimeframe && (
               <RefreshCw className="w-3 h-3 text-zinc-400 animate-spin ml-1 mr-1" />
             )}
@@ -1949,8 +2129,26 @@ export default function MinBookChart({
 
       {/* 2. Chart Canvas Container with HUD Overlays */}
       <div
+        onMouseDownCapture={handleCanvasMouseDownCapture}
         onPointerDownCapture={handleCanvasPointerDownCapture}
         onPointerMove={handleCanvasPointerMoveCapture}
+        onPointerUpCapture={(e) => {
+          if (activeDragRef.current) {
+            try {
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+            } catch {}
+            commitActiveDrag();
+          }
+        }}
+        onPointerCancelCapture={() => commitActiveDrag()}
+        onPointerLeave={() => {
+          if (!activeDragRef.current) {
+            setChartNavigationEnabled(true);
+            if (canvasCursor !== "default") setCanvasCursor("default");
+          }
+        }}
         onDoubleClick={handleCanvasDoubleClick}
         style={{ cursor: activeTool === "cursor" ? canvasCursor : "crosshair" }}
         className="relative w-full h-[320px] sm:h-[440px] lg:h-[540px] xl:h-[600px] 2xl:h-[660px] bg-[#09090b]"

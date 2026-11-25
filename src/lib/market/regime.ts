@@ -169,7 +169,7 @@ export function evaluateBiasAndRegime(
     verdict = "STAND ASIDE / HIGH VOL";
     regimeRiskMultiplier = 0.0;
     confidence = "HIGH";
-    summary = "Severe whipsaw risk. Market structure conflicting with backwardation or high tail-risk volatility surface. Capital preservation priority.";
+    summary = "High risk of sharp two-way reversals (stop-runs on both sides). Market structure conflicting with backwardation or high tail-risk volatility surface. Capital preservation priority.";
   } else {
     verdict = "CAUTION / CHOP RISK";
     confidence = "LOW";

@@ -351,10 +351,11 @@ export function computeSessionLevels(
   intradayBars: OHLCVBar[],
   ivPct: number = 24.0,
   esData?: SMTInputData,
-  targetDateInput?: string
+  targetDateInput?: string,
+  nowInput?: Date
 ): { sessionMetrics: SessionMetrics; keyLevels: KeyLevel[] } {
   // Resolve CME session clock context
-  const sessionInfo = getCMESessionInfo();
+  const sessionInfo = getCMESessionInfo(nowInput);
   const targetTradeDate = targetDateInput || sessionInfo.targetTradeDate;
   const priorTradeDate = sessionInfo.priorTradeDate;
 

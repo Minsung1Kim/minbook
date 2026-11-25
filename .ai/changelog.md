@@ -773,3 +773,33 @@ All notable changes and architectural decisions are logged here.
   - `npx tsc --noEmit`: **0 errors**.
   - `npm test`: **18/18 suites, 135/135 tests passing** (including AES-256-GCM key storage/masking/redaction and 1H/4H/Day prediction tests).
   - `npm run build`: **28/28 routes compiled cleanly with 0 warnings**.
+
+## [2026-11-24] - Chart Square/Drawing Physics Overhaul & 1H / 4H Timeframes
+- **Square / Drawing Manipulation Physics ([primitives.ts](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/primitives.ts), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
+  - Switched active drag and resize math to bar-index (`logical`) coordinates via `applyDrawingDragLogical` (using `timeSecToLogicalIndex` / `logicalIndexToTimeSec`), preventing boxes from stretching or collapsing across CME daily maintenance breaks (`17:00–18:00 ET`) and 49-hour weekends.
+  - Eliminated chart pan fighting during object interaction by combining `onMouseDownCapture` + `onPointerDownCapture` (`stopPropagation` + `setPointerCapture`), hover pre-locking `handleScroll`/`handleScale`, and clean pointer-release restoration.
+  - Replaced per-pixel React `setDrawings` + `localStorage` + price-line recreation during drag with 60fps ref updates (`liveDrawingsRef` -> `UserDrawingsPrimitive.setDrawings` and `IPriceLine.applyOptions`) committed once on `pointerup` / `pointercancel`.
+  - Clamped event coordinates inside the plot pane (`chart.timeScale().width()` x `chart.paneSize().height()`) so dragging near the right price axis or bottom time axis remains responsive.
+  - Added 4 edge midpoint resize handles (`N`, `S`, `E`, `W`) in `UserDrawingsRenderer` and `hitTestScreenBoxes` with adaptive corner tolerance on smaller rectangles and `ew-resize` / `ns-resize` / `grabbing` cursors.
+- **1H & 4H Timeframe Support ([provider.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/provider.ts), [yahoo.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/yahoo.ts), [polygon.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/polygon.ts), [fallback.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/fallback.ts), [chart/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/market-data/chart/route.ts), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
+  - Extended `ChartInterval` and `/api/market-data/chart` to support `"1h"` (30-day lookback) and `"4h"` (45-day `1h` fetch aggregated via exported `aggregate1hTo4hBars` anchored to `18:00 ET` CME Globex open).
+  - Updated the chart timeframe switcher to `5m`, `15m`, `1h`, and `4h`, with readable initial visible bar range (~120 candles) on higher timeframes and intraday-only gating for `09:30 OPEN` and footprint markers.
+- **Verification ([chart.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chart.test.ts)):**
+  - `npx eslint` on modified chart/market files: **0 new errors/warnings** on newly added code (pre-existing `@typescript-eslint/no-explicit-any`, `react-hooks/set-state-in-effect`, and unused-import lint items remain on untouched lines).
+  - `npx tsc --noEmit`: **0 errors**.
+  - `npm test`: **18/18 test files, 137/137 tests passing** (including 2 new tests in `chart.test.ts` covering `N`/`S`/`E`/`W` edge handles, weekend-gap `applyDrawingDragLogical`, and `aggregate1hTo4hBars`).
+  - `npm run build`: compiled cleanly with 0 errors.
+
+## [2026-11-24] - Plain-English Volatility Language, Pullback Level Sanity, & 12H Hour-by-Hour Replay
+- **Removed "whipsaw" / "wipsaw" Across Codebase ([plainEnglishBrief.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/plainEnglishBrief.ts), [regime.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/regime.ts), [riskGates.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/riskGates.ts), [playbook.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/playbook.ts), [yahoo.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/yahoo.ts), [market.ts](file:///Users/minsung/Documents/GitHub/minbook/src/types/market.ts), [grader.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/calibration/grader.ts)):**
+  - Replaced jargon (`High Whipsaw Risk`, `two-way whipsaws`, `WIPSAW`) with clear plain-English descriptions of sudden reversals in both directions that sweep stops on both sides.
+- **Fixed Horizon Outlook Pullback Selection ([plainEnglishBrief.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/plainEnglishBrief.ts)):**
+  - Enforced strict minimum distance (`>= 5` pts on the opposite side of spot) when choosing pullback retrace candidates in `HorizonPrediction`, preventing predictions from saying "Expecting a retrace to X (Gamma Flip)" when Gamma Flip equals or sits right on current spot. When price sits right on a key inflection level with no separate pullback level nearby, the outlook states it is testing/holding that level directly.
+- **Last 12 Hours Hour-by-Hour Prediction & Chart Replay ([replay.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/replay.ts), [levels.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/levels.ts), [Dashboard.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/Dashboard.tsx), [MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
+  - Built `build12HourReplayFrames` to reconstruct causal hourly checkpoints across the past 12 active trading hours directly from intraday bars (`computeSessionLevels` updated to accept `nowInput?: Date`), recomputing spot, VWAP, ONH/ONL, bias, 1H/4H/Day predictions, and actual realized `+1H`/`+4H` outcomes without lookahead leakage.
+  - Added interactive 12H timeline pills, `-1h` / `+1h` / `Back to Live` buttons, historical replay badges, and synchronized chart cutoff (`Reveal After` toggle + `REPLAY` pivot marker) across `5m`/`15m`/`1h`/`4h`.
+- **Verification ([replay_and_horizon.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/replay_and_horizon.test.ts)):**
+  - `npx eslint` on `replay.ts`, `replay_and_horizon.test.ts`, `plainEnglishBrief.ts`, `riskGates.ts`, `market.ts`: **0 errors, 0 warnings** (`Dashboard.tsx` shows only 4 pre-existing untouched errors).
+  - `npx tsc --noEmit`: **0 errors**.
+  - `npm test`: **19/19 test files, 139/139 tests passing** (`replay_and_horizon.test.ts`: 2 new tests passing).
+  - `npm run build`: compiled cleanly with 0 errors (`28` app routes).

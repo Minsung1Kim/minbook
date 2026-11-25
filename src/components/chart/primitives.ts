@@ -656,8 +656,10 @@ class UserDrawingsRenderer implements IPrimitivePaneRenderer {
         ctx.fillRect(left, top, width, height);
         ctx.strokeRect(left, top, width, height);
 
-        // Draw corner resize handles when selected
+        // Draw corner & edge resize handles when selected
         if (r.isSelected && !r.isPreview) {
+          const midX = left + width / 2;
+          const midY = top + height / 2;
           const corners: Array<[number, number]> = [
             [left, top],
             [left + width, top],
@@ -671,6 +673,25 @@ class UserDrawingsRenderer implements IPrimitivePaneRenderer {
             ctx.lineWidth = 1.5;
             ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2);
             ctx.strokeRect(cx - hs, cy - hs, hs * 2, hs * 2);
+          }
+
+          // Edge midpoint handles when box has sufficient size
+          if (width > 18 || height > 18) {
+            const edges: Array<[number, number]> = [];
+            if (width > 18) {
+              edges.push([midX, top], [midX, top + height]);
+            }
+            if (height > 18) {
+              edges.push([left, midY], [left + width, midY]);
+            }
+            const ehs = 3;
+            for (const [ex, ey] of edges) {
+              ctx.fillStyle = "#ffffff";
+              ctx.strokeStyle = palette.hex;
+              ctx.lineWidth = 1.25;
+              ctx.fillRect(ex - ehs, ey - ehs, ehs * 2, ehs * 2);
+              ctx.strokeRect(ex - ehs, ey - ehs, ehs * 2, ehs * 2);
+            }
           }
         }
         ctx.restore();
@@ -875,7 +896,9 @@ export class UserDrawingsPrimitive implements ISeriesPrimitive<Time> {
 }
 
 export type RectCornerHandle = "NW" | "NE" | "SW" | "SE";
-export type DrawingDragMode = "MOVE" | RectCornerHandle;
+export type RectEdgeHandle = "N" | "S" | "E" | "W";
+export type RectHandle = RectCornerHandle | RectEdgeHandle;
+export type DrawingDragMode = "MOVE" | RectHandle;
 
 export interface DrawingScreenBox {
   drawing: ChartDrawing;
@@ -933,6 +956,14 @@ export function hitTestScreenBoxes(
       const right = Math.max(item.x1, item.x2);
       const top = Math.min(item.y1, item.y2);
       const bottom = Math.max(item.y1, item.y2);
+      const width = right - left;
+      const height = bottom - top;
+
+      // Adaptive corner tolerance so small boxes remain movable from their center
+      const cornerTol =
+        width >= 24 && height >= 24
+          ? tolerance + 2
+          : Math.min(tolerance + 2, Math.max(5, Math.floor(Math.min(width, height) / 3)));
 
       // Corner resize handles get highest priority inside/near rect
       const corners: Array<{ mode: RectCornerHandle; cx: number; cy: number }> = [
@@ -942,8 +973,25 @@ export function hitTestScreenBoxes(
         { mode: "SE", cx: right, cy: bottom }
       ];
       for (const c of corners) {
-        if (Math.abs(px - c.cx) <= tolerance + 2 && Math.abs(py - c.cy) <= tolerance + 2) {
+        if (Math.abs(px - c.cx) <= cornerTol && Math.abs(py - c.cy) <= cornerTol) {
           return { id: d.id, type: "rect", mode: c.mode };
+        }
+      }
+
+      // Edge resize strips (N/S/E/W) after corners when box has enough room
+      const edgeTol = Math.min(6, tolerance);
+      if (height > 18 && width > 18) {
+        if (Math.abs(py - top) <= edgeTol && px >= left && px <= right) {
+          return { id: d.id, type: "rect", mode: "N" };
+        }
+        if (Math.abs(py - bottom) <= edgeTol && px >= left && px <= right) {
+          return { id: d.id, type: "rect", mode: "S" };
+        }
+        if (Math.abs(px - left) <= edgeTol && py >= top && py <= bottom) {
+          return { id: d.id, type: "rect", mode: "W" };
+        }
+        if (Math.abs(px - right) <= edgeTol && py >= top && py <= bottom) {
+          return { id: d.id, type: "rect", mode: "E" };
         }
       }
 
@@ -1000,17 +1048,100 @@ export function applyDrawingDrag(
   let nextLowP = lowP;
   let nextHighP = highP;
 
-  if (mode === "NW") {
+  if (mode === "NW" || mode === "W" || mode === "SW") {
     nextMinT = Math.round(minT + deltaTimeSec);
-    nextHighP = snap(highP + deltaPrice);
-  } else if (mode === "NE") {
+  }
+  if (mode === "NE" || mode === "E" || mode === "SE") {
     nextMaxT = Math.round(maxT + deltaTimeSec);
+  }
+  if (mode === "NW" || mode === "N" || mode === "NE") {
     nextHighP = snap(highP + deltaPrice);
-  } else if (mode === "SW") {
-    nextMinT = Math.round(minT + deltaTimeSec);
+  }
+  if (mode === "SW" || mode === "S" || mode === "SE") {
     nextLowP = snap(lowP + deltaPrice);
-  } else if (mode === "SE") {
-    nextMaxT = Math.round(maxT + deltaTimeSec);
+  }
+
+  return {
+    ...original,
+    timeSec1: nextMinT,
+    timeSec2: nextMaxT,
+    price1: nextHighP,
+    price2: nextLowP
+  };
+}
+
+/**
+ * Applies drawing move/resize in chart bar-index space (`deltaLogical`) rather than raw
+ * timestamp seconds so horizontal dragging maintains consistent visual width across CME
+ * daily breaks and weekends.
+ */
+export function applyDrawingDragLogical(
+  original: ChartDrawing,
+  mode: DrawingDragMode,
+  deltaLogical: number,
+  deltaPrice: number,
+  barsTimes: number[],
+  intervalSec: number,
+  snapTick: number = 0.25
+): ChartDrawing {
+  const snap = (p: number) => Math.round(p / snapTick) * snapTick;
+
+  if (barsTimes.length === 0 || intervalSec <= 0) {
+    return applyDrawingDrag(original, mode, deltaLogical * Math.max(intervalSec, 1), deltaPrice, snapTick);
+  }
+
+  const shiftTimeByLogical = (timeSec: number, dl: number): number => {
+    const idx = timeSecToLogicalIndex(barsTimes, intervalSec, timeSec);
+    if (idx === null) return Math.round(timeSec + dl * intervalSec);
+    return logicalIndexToTimeSec(barsTimes, intervalSec, idx + dl) ?? Math.round(timeSec + dl * intervalSec);
+  };
+
+  if (original.type === "hline") {
+    return {
+      ...original,
+      price: snap(original.price + deltaPrice)
+    };
+  }
+
+  if (original.type === "text") {
+    return {
+      ...original,
+      timeSec: shiftTimeByLogical(original.timeSec, deltaLogical),
+      price: snap(original.price + deltaPrice)
+    };
+  }
+
+  // RectDrawing
+  if (mode === "MOVE") {
+    return {
+      ...original,
+      timeSec1: shiftTimeByLogical(original.timeSec1, deltaLogical),
+      timeSec2: shiftTimeByLogical(original.timeSec2, deltaLogical),
+      price1: snap(original.price1 + deltaPrice),
+      price2: snap(original.price2 + deltaPrice)
+    };
+  }
+
+  const minT = Math.min(original.timeSec1, original.timeSec2);
+  const maxT = Math.max(original.timeSec1, original.timeSec2);
+  const lowP = Math.min(original.price1, original.price2);
+  const highP = Math.max(original.price1, original.price2);
+
+  let nextMinT = minT;
+  let nextMaxT = maxT;
+  let nextLowP = lowP;
+  let nextHighP = highP;
+
+  if (mode === "NW" || mode === "W" || mode === "SW") {
+    nextMinT = shiftTimeByLogical(minT, deltaLogical);
+  }
+  if (mode === "NE" || mode === "E" || mode === "SE") {
+    nextMaxT = shiftTimeByLogical(maxT, deltaLogical);
+  }
+  if (mode === "NW" || mode === "N" || mode === "NE") {
+    nextHighP = snap(highP + deltaPrice);
+  }
+  if (mode === "SW" || mode === "S" || mode === "SE") {
     nextLowP = snap(lowP + deltaPrice);
   }
 

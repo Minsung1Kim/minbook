@@ -1,4 +1,4 @@
-import { MarketDataProvider, MacroDataResult } from "./provider";
+import { MarketDataProvider, MacroDataResult, ChartInterval } from "./provider";
 import { OHLCVBar, MarketQuote, EconomicEvent } from "@/types/market";
 import { YahooFinanceProvider } from "./yahoo";
 
@@ -66,7 +66,7 @@ export class PolygonProvider implements MarketDataProvider {
     return this.yahooFallback.getDailyBars(symbol, days);
   }
 
-  async getIntradayBars(symbol: string, interval?: "1m" | "5m" | "15m"): Promise<OHLCVBar[]> {
+  async getIntradayBars(symbol: string, interval?: ChartInterval): Promise<OHLCVBar[]> {
     return this.yahooFallback.getIntradayBars(symbol, interval);
   }
 

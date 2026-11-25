@@ -25,12 +25,14 @@ export interface MacroDataResult {
   };
 }
 
+export type ChartInterval = "1m" | "5m" | "15m" | "1h" | "4h";
+
 export interface MarketDataProvider {
   readonly name: string;
   isConfigured(): boolean;
   getQuote(symbol: string): Promise<MarketQuote>;
   getDailyBars(symbol: string, days?: number): Promise<OHLCVBar[]>;
-  getIntradayBars(symbol: string, interval?: "1m" | "5m" | "15m"): Promise<OHLCVBar[]>;
+  getIntradayBars(symbol: string, interval?: ChartInterval): Promise<OHLCVBar[]>;
   getMacroData(): Promise<MacroDataResult>;
   getEconomicEvents(): Promise<EconomicEvent[]>;
   clearCache?(): void;

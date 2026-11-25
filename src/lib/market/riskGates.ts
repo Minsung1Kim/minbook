@@ -92,7 +92,7 @@ export function evaluateLayer1RiskGates(params: EvaluateRiskGatesParams): Layer1
     if (termStructureRegime === "BACKWARDATION (STRESS)" || termRatio > 1.0) {
       sizeMultiplier = 0.5;
       targetCapMultipleR = Math.min(targetCapMultipleR, 1.8);
-      const note = `TERM STRUCTURE BACKWARDATION (VIX/VIX3M: ${termRatio.toFixed(2)} > 1.00): Inverted volatility curve reflects acute institutional crash hedging. Severe whipsaw risk; risk scaled to 0.5x.`;
+      const note = `TERM STRUCTURE BACKWARDATION (VIX/VIX3M: ${termRatio.toFixed(2)} > 1.00): Inverted volatility curve reflects acute institutional crash hedging. High risk of sudden reversals in both directions; risk scaled to 0.5x.`;
       gateDetails.push(note);
       activeVetoes.push(note);
     }

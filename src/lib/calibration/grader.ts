@@ -277,9 +277,9 @@ export function computePredictionGrade(
     const downMove = Math.max(0, openPrice930 - windowLow);
     const netMove = Math.abs(windowClose1000 - openPrice930);
     const directionalEfficiency = totalRange > 0 ? netMove / totalRange : 0;
-    const isTwoWayWhipsaw = upMove >= atr15m * 0.75 && downMove >= atr15m * 0.75;
+    const isTwoWayReversal = upMove >= atr15m * 0.75 && downMove >= atr15m * 0.75;
     const isCompressedChop = totalRange <= atr15m * 1.35 || directionalEfficiency < 0.35;
-    biasCorrect = isTwoWayWhipsaw || isCompressedChop;
+    biasCorrect = isTwoWayReversal || isCompressedChop;
     tripleBarrierOutcome = "NO_FILL";
   } else if (isFilled && fillBarIdx >= 0) {
     const stopPts = Math.max(3.0, Math.abs(fillPrice - stopLoss));

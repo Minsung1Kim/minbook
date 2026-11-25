@@ -125,7 +125,7 @@ export interface VolatilitySurface {
   termStructureRegime: "CONTANGO (NORMAL)" | "ELEVATED" | "BACKWARDATION (STRESS)";
   shortTermShockRatio: number; // vix9d / vix
   isShortTermShock: boolean; // > 1.15
-  vvixRegime: "NORMAL (<100)" | "CAUTION (100-110)" | "HIGH TAIL / WHIPSAW RISK (>=110)";
+  vvixRegime: "NORMAL (<100)" | "CAUTION (100-110)" | "HIGH TAIL / SHARP REVERSAL RISK (>=110)";
   realizedVolYZ20d: number; // Yang-Zhang 20d annualized RV
   realizedVolYZ10d: number; // Yang-Zhang 10d annualized RV
   realizedVolGK: number; // Garman-Klass annualized RV

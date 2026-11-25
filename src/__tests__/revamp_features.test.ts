@@ -268,7 +268,7 @@ describe("Revamped MinBook Features & Audit Integrity", () => {
       expect(mapped.openingFlow).toBe(1);
     });
 
-    it("grades STAND ASIDE / HIGH VOL as TRUE when a violent two-way whipsaw occurs", () => {
+    it("grades STAND ASIDE / HIGH VOL as TRUE when sharp two-way reversals occur", () => {
       const cautionPred: DailyPrediction = {
         id: "pred_2026-11-24",
         targetTradeDate: "2026-11-24",
@@ -287,7 +287,7 @@ describe("Revamped MinBook Features & Audit Integrity", () => {
         createdAt: "2026-11-24T14:32:03.834Z"
       };
 
-      // Open 26364, flushes -172 pts to 26192, rips +145 pts to 26509 -> classic two-way whipsaw
+      // Open 26364, flushes -172 pts to 26192, rips +145 pts to 26509 -> sharp two-way reversal
       const bars: OHLCVBar[] = [
         { timestamp: "2026-11-24T14:30:00.000Z", open: 26364, high: 26380, low: 26192, close: 26250, volume: 5000 },
         { timestamp: "2026-11-24T14:40:00.000Z", open: 26250, high: 26509, low: 26240, close: 26480, volume: 6000 },

@@ -12,8 +12,10 @@ import {
   DRAWING_COLOR_PALETTE,
   hitTestScreenBoxes,
   applyDrawingDrag,
+  applyDrawingDragLogical,
   ChartDrawing
 } from "../components/chart/primitives";
+import { aggregate1hTo4hBars } from "../lib/market/yahoo";
 import { OHLCVBar } from "../types/market";
 
 describe("MinBookChart Unit Tests", () => {
@@ -202,5 +204,96 @@ describe("MinBookChart Unit Tests", () => {
       expect(resizedRect.timeSec2).toBe(2800);
       expect(resizedRect.price2).toBe(26250);
     }
+
+    // Edge handles (N, S, E, W) hit detection
+    expect(hitTestScreenBoxes(150, 121, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "N"
+    });
+    expect(hitTestScreenBoxes(150, 179, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "S"
+    });
+    expect(hitTestScreenBoxes(101, 150, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "W"
+    });
+    expect(hitTestScreenBoxes(199, 150, boxes)).toEqual({
+      id: "d-rect",
+      type: "rect",
+      mode: "E"
+    });
+  });
+
+  it("preserves rect bar-width across CME session gaps using applyDrawingDragLogical", () => {
+    // 1h bars with a 49-hour weekend gap between index 1 (Fri 16:00 ET) and index 2 (Sun 18:00 ET)
+    const barsTimes = [
+      1000,
+      4600,
+      181000,
+      184600,
+      188200
+    ];
+    const rect: ChartDrawing = {
+      id: "r-gap",
+      type: "rect",
+      timeSec1: 1000, // bar index 0
+      price1: 26300,
+      timeSec2: 4600, // bar index 1 (1 bar wide)
+      price2: 26250,
+      color: "AMBER"
+    };
+
+    // Move right by +2 bars across the weekend gap
+    const movedAcrossGap = applyDrawingDragLogical(rect, "MOVE", 2, 10, barsTimes, 3600, 0.25);
+    expect(movedAcrossGap.type).toBe("rect");
+    if (movedAcrossGap.type === "rect") {
+      expect(movedAcrossGap.timeSec1).toBe(181000); // index 2
+      expect(movedAcrossGap.timeSec2).toBe(184600); // index 3 (still 1 bar wide)
+      expect(movedAcrossGap.price1).toBe(26310);
+      expect(movedAcrossGap.price2).toBe(26260);
+    }
+
+    // Resize East edge by +1 bar while keeping West edge anchored
+    const widened = applyDrawingDragLogical(movedAcrossGap, "E", 1, 0, barsTimes, 3600, 0.25);
+    expect(widened.type).toBe("rect");
+    if (widened.type === "rect") {
+      expect(widened.timeSec1).toBe(181000);
+      expect(widened.timeSec2).toBe(188200); // index 4
+    }
+  });
+
+  it("aggregates 1h bars into CME Globex 18:00 ET aligned 4h candles", () => {
+    // 2026-11-23 is EST (UTC-5): 18:00 ET = 23:00 UTC (Nov 22), 21:00 ET = 02:00 UTC (Nov 23)
+    const hourlyBars: OHLCVBar[] = [
+      { timestamp: "2026-11-22T23:00:00.000Z", open: 26000, high: 26020, low: 25990, close: 26010, volume: 100 },
+      { timestamp: "2026-11-23T00:00:00.000Z", open: 26010, high: 26050, low: 26005, close: 26040, volume: 150 },
+      { timestamp: "2026-11-23T01:00:00.000Z", open: 26040, high: 26045, low: 26015, close: 26025, volume: 120 },
+      // Next 4h bucket starts at 22:00 ET (03:00 UTC)
+      { timestamp: "2026-11-23T03:00:00.000Z", open: 26025, high: 26060, low: 26020, close: 26055, volume: 200 },
+      { timestamp: "2026-11-23T04:00:00.000Z", open: 26055, high: 26080, low: 26045, close: 26070, volume: 180 }
+    ];
+
+    const bars4h = aggregate1hTo4hBars(hourlyBars);
+    expect(bars4h).toHaveLength(2);
+    expect(bars4h[0]).toEqual({
+      timestamp: "2026-11-22T23:00:00.000Z",
+      open: 26000,
+      high: 26050,
+      low: 25990,
+      close: 26025,
+      volume: 370
+    });
+    expect(bars4h[1]).toEqual({
+      timestamp: "2026-11-23T03:00:00.000Z",
+      open: 26025,
+      high: 26080,
+      low: 26020,
+      close: 26070,
+      volume: 380
+    });
   });
 });

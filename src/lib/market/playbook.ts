@@ -187,7 +187,7 @@ export function generateTacticalPlaybook(
     likelihoodTier = "LOW";
     isRetraceProbable = false;
     retraceType = "CHOP / TWO-WAY";
-    verdictHeadline = "CHOP PINCH — HIGH WHIPSAW RISK BETWEEN PDC & VWAP";
+    verdictHeadline = "CHOP PINCH — SHARP TWO-WAY REVERSALS BETWEEN PDC & VWAP";
     explanation = `Price is pinched within ${Math.abs(distToVwap)} pts of VWAP and ${Math.abs(distToPdc)} pts of PDC (< 0.35x 15m ATR). Neither buyers nor sellers have directional control.`;
     expectedPullbackDepthPts = Math.round(pinchThreshold);
     retraceActionAdvice = `PATIENCE REQUIRED: Do not trade between ${Math.min(vwap, pdc).toFixed(0)} and ${Math.max(vwap, pdc).toFixed(0)}. Demand a confirmed 15-minute directional expansion before entering today's 1 trade.`;
@@ -200,7 +200,7 @@ export function generateTacticalPlaybook(
     verdictHeadline = "HIGH RETRACE PROBABILITY — CLASSIC OPEN-TEST-DRIVE SETUP";
     explanation = `Market structure is holding cleanly above PDC (${pdc}). Opening inside upper Globex quadrant favors an initial 9:34–9:45 AM test of VWAP (${vwap}) / ON Mid (${onMid}) followed by strong HTF continuation toward ONH (${onh}) and PDH (${pdh}).`;
     expectedPullbackDepthPts = Math.round(Math.abs(currentPrice - Math.min(vwap, onMid)));
-    retraceActionAdvice = `Set alerts for ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Wait for the 9:30 AM opening whipsaw to settle, then enter on confirmed retrace absorption.`;
+    retraceActionAdvice = `Set alerts for ${Math.min(vwap, onMid).toFixed(1)} – ${Math.max(vwap, onMid).toFixed(1)}. Wait for the 9:30 AM opening two-way swings to settle, then enter on confirmed retrace absorption.`;
   }
 
   // Phase-Aware Adjustments to Retrace Analysis
@@ -290,13 +290,13 @@ export function generateTacticalPlaybook(
       traderDirective: `Stand aside during the 9:30–9:33 AM sweep. Wait for the MSS reclaim, then execute SHORT only on a retrace to VWAP (${vwap.toFixed(1)}) after the trap is confirmed.`
     };
   } else {
-    stopHuntProbability = "MODERATE (55% OPENING CHOP / WIPSAW)";
+    stopHuntProbability = "MODERATE (55% OPENING TWO-WAY CHOP)";
     stopHuntDetails = {
       sideBeingHunted: "Overnight Midpoint (Opening Chop Trap)",
       sweepLevelPrice: onMid,
       sweepLevelName: `Overnight 50% Midpoint (${onMid.toFixed(1)})`,
       targetPoolType: "RANGE COMPRESSION (TWO-WAY)",
-      actionableAdvice: `Price is sitting right at the Overnight 50% Midpoint (${onMid.toFixed(1)}). Expect a choppy 2-way whipsaw during the first 3 minutes as algorithms probe both sides. Keep your hands off until 9:34 AM when real institutional volume begins.`,
+      actionableAdvice: `Price is sitting right at the Overnight 50% Midpoint (${onMid.toFixed(1)}). Expect sharp two-way reversals during the first 3 minutes as algorithms run stops on both sides. Keep your hands off until 9:34 AM when real institutional volume begins.`,
       institutionalMechanism: `When price sits at the 50% midpoint before the open, market makers sweep both local swing highs and lows to clear weak leverage on both sides before establishing the true directional trend.`,
       theTrap: `Taking trades in the first 3 minutes of the open results in getting chopped up on both longs and shorts.`,
       theShiftMSS: `Wait for price to expand toward either the Overnight High (${onh.toFixed(1)}) or Low (${onl.toFixed(1)}), sweep liquidity, and show a clear 5m Market Structure Shift.`,

@@ -1,4 +1,4 @@
-import { MarketDataProvider, MacroDataResult } from "./provider";
+import { MarketDataProvider, MacroDataResult, ChartInterval } from "./provider";
 import { OHLCVBar, MarketQuote, EconomicEvent } from "@/types/market";
 import { getUSEconomicEvents } from "./economicCalendar";
 
@@ -60,10 +60,19 @@ export class SeedFallbackProvider implements MarketDataProvider {
     return bars;
   }
 
-  async getIntradayBars(symbol: string, interval: "1m" | "5m" | "15m" = "15m"): Promise<OHLCVBar[]> {
+  async getIntradayBars(symbol: string, interval: ChartInterval = "15m"): Promise<OHLCVBar[]> {
     const bars: OHLCVBar[] = [];
     const count = 40;
-    const stepMs = interval === "1m" ? 60000 : interval === "5m" ? 300000 : 900000;
+    const stepMs =
+      interval === "1m"
+        ? 60000
+        : interval === "5m"
+        ? 300000
+        : interval === "1h"
+        ? 3600000
+        : interval === "4h"
+        ? 14400000
+        : 900000;
     const startTime = Date.now() - count * stepMs;
     let price = 26740.0;
 

@@ -1,4 +1,4 @@
-import { MarketDataProvider, MacroDataResult } from "./provider";
+import { MarketDataProvider, MacroDataResult, ChartInterval } from "./provider";
 import {
   OHLCVBar,
   MarketQuote,
@@ -23,6 +23,66 @@ const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 interface CacheEntry<T> {
   data: T;
   cachedAt: number;
+}
+
+export function aggregate1hTo4hBars(bars: OHLCVBar[]): OHLCVBar[] {
+  if (bars.length === 0) return [];
+  const sorted = [...bars].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  const buckets = new Map<string, OHLCVBar>();
+  const orderedKeys: string[] = [];
+
+  for (const bar of sorted) {
+    const dt = new Date(bar.timestamp);
+    if (Number.isNaN(dt.getTime())) continue;
+
+    // Anchor 4H candles to CME Globex open (18:00 ET): 18-21, 22-01, 02-05, 06-09, 10-13, 14-17
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(dt);
+
+    const year = parseInt(parts.find((p) => p.type === "year")?.value || "1970", 10);
+    const month = parseInt(parts.find((p) => p.type === "month")?.value || "1", 10);
+    const day = parseInt(parts.find((p) => p.type === "day")?.value || "1", 10);
+    const rawHour = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+    const hourET = rawHour === 24 ? 0 : rawHour;
+
+    // Shift date forward by 1 day if hour >= 18 so 18:00-01:59 share the same CME trade day key
+    const anchorDate = new Date(Date.UTC(year, month - 1, day));
+    if (hourET >= 18) {
+      anchorDate.setUTCDate(anchorDate.getUTCDate() + 1);
+    }
+    const dayKey = anchorDate.toISOString().slice(0, 10);
+    const slot = Math.floor(((hourET + 6) % 24) / 4);
+    const bucketKey = `${dayKey}_${slot}`;
+
+    const existing = buckets.get(bucketKey);
+    if (!existing) {
+      orderedKeys.push(bucketKey);
+      buckets.set(bucketKey, {
+        timestamp: bar.timestamp,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: bar.volume ?? 0,
+      });
+    } else {
+      existing.high = Math.max(existing.high, bar.high);
+      existing.low = Math.min(existing.low, bar.low);
+      existing.close = bar.close;
+      existing.volume += bar.volume ?? 0;
+    }
+  }
+
+  return orderedKeys.map((k) => buckets.get(k)!);
 }
 
 export class YahooFinanceProvider implements MarketDataProvider {
@@ -169,23 +229,35 @@ export class YahooFinanceProvider implements MarketDataProvider {
     }
   }
 
-  async getIntradayBars(symbol: string, interval: "1m" | "5m" | "15m" = "15m"): Promise<OHLCVBar[]> {
+  async getIntradayBars(symbol: string, interval: ChartInterval = "15m"): Promise<OHLCVBar[]> {
     const yfSymbol = this.mapSymbol(symbol);
     const cacheKey = `intraday_${yfSymbol}_${interval}`;
     const cached = this.chartCache.get(cacheKey);
 
-    if (cached && Date.now() - cached.cachedAt < 20000) {
+    const ttlMs = interval === "1h" || interval === "4h" ? 60000 : 20000;
+    if (cached && Date.now() - cached.cachedAt < ttlMs) {
       return cached.data;
     }
 
     try {
-      const period1 = new Date(Date.now() - 4 * 24 * 3600 * 1000);
+      const lookbackDays =
+        interval === "1m"
+          ? 2
+          : interval === "5m"
+          ? 4
+          : interval === "1h"
+          ? 30
+          : interval === "4h"
+          ? 45
+          : 5;
+      const yfInterval = interval === "4h" ? "1h" : interval;
+      const period1 = new Date(Date.now() - lookbackDays * 24 * 3600 * 1000);
       const chart = await yf.chart(yfSymbol, {
         period1,
-        interval: interval as any
+        interval: yfInterval as "1m" | "5m" | "15m" | "1h",
       });
 
-      const bars: OHLCVBar[] = (chart.quotes || [])
+      const rawBars: OHLCVBar[] = (chart.quotes || [])
         .filter(
           (q): q is typeof q & { open: number; high: number; low: number; close: number } =>
             typeof q.open === "number" &&
@@ -202,6 +274,8 @@ export class YahooFinanceProvider implements MarketDataProvider {
           close: Math.round(q.close * 100) / 100,
           volume: q.volume ?? 0
         }));
+
+      const bars = interval === "4h" ? aggregate1hTo4hBars(rawBars) : rawBars;
 
       this.chartCache.set(cacheKey, { data: bars, cachedAt: Date.now() });
       return bars;
@@ -337,7 +411,7 @@ export class YahooFinanceProvider implements MarketDataProvider {
 
     const vvixRegime =
       vvixPrice >= 110
-        ? "HIGH TAIL / WHIPSAW RISK (>=110)"
+        ? "HIGH TAIL / SHARP REVERSAL RISK (>=110)"
         : vvixPrice >= 100
         ? "CAUTION (100-110)"
         : "NORMAL (<100)";

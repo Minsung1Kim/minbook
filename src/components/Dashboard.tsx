@@ -8,6 +8,7 @@ import { OpenBriefData, KeyLevel } from "@/types/market";
 import { UserProfile } from "@/types/app";
 import { useTimezone } from "@/context/TimezoneContext";
 import { buildPlainEnglishBrief, ActionableArea } from "@/lib/market/plainEnglishBrief";
+import { build12HourReplayFrames } from "@/lib/market/replay";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   RefreshCw,
@@ -21,6 +22,9 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
   ShieldAlert,
   BarChart3,
 } from "lucide-react";
@@ -60,6 +64,8 @@ export function Dashboard() {
   const [copiedPriceId, setCopiedPriceId] = useState<string | null>(null);
   const [showQuantMath, setShowQuantMath] = useState<boolean>(false);
   const [showGameplan, setShowGameplan] = useState<boolean>(true);
+  const [selectedReplayId, setSelectedReplayId] = useState<string | null>(null);
+  const [showReplayOutcome, setShowReplayOutcome] = useState<boolean>(false);
 
   useEffect(() => {
     try {
@@ -178,13 +184,61 @@ export function Dashboard() {
 
   const { timezone, timezoneCode } = useTimezone();
 
-  const quote = brief?.quote;
-  const plan = brief?.tacticalPlan;
+  const replayFrames = useMemo(() => {
+    if (!brief) return [];
+    return build12HourReplayFrames(brief, 12);
+  }, [brief]);
 
-  const plainBrief = useMemo(() => {
+  const selectedReplayIndex = useMemo(() => {
+    if (!selectedReplayId) return -1;
+    return replayFrames.findIndex((f) => f.id === selectedReplayId);
+  }, [replayFrames, selectedReplayId]);
+
+  const selectedReplayFrame =
+    selectedReplayIndex >= 0 ? replayFrames[selectedReplayIndex] : null;
+
+  const activeBrief = selectedReplayFrame ? selectedReplayFrame.replayBrief : brief;
+  const quote = activeBrief?.quote;
+  const plan = activeBrief?.tacticalPlan;
+
+  const livePlainBrief = useMemo(() => {
     if (!brief) return null;
     return buildPlainEnglishBrief(brief, new Date(nowTick));
   }, [brief, nowTick]);
+
+  const plainBrief = selectedReplayFrame ? selectedReplayFrame.plainBrief : livePlainBrief;
+
+  const formatClockHourCompact = useCallback(
+    (ms: number) =>
+      new Date(ms).toLocaleTimeString("en-US", {
+        timeZone: timezone,
+        hour12: true,
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    [timezone]
+  );
+
+  const selectedReplayLabel = selectedReplayFrame
+    ? formatClockHourCompact(selectedReplayFrame.anchorTimeMs)
+    : undefined;
+
+  const stepReplayHour = (delta: -1 | 1) => {
+    if (replayFrames.length === 0) return;
+    if (!selectedReplayFrame) {
+      if (delta === -1) {
+        setSelectedReplayId(replayFrames[replayFrames.length - 1].id);
+      }
+      return;
+    }
+    const nextIdx = selectedReplayIndex + delta;
+    if (nextIdx < 0) return;
+    if (nextIdx >= replayFrames.length) {
+      setSelectedReplayId(null);
+      return;
+    }
+    setSelectedReplayId(replayFrames[nextIdx].id);
+  };
 
   const formattedExchangeTime = quote?.timestamp
     ? new Date(quote.timestamp).toLocaleTimeString("en-US", {
@@ -237,7 +291,10 @@ export function Dashboard() {
         isRefreshing={refreshing}
         onRefresh={() => fetchBrief(true)}
         selectedInstrument={selectedInstrument}
-        onSelectInstrument={(inst) => setSelectedInstrument(inst)}
+        onSelectInstrument={(inst) => {
+          setSelectedInstrument(inst);
+          setSelectedReplayId(null);
+        }}
         currentProfile={currentProfile}
         profiles={profiles}
         onSelectProfile={(id) => {
@@ -271,10 +328,10 @@ export function Dashboard() {
           </div>
         )}
 
-        {brief && quote && plan && plainBrief && (
+        {brief && activeBrief && quote && plan && plainBrief && (
           <>
             {/* Feed Delay / News Warning Banners (only shown when active) */}
-            {plan.isDelayedFeedWarningActive && (
+            {plan.isDelayedFeedWarningActive && !selectedReplayFrame && (
               <div className="px-3.5 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 font-mono">
                 <div className="flex items-center space-x-2">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -288,14 +345,14 @@ export function Dashboard() {
               </div>
             )}
 
-            {plan.newsBufferWarning && (
+            {plan.newsBufferWarning && !selectedReplayFrame && (
               <div className="px-3.5 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center space-x-2">
                 <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                 <span className="font-medium">{plan.newsBufferWarning}</span>
               </div>
             )}
 
-            {/* 1. CLEAN BIAS HERO + PLAIN-ENGLISH QUANT MATH & FACTS */}
+            {/* 1. CLEAN BIAS HERO + 12H HOUR-BY-HOUR REPLAY & HORIZON OUTLOOK */}
             <div className="rounded-lg bg-zinc-900/80 border border-zinc-800/80 p-4 sm:p-5 space-y-3.5">
               {/* Top Row: Direction Bias, Risk Badge, Spot Price */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -340,6 +397,12 @@ export function Dashboard() {
                     >
                       {plainBrief.riskStatus.label}
                     </span>
+
+                    {selectedReplayFrame && (
+                      <span className="px-2 py-1 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px] font-mono font-semibold">
+                        REPLAY · {selectedReplayLabel} {timezoneCode}
+                      </span>
+                    )}
                   </div>
 
                   <h1 className="text-base sm:text-lg font-semibold text-zinc-100 tracking-tight pt-1">
@@ -350,18 +413,19 @@ export function Dashboard() {
                   </p>
                 </div>
 
-                {/* Right: Live Price & Toggle Quant Facts */}
+                {/* Right: Live or Replay Price & Toggle Quant Facts */}
                 <div className="flex md:flex-col items-center md:items-end justify-between gap-2 shrink-0">
                   <div className="text-right font-mono tabular-nums">
                     <div className="text-[11px] text-zinc-500 uppercase">
-                      {quote.displaySymbol} Futures Spot
+                      {quote.displaySymbol}{" "}
+                      {selectedReplayFrame ? `${selectedReplayLabel} Bar Close` : "Futures Spot"}
                     </div>
                     <div className="flex items-baseline space-x-1.5 justify-end">
                       <span
                         className={`text-xl font-bold transition-colors duration-150 ${
-                          priceFlash === "up"
+                          !selectedReplayFrame && priceFlash === "up"
                             ? "text-emerald-400"
-                            : priceFlash === "down"
+                            : !selectedReplayFrame && priceFlash === "down"
                             ? "text-rose-400"
                             : "text-zinc-100"
                         }`}
@@ -394,43 +458,164 @@ export function Dashboard() {
                 </div>
               </div>
 
+              {/* Last 12 Hours Hour-by-Hour Prediction & Chart Replay Timeline */}
+              {replayFrames.length > 0 && (
+                <div className="pt-3 border-t border-zinc-800/70 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center space-x-1.5 text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>12H Hour-by-Hour Replay (Chart &amp; Predictions)</span>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5 font-mono text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => stepReplayHour(-1)}
+                        disabled={selectedReplayIndex === 0}
+                        className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none border border-zinc-800 text-zinc-300 flex items-center space-x-0.5"
+                        title="Step 1 hour back"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                        <span>-1h</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => stepReplayHour(1)}
+                        disabled={!selectedReplayFrame}
+                        className="px-2 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none border border-zinc-800 text-zinc-300 flex items-center space-x-0.5"
+                        title="Step 1 hour forward"
+                      >
+                        <span>+1h</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                      {selectedReplayFrame && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedReplayId(null)}
+                          className="px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold"
+                        >
+                          Back to Live
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
+                    {replayFrames.map((frame) => {
+                      const isActive = selectedReplayId === frame.id;
+                      const dotColor =
+                        frame.plainBrief.direction === "BULLISH"
+                          ? "bg-emerald-400"
+                          : frame.plainBrief.direction === "BEARISH"
+                          ? "bg-rose-400"
+                          : "bg-amber-400";
+                      const shortHour = new Date(frame.anchorTimeMs).toLocaleTimeString("en-US", {
+                        timeZone: timezone,
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true,
+                      });
+                      return (
+                        <button
+                          key={frame.id}
+                          type="button"
+                          onClick={() => setSelectedReplayId(frame.id)}
+                          title={`${shortHour} ${timezoneCode} · Spot ${frame.replayBrief.quote.price.toFixed(2)} · ${frame.plainBrief.direction}${frame.outcome1h ? ` · +1H: ${frame.outcome1h.summaryLabel}` : ""}`}
+                          className={`px-2 py-1 rounded text-[11px] font-mono shrink-0 border flex items-center space-x-1.5 transition-colors ${
+                            isActive
+                              ? "bg-amber-500/20 border-amber-400/70 text-amber-200 font-bold"
+                              : "bg-zinc-950/70 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700"
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                          <span>{shortHour}</span>
+                        </button>
+                      );
+                    })}
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReplayId(null)}
+                      className={`px-2.5 py-1 rounded text-[11px] font-mono shrink-0 border flex items-center space-x-1.5 transition-colors ${
+                        !selectedReplayFrame
+                          ? "bg-emerald-500/20 border-emerald-400/70 text-emerald-300 font-bold"
+                          : "bg-zinc-950/70 border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>LIVE</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* 1H / 4H / Full Day Simple Predictions */}
               <div className="pt-3 border-t border-zinc-800/70 space-y-2">
-                <div className="flex items-center justify-between gap-2 text-[10px] font-mono uppercase tracking-wider text-zinc-500">
-                  <span>Horizon Outlook (1H / 4H / Day)</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono uppercase tracking-wider text-zinc-500">
                   <span>
-                    {brief.dataSource.providerName} ·{" "}
+                    {selectedReplayFrame
+                      ? `Horizon Outlook As Of ${selectedReplayLabel} ${timezoneCode}`
+                      : "Horizon Outlook (1H / 4H / Day)"}
+                  </span>
+                  <span>
+                    {activeBrief.dataSource.providerName} ·{" "}
                     {formattedExchangeTime ? `${formattedExchangeTime} ${timezoneCode} · ` : ""}
-                    {brief.dataSource.quoteStatus}
+                    {activeBrief.dataSource.quoteStatus}
                   </span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                  {plainBrief.horizonPredictions.map((item) => (
-                    <div
-                      key={item.horizon}
-                      className="px-3 py-2.5 rounded-md bg-zinc-950/70 border border-zinc-800/80 space-y-1"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400">
-                          {item.label}
-                        </span>
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
-                            item.bias === "BULLISH"
-                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              : item.bias === "BEARISH"
-                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                          }`}
-                        >
-                          {item.bias}
-                        </span>
+                  {plainBrief.horizonPredictions.map((item) => {
+                    const realized =
+                      item.horizon === "1H"
+                        ? selectedReplayFrame?.outcome1h
+                        : item.horizon === "4H"
+                        ? selectedReplayFrame?.outcome4h
+                        : null;
+                    return (
+                      <div
+                        key={item.horizon}
+                        className="px-3 py-2.5 rounded-md bg-zinc-950/70 border border-zinc-800/80 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-400">
+                            {item.label}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                              item.bias === "BULLISH"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : item.bias === "BEARISH"
+                                ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            }`}
+                          >
+                            {item.bias}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-200 leading-snug">
+                          {item.summary}
+                        </p>
+                        {realized && (
+                          <div className="pt-1 border-t border-zinc-800/70 flex flex-wrap items-center justify-between gap-1 text-[10px] font-mono">
+                            <span className="text-zinc-500">
+                              Actual +{realized.hoursAhead}H: {realized.price.toFixed(2)}
+                            </span>
+                            <span
+                              className={
+                                realized.alignment === "ALIGNED"
+                                  ? "text-emerald-400 font-semibold"
+                                  : realized.alignment === "OPPOSITE"
+                                  ? "text-rose-400 font-semibold"
+                                  : "text-zinc-400"
+                              }
+                            >
+                              {realized.summaryLabel}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-xs text-zinc-200 leading-snug">
-                        {item.summary}
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -598,11 +783,16 @@ export function Dashboard() {
               {/* Chart */}
               <div className="lg:col-span-8 2xl:col-span-9 min-w-0">
                 <MinBookChart
-                  brief={brief}
+                  brief={activeBrief}
                   selectedInstrument={selectedInstrument}
                   focusedLevel={focusedLevel}
                   onClearFocusedLevel={() => setFocusedLevel(null)}
                   onSelectLevel={(lvl) => setFocusedLevel(lvl)}
+                  replayCutoffMs={selectedReplayFrame?.anchorTimeMs ?? null}
+                  replayLabel={selectedReplayLabel}
+                  fullIntradayBars={brief.intradayBars}
+                  showReplayOutcome={showReplayOutcome}
+                  onToggleReplayOutcome={() => setShowReplayOutcome((prev) => !prev)}
                 />
               </div>
 
@@ -787,7 +977,7 @@ export function Dashboard() {
                   {/* Tab 2: Full Levels Table */}
                   <TabsContent value="levels" className="mt-0 focus-visible:outline-none">
                     <KeyLevelsTable
-                      levels={brief.keyLevels}
+                      levels={activeBrief.keyLevels}
                       currentPrice={quote.price}
                       focusedLevelId={focusedLevel?.id}
                       onSelectLevel={(lvl) => setFocusedLevel(lvl)}
@@ -802,11 +992,11 @@ export function Dashboard() {
               <span className="flex items-center space-x-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 <span>
-                  Feed: {brief.dataSource.providerName} • Price:{" "}
+                  Feed: {activeBrief.dataSource.providerName} • Price:{" "}
                   <strong className="text-zinc-100 tabular-nums font-semibold">
                     {quote.price.toFixed(2)}
                   </strong>{" "}
-                  • Tick:{" "}
+                  • {selectedReplayFrame ? "Replay Cutoff" : "Tick"}:{" "}
                   <span className="text-zinc-300 tabular-nums">
                     {formattedExchangeTime ? `${formattedExchangeTime} ${timezoneCode}` : "--:--:--"}
                   </span>

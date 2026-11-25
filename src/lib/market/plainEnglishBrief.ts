@@ -216,7 +216,9 @@ export function buildPlainEnglishBrief(
   const buildPlainRiskReason = (): string => {
     const reasons: string[] = [];
     if (vol && (vol.termRatio > 1.0 || vol.termStructureRegime === "BACKWARDATION (STRESS)")) {
-      reasons.push(`Short-term fear is elevated (VIX is ${vol.termRatio.toFixed(2)}x 3-month VIX), which usually causes violent two-way whipsaws.`);
+      reasons.push(
+        `Short-term fear is elevated (VIX is ${vol.termRatio.toFixed(2)}x 3-month VIX), meaning price often spikes sharply and reverses both ways to run stops.`
+      );
     }
     if (vol?.isNegativeVrp) {
       reasons.push("Actual price swings are larger than options priced in — expect sharper wicks and stop sweeps.");
@@ -246,7 +248,7 @@ export function buildPlainEnglishBrief(
   let verdictSubtitle = "Quant signals are split right now. Wait for price to clearly pick a side before trading.";
 
   if (bias.verdict === "STAND ASIDE / HIGH VOL") {
-    verdictTitle = "Do Not Trade — High Whipsaw Risk";
+    verdictTitle = "Do Not Trade — Sharp Two-Way Swings";
     verdictSubtitle = `${plainRiskReason} Best move is to stay flat.`;
   } else if (layer1?.reversalVetoActive) {
     verdictTitle =
@@ -811,52 +813,114 @@ export function buildPlainEnglishBrief(
     p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const horizonPredictions: HorizonPrediction[] = (() => {
-    const fallbackSupport =
-      dedupedBounces.find((b) => b.price <= spot) || {
-        shortName: "Session VWAP",
-        price: metrics.sessionVwap,
-      };
-    const fallbackResist =
-      dedupedBounces.find((b) => b.price >= spot) || {
-        shortName: "Session VWAP",
-        price: metrics.sessionVwap,
-      };
+    const rawPool: Array<{ shortName: string; price: number }> = [
+      ...dedupedBounces.map((b) => ({ shortName: b.shortName, price: b.price })),
+      { shortName: "Session VWAP", price: metrics.sessionVwap },
+      { shortName: "ON Mid", price: metrics.onMid },
+      { shortName: "PDC", price: metrics.pdc },
+      { shortName: "ONH", price: metrics.onh },
+      { shortName: "ONL", price: metrics.onl },
+      { shortName: "PDH", price: metrics.pdh },
+      { shortName: "PDL", price: metrics.pdl },
+      ...(metrics.asiaHigh ? [{ shortName: "Asia High", price: metrics.asiaHigh }] : []),
+      ...(metrics.asiaLow ? [{ shortName: "Asia Low", price: metrics.asiaLow }] : []),
+      ...(metrics.londonHigh ? [{ shortName: "Lon High", price: metrics.londonHigh }] : []),
+      ...(metrics.londonLow ? [{ shortName: "Lon Low", price: metrics.londonLow }] : []),
+      ...(gex?.callWallNq ? [{ shortName: "Call Wall", price: gex.callWallNq }] : []),
+      ...(gex?.putWallNq ? [{ shortName: "Put Wall", price: gex.putWallNq }] : []),
+      ...(gex?.gammaFlipNq ? [{ shortName: "Gamma Flip", price: gex.gammaFlipNq }] : []),
+    ].filter((c) => Number.isFinite(c.price) && c.price > 0);
+
+    const isGammaFlip = (c: { shortName: string }) =>
+      c.shortName.toLowerCase().includes("gamma flip");
+
+    // Pick closest meaningful pullback strictly on the opposite side (>= 5 pts away from spot)
+    const maxPullbackDist = Math.max(180, atr15 * 5);
+    const belowPullbacks = rawPool
+      .filter((c) => c.price <= spot - 5 && spot - c.price <= maxPullbackDist)
+      .sort((a, b) => {
+        const scoreA = spot - a.price + (isGammaFlip(a) ? 25 : 0);
+        const scoreB = spot - b.price + (isGammaFlip(b) ? 25 : 0);
+        return scoreA - scoreB;
+      });
+    const abovePullbacks = rawPool
+      .filter((c) => c.price >= spot + 5 && c.price - spot <= maxPullbackDist)
+      .sort((a, b) => {
+        const scoreA = a.price - spot + (isGammaFlip(a) ? 25 : 0);
+        const scoreB = b.price - spot + (isGammaFlip(b) ? 25 : 0);
+        return scoreA - scoreB;
+      });
+
+    const nearAtSpot = rawPool
+      .filter((c) => Math.abs(c.price - spot) < 5)
+      .sort((a, b) => {
+        const gA = isGammaFlip(a) ? 1 : 0;
+        const gB = isGammaFlip(b) ? 1 : 0;
+        if (gA !== gB) return gA - gB;
+        return Math.abs(a.price - spot) - Math.abs(b.price - spot);
+      })[0];
+
+    const retraceDown = belowPullbacks[0] || null;
+    const retraceUp = abovePullbacks[0] || null;
 
     const nearTargetUp =
-      dedupedTargets.find((t) => t.price > spot + 3) || {
-        shortName: metrics.onh > spot ? "ONH" : "PDH",
-        price: metrics.onh > spot ? metrics.onh : metrics.pdh,
+      dedupedTargets.find((t) => t.price >= spot + 5) ||
+      rawPool
+        .filter((c) => c.price >= spot + 5)
+        .sort((a, b) => a.price - b.price)[0] || {
+        shortName: "Upper 1H Target",
+        price: spot + Math.max(25, Math.round(atr15)),
       };
+
     const nearTargetDown =
-      dedupedTargets.find((t) => t.price < spot - 3) || {
-        shortName: metrics.onl < spot ? "ONL" : "PDL",
-        price: metrics.onl < spot ? metrics.onl : metrics.pdl,
+      dedupedTargets.find((t) => t.price <= spot - 5) ||
+      rawPool
+        .filter((c) => c.price <= spot - 5)
+        .sort((a, b) => b.price - a.price)[0] || {
+        shortName: "Lower 1H Target",
+        price: spot - Math.max(25, Math.round(atr15)),
       };
 
     const macroTargetUp =
       dedupedTargets.find((t) => t.price > nearTargetUp.price + 5) ||
       (metrics.pdh > nearTargetUp.price + 5
         ? { shortName: "PDH", price: metrics.pdh }
-        : { shortName: "Upper Straddle", price: metrics.upperStraddle });
+        : metrics.upperStraddle > nearTargetUp.price + 5
+        ? { shortName: "Upper Straddle", price: metrics.upperStraddle }
+        : { shortName: "4H Expansion", price: nearTargetUp.price + Math.max(40, Math.round(atr15 * 1.5)) });
+
     const macroTargetDown =
       dedupedTargets.find((t) => t.price < nearTargetDown.price - 5) ||
       (metrics.pdl < nearTargetDown.price - 5
         ? { shortName: "PDL", price: metrics.pdl }
-        : { shortName: "Lower Straddle", price: metrics.lowerStraddle });
+        : metrics.lowerStraddle < nearTargetDown.price - 5
+        ? { shortName: "Lower Straddle", price: metrics.lowerStraddle }
+        : { shortName: "4H Expansion", price: nearTargetDown.price - Math.max(40, Math.round(atr15 * 1.5)) });
 
     if (direction === "BULLISH") {
+      const bullFloor =
+        retraceDown ||
+        (metrics.sessionVwap < spot
+          ? { shortName: "Session VWAP", price: metrics.sessionVwap }
+          : { shortName: "ONL", price: Math.min(metrics.onl, spot - 10) });
+      const summary1h = retraceDown
+        ? `Expecting a retrace to ${fmtPrice(retraceDown.price)} (${retraceDown.shortName}), then continue bullish toward ${fmtPrice(nearTargetUp.price)}.`
+        : nearAtSpot
+        ? `Right on ${fmtPrice(nearAtSpot.price)} (${nearAtSpot.shortName}); holding here favors bullish continuation toward ${fmtPrice(nearTargetUp.price)}.`
+        : `Holding above ${fmtPrice(bullFloor.price)} (${bullFloor.shortName}) favors direct bullish continuation toward ${fmtPrice(nearTargetUp.price)}.`;
+
       return [
         {
           horizon: "1H",
           label: "Next 1 Hr",
           bias: "BULLISH",
-          summary: `Expecting a retrace to ${fmtPrice(fallbackSupport.price)} (${fallbackSupport.shortName}), then continue bullish toward ${fmtPrice(nearTargetUp.price)}.`,
+          summary: summary1h,
         },
         {
           horizon: "4H",
           label: "Next 4 Hr",
           bias: "BULLISH",
-          summary: `Holding ${fmtPrice(fallbackSupport.price)} targets ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}) next.`,
+          summary: `Holding above ${fmtPrice(bullFloor.price)} targets ${fmtPrice(macroTargetUp.price)} (${macroTargetUp.shortName}) next.`,
         },
         {
           horizon: "DAY",
@@ -868,18 +932,29 @@ export function buildPlainEnglishBrief(
     }
 
     if (direction === "BEARISH") {
+      const bearCap =
+        retraceUp ||
+        (metrics.sessionVwap > spot
+          ? { shortName: "Session VWAP", price: metrics.sessionVwap }
+          : { shortName: "ONH", price: Math.max(metrics.onh, spot + 10) });
+      const summary1h = retraceUp
+        ? `Expecting a retrace to ${fmtPrice(retraceUp.price)} (${retraceUp.shortName}), then continue bearish toward ${fmtPrice(nearTargetDown.price)}.`
+        : nearAtSpot
+        ? `Testing ${fmtPrice(nearAtSpot.price)} (${nearAtSpot.shortName}) right now; rejecting here favors bearish continuation toward ${fmtPrice(nearTargetDown.price)}.`
+        : `Staying below ${fmtPrice(bearCap.price)} (${bearCap.shortName}) favors direct bearish continuation toward ${fmtPrice(nearTargetDown.price)}.`;
+
       return [
         {
           horizon: "1H",
           label: "Next 1 Hr",
           bias: "BEARISH",
-          summary: `Expecting a retrace to ${fmtPrice(fallbackResist.price)} (${fallbackResist.shortName}), then continue bearish toward ${fmtPrice(nearTargetDown.price)}.`,
+          summary: summary1h,
         },
         {
           horizon: "4H",
           label: "Next 4 Hr",
           bias: "BEARISH",
-          summary: `Staying capped under ${fmtPrice(fallbackResist.price)} targets ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}) next.`,
+          summary: `Staying capped under ${fmtPrice(bearCap.price)} targets ${fmtPrice(macroTargetDown.price)} (${macroTargetDown.shortName}) next.`,
         },
         {
           horizon: "DAY",
@@ -890,14 +965,14 @@ export function buildPlainEnglishBrief(
       ];
     }
 
-    const lowEdge = Math.min(metrics.onl, fallbackSupport.price);
-    const highEdge = Math.max(metrics.onh, fallbackResist.price);
+    const lowEdge = Math.min(metrics.onl, retraceDown?.price ?? metrics.pdl);
+    const highEdge = Math.max(metrics.onh, retraceUp?.price ?? metrics.pdh);
     return [
       {
         horizon: "1H",
         label: "Next 1 Hr",
         bias: "NEUTRAL",
-        summary: `Expecting two-way chop between ${fmtPrice(lowEdge)} and ${fmtPrice(highEdge)} until a break holds.`,
+        summary: `Expecting two-way range rotation between ${fmtPrice(lowEdge)} and ${fmtPrice(highEdge)} until a break holds.`,
       },
       {
         horizon: "4H",

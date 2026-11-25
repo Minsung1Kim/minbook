@@ -9,8 +9,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const symbolParam = (searchParams.get("symbol") || "NQ").toUpperCase();
     const symbol = symbolParam.startsWith("MNQ") ? "MNQ" : "NQ";
-    const intervalParam = searchParams.get("interval") || "15m";
-    const interval = (intervalParam === "5m" ? "5m" : "15m") as "5m" | "15m";
+    const intervalParam = (searchParams.get("interval") || "15m").toLowerCase();
+    const interval = (
+      intervalParam === "5m" || intervalParam === "1h" || intervalParam === "4h"
+        ? intervalParam
+        : "15m"
+    ) as "5m" | "15m" | "1h" | "4h";
     const refresh = searchParams.get("refresh") === "true";
 
     const provider = getMarketDataProvider();

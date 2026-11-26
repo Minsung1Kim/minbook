@@ -240,18 +240,18 @@ describe("Sprint 1 Quantitative & Engineering Invariants", () => {
   });
 
   describe("Invariant 3: Volatility & Diurnal Scaling", () => {
-    it("computes expected move dividing by sqrt(365), never sqrt(252)", () => {
+    it("computes expected move dividing by sqrt(252)", () => {
       const pdc = 21000;
       const iv = 20.0;
       const em = computeExpectedMove(pdc, iv);
 
-      // sqrt(365) = 19.10497
-      // 21000 * 0.20 / 19.10497 ≈ 219.84 pts
-      expect(em.annualizationDays).toBe(365);
-      expect(em.expectedMove1SD).toBeCloseTo(219.84, 1);
+      // sqrt(252) = 15.87451
+      // 21000 * 0.20 / 15.87451 ≈ 264.58 pts
+      expect(em.annualizationDays).toBe(252);
+      expect(em.expectedMove1SD).toBeCloseTo(264.58, 1);
 
-      // Straddle move is 1SD * sqrt(2/pi) ≈ 175.41 pts
-      expect(em.expectedMoveStraddle).toBeCloseTo(175.41, 1);
+      // Straddle move is 1SD * sqrt(2/pi) ≈ 211.10 pts
+      expect(em.expectedMoveStraddle).toBeCloseTo(211.10, 1);
       expect(em.straddleCoveragePercent).toBe(57.5);
     });
 

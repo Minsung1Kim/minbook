@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { UserProfile, TradeLogEntry, JournalAnalytics, SavedDailyBrief, ChecklistState } from "../../types/app";
+import { ScalpJournalTrade } from "../../types/chat";
 import { OpenBriefData } from "../../types/market";
 
 const DB_DIR = path.join(process.cwd(), "data");
@@ -125,6 +126,31 @@ export function getDb(): DatabaseSync {
       gemini_api_key TEXT NOT NULL,
       key_hint TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS journal_trades (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL DEFAULT 'default',
+      slide_number INTEGER DEFAULT NULL,
+      trade_date TEXT NOT NULL,
+      entry_time_et TEXT NOT NULL DEFAULT '',
+      instrument TEXT NOT NULL DEFAULT 'MNQ',
+      direction TEXT NOT NULL DEFAULT 'LONG',
+      contracts INTEGER NOT NULL DEFAULT 1,
+      session_window TEXT NOT NULL DEFAULT 'NY_OPEN_0930_1000',
+      setup_archetype TEXT NOT NULL DEFAULT 'UNKNOWN',
+      stop_pts REAL NOT NULL DEFAULT 0,
+      tp1_pts REAL DEFAULT NULL,
+      realized_r REAL NOT NULL DEFAULT 0,
+      mfe_pts REAL NOT NULL DEFAULT 0,
+      mae_pts REAL NOT NULL DEFAULT 0,
+      gex_regime TEXT NOT NULL DEFAULT 'UNAVAILABLE',
+      playbook_archetype TEXT NOT NULL DEFAULT 'UNKNOWN',
+      execution_grade TEXT NOT NULL DEFAULT 'B',
+      mistake_tags_json TEXT NOT NULL DEFAULT '[]',
+      trader_notes TEXT NOT NULL DEFAULT '',
+      import_source TEXT NOT NULL DEFAULT 'MANUAL',
+      created_at TEXT NOT NULL
     );
   `);
 
@@ -630,4 +656,120 @@ export function saveChecklist(tradeDate: string, userId: string = "default", sta
       state_json = excluded.state_json,
       updated_at = excluded.updated_at
   `).run(tradeDate, userId, JSON.stringify(state), now);
+}
+
+// ----------------- Scalping Co-Pilot Journal Repositories -----------------
+
+export function getScalpJournalTrades(userId: string = "default"): ScalpJournalTrade[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      "SELECT * FROM journal_trades WHERE user_id = ? ORDER BY trade_date DESC, entry_time_et DESC, slide_number ASC, created_at DESC"
+    )
+    .all(userId) as Array<Record<string, unknown>>;
+
+  return rows.map((r) => {
+    let mistakeTags: string[] = [];
+    try {
+      const parsed = JSON.parse(String(r.mistake_tags_json || "[]"));
+      if (Array.isArray(parsed)) mistakeTags = parsed.map(String);
+    } catch {
+      mistakeTags = [];
+    }
+    return {
+      id: String(r.id),
+      userId: String(r.user_id),
+      slideNumber: r.slide_number != null ? Number(r.slide_number) : null,
+      tradeDate: String(r.trade_date),
+      entryTimeET: String(r.entry_time_et || ""),
+      instrument: String(r.instrument || "MNQ") === "NQ" ? "NQ" : "MNQ",
+      direction: String(r.direction || "LONG") === "SHORT" ? "SHORT" : "LONG",
+      contracts: Number(r.contracts || 1),
+      sessionWindow: String(r.session_window || "NY_OPEN_0930_1000"),
+      setupArchetype: String(r.setup_archetype || "UNKNOWN"),
+      stopPts: Number(r.stop_pts || 0),
+      tp1Pts: r.tp1_pts != null ? Number(r.tp1_pts) : null,
+      realizedR: Number(r.realized_r || 0),
+      mfePts: Number(r.mfe_pts || 0),
+      maePts: Number(r.mae_pts || 0),
+      gexRegime: String(r.gex_regime || "UNAVAILABLE"),
+      playbookArchetype: String(r.playbook_archetype || "UNKNOWN"),
+      executionGrade: String(r.execution_grade || "B"),
+      mistakeTags,
+      traderNotes: String(r.trader_notes || ""),
+      importSource: (r.import_source as ScalpJournalTrade["importSource"]) || "MANUAL",
+      createdAt: String(r.created_at || ""),
+    };
+  });
+}
+
+export function upsertScalpJournalTrades(trades: ScalpJournalTrade[]): ScalpJournalTrade[] {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const stmt = db.prepare(`
+    INSERT INTO journal_trades (
+      id, user_id, slide_number, trade_date, entry_time_et, instrument, direction,
+      contracts, session_window, setup_archetype, stop_pts, tp1_pts, realized_r,
+      mfe_pts, mae_pts, gex_regime, playbook_archetype, execution_grade,
+      mistake_tags_json, trader_notes, import_source, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      slide_number = excluded.slide_number,
+      trade_date = excluded.trade_date,
+      entry_time_et = excluded.entry_time_et,
+      instrument = excluded.instrument,
+      direction = excluded.direction,
+      contracts = excluded.contracts,
+      session_window = excluded.session_window,
+      setup_archetype = excluded.setup_archetype,
+      stop_pts = excluded.stop_pts,
+      tp1_pts = excluded.tp1_pts,
+      realized_r = excluded.realized_r,
+      mfe_pts = excluded.mfe_pts,
+      mae_pts = excluded.mae_pts,
+      gex_regime = excluded.gex_regime,
+      playbook_archetype = excluded.playbook_archetype,
+      execution_grade = excluded.execution_grade,
+      mistake_tags_json = excluded.mistake_tags_json,
+      trader_notes = excluded.trader_notes,
+      import_source = excluded.import_source
+  `);
+
+  const saved: ScalpJournalTrade[] = [];
+  for (const t of trades) {
+    const id = t.id || `sj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const createdAt = t.createdAt || now;
+    stmt.run(
+      id,
+      t.userId || "default",
+      t.slideNumber ?? null,
+      t.tradeDate,
+      t.entryTimeET || "",
+      t.instrument,
+      t.direction,
+      t.contracts,
+      t.sessionWindow,
+      t.setupArchetype,
+      t.stopPts,
+      t.tp1Pts ?? null,
+      t.realizedR,
+      t.mfePts,
+      t.maePts,
+      t.gexRegime,
+      t.playbookArchetype,
+      t.executionGrade,
+      JSON.stringify(t.mistakeTags || []),
+      t.traderNotes || "",
+      t.importSource || "MANUAL",
+      createdAt
+    );
+    saved.push({ ...t, id, createdAt });
+  }
+  return saved;
+}
+
+export function clearScalpJournalTrades(userId: string = "default"): number {
+  const db = getDb();
+  const res = db.prepare("DELETE FROM journal_trades WHERE user_id = ?").run(userId);
+  return Number(res.changes || 0);
 }

@@ -8,10 +8,12 @@ import { useTimezone } from "@/context/TimezoneContext";
 import { MarkdownMessage } from "@/components/chat/MarkdownMessage";
 import {
   ChatMarketContextSnapshot,
+  ChatModePreference,
   ChatThreadSummary,
   MarketStalenessBadge,
   StratUIMessage,
 } from "@/types/chat";
+import { AccountDrawdownMode } from "@/types/market";
 import {
   Plus,
   Trash2,
@@ -32,6 +34,9 @@ import {
   Pencil,
   KeyRound,
   ExternalLink,
+  FileUp,
+  Zap,
+  BookOpen,
 } from "lucide-react";
 
 interface StagedAttachment {
@@ -111,6 +116,21 @@ export function ChatWorkspace() {
   const { timezone, timezoneCode } = useTimezone();
 
   const [selectedInstrument, setSelectedInstrument] = useState<"NQ" | "MNQ">("NQ");
+  const [accountDrawdownMode, setAccountDrawdownMode] =
+    useState<AccountDrawdownMode>("INTRADAY_UNREALIZED");
+  const [chatModePref, setChatModePref] = useState<ChatModePreference>("AUTO");
+
+  // Trade Journal Import State
+  const [journalStats, setJournalStats] = useState<{
+    totalTrades: number;
+    overallWinRatePct: number;
+  } | null>(null);
+  const [importingJournal, setImportingJournal] = useState<boolean>(false);
+  const [journalImportNotice, setJournalImportNotice] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const journalFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live Context & On-Site API Key State
   const [contextSnapshot, setContextSnapshot] =
@@ -148,6 +168,87 @@ export function ChatWorkspace() {
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
   }, [activeThreadId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydratePreferencesAndJournal() {
+      await Promise.resolve();
+      if (cancelled || typeof window === "undefined") return;
+      const savedMode = window.localStorage.getItem("minbook_account_drawdown_mode");
+      if (
+        savedMode === "INTRADAY_UNREALIZED" ||
+        savedMode === "EOD_TRAILING" ||
+        savedMode === "CASH_LIVE"
+      ) {
+        setAccountDrawdownMode(savedMode);
+      }
+      const savedChatMode = window.localStorage.getItem("minbook_chat_mode");
+      if (
+        savedChatMode === "LIVE_SCALP" ||
+        savedChatMode === "DEEP_DIVE" ||
+        savedChatMode === "AUTO"
+      ) {
+        setChatModePref(savedChatMode);
+      }
+
+      try {
+        const res = await fetch("/api/chat/journal-import", { cache: "no-store" });
+        const json = await res.json();
+        if (!cancelled && res.ok && json.success) {
+          setJournalStats({
+            totalTrades: Number(json.totalTrades || 0),
+            overallWinRatePct: Number(json.overallWinRatePct || 0),
+          });
+        }
+      } catch {
+        // ignore initial journal stats fetch error
+      }
+    }
+
+    hydratePreferencesAndJournal();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleJournalFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || importingJournal) return;
+
+    setImportingJournal(true);
+    setJournalImportNotice(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/chat/journal-import", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Import failed");
+      }
+      setJournalStats({
+        totalTrades: Number(json.totalTrades || 0),
+        overallWinRatePct: Number(json.overallWinRatePct || 0),
+      });
+      setJournalImportNotice({
+        type: "success",
+        text: `Imported ${json.importedCount} trade(s) from ${file.name}. Total: ${json.totalTrades} (${json.overallWinRatePct}% WR).`,
+      });
+    } catch (err: unknown) {
+      setJournalImportNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to import journal",
+      });
+    } finally {
+      setImportingJournal(false);
+    }
+  };
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -615,6 +716,8 @@ export function ChatWorkspace() {
         body: {
           threadId,
           symbol: selectedInstrument,
+          accountDrawdownMode,
+          chatMode: chatModePref,
           attachmentPaths,
         },
       }
@@ -628,10 +731,12 @@ export function ChatWorkspace() {
         body: {
           threadId: activeThreadIdRef.current,
           symbol: selectedInstrument,
+          accountDrawdownMode,
+          chatMode: chatModePref,
         },
       });
     },
-    [regenerate, selectedInstrument]
+    [accountDrawdownMode, chatModePref, regenerate, selectedInstrument]
   );
 
   const handleCopyMessage = async (msg: StratUIMessage) => {
@@ -889,8 +994,8 @@ export function ChatWorkspace() {
             </div>
           )}
 
-          {/* Minimal Live Context Bar */}
-          <div className="border-b border-zinc-800/80 bg-[#111113] px-3 sm:px-5 py-2 shrink-0 flex items-center justify-between gap-2">
+          {/* Minimal Live Context Bar + Scalping Co-Pilot Controls */}
+          <div className="border-b border-zinc-800/80 bg-[#111113] px-3 sm:px-5 py-2 shrink-0 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
@@ -938,10 +1043,121 @@ export function ChatWorkspace() {
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-400 shrink-0">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px] font-mono text-zinc-400 shrink-0">
+              {/* Account Mode Selector */}
+              <select
+                aria-label="Account Mode"
+                value={accountDrawdownMode}
+                onChange={(e) => {
+                  const next = e.target.value as AccountDrawdownMode;
+                  setAccountDrawdownMode(next);
+                  if (typeof window !== "undefined") {
+                    window.localStorage.setItem("minbook_account_drawdown_mode", next);
+                  }
+                }}
+                className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 text-[11px] font-mono focus:outline-none focus:border-zinc-600"
+                title="Prop-firm or cash account drawdown rule"
+              >
+                <option value="INTRADAY_UNREALIZED">Intraday Trailing</option>
+                <option value="EOD_TRAILING">EOD Trailing</option>
+                <option value="CASH_LIVE">Live Cash</option>
+              </select>
+
+              {/* Auto / Quick Scalp / Deep Dive Toggle */}
+              <div
+                className="inline-flex rounded border border-zinc-800 bg-zinc-950 p-0.5"
+                role="group"
+                aria-label="Chat response mode"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatModePref("AUTO");
+                    if (typeof window !== "undefined") {
+                      window.localStorage.setItem("minbook_chat_mode", "AUTO");
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                    chatModePref === "AUTO"
+                      ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  title="Auto: Quick Scalp during 09:20–16:00 ET for chart setups; conversational Assistant / Deep Dive for questions & after-hours"
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatModePref("LIVE_SCALP");
+                    if (typeof window !== "undefined") {
+                      window.localStorage.setItem("minbook_chat_mode", "LIVE_SCALP");
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono flex items-center space-x-1 transition-colors ${
+                    chatModePref === "LIVE_SCALP"
+                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  title="Hot Path: Low-latency 5-line Scalper Card (thinking off)"
+                >
+                  <Zap className="w-3 h-3" />
+                  <span>Quick Scalp</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatModePref("DEEP_DIVE");
+                    if (typeof window !== "undefined") {
+                      window.localStorage.setItem("minbook_chat_mode", "DEEP_DIVE");
+                    }
+                  }}
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono flex items-center space-x-1 transition-colors ${
+                    chatModePref === "DEEP_DIVE"
+                      ? "bg-zinc-800 text-zinc-100 border border-zinc-700"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  title="Cold Path: Multi-paragraph breakdown & post-session review"
+                >
+                  <BookOpen className="w-3 h-3" />
+                  <span>Deep Dive</span>
+                </button>
+              </div>
+
+              {/* Import Trade Journal (PDF / JSON / CSV) */}
+              <input
+                ref={journalFileInputRef}
+                type="file"
+                accept="application/pdf,.pdf,application/json,.json,text/csv,.csv"
+                className="hidden"
+                onChange={handleJournalFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => journalFileInputRef.current?.click()}
+                disabled={importingJournal}
+                className="px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 hover:text-white text-[11px] font-mono flex items-center space-x-1.5 transition-colors disabled:opacity-50"
+                title="Import Google Slides PDF (File -> Print preview -> 1 slide with notes -> PDF) or JSON/CSV"
+              >
+                {importingJournal ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                ) : (
+                  <FileUp className="w-3 h-3 text-emerald-400" />
+                )}
+                <span>
+                  {importingJournal
+                    ? "Importing..."
+                    : `Import Trade Journal (PDF)${
+                        journalStats && journalStats.totalTrades > 0
+                          ? ` · ${journalStats.totalTrades}`
+                          : ""
+                      }`}
+                </span>
+              </button>
+
               {quote && (
                 <>
-                  <span className="hidden sm:inline text-zinc-400 truncate max-w-[200px]">
+                  <span className="hidden xl:inline text-zinc-400 truncate max-w-[180px]">
                     {quote.source} · {formatTs(quote.timestamp)}
                   </span>
                   <StalenessBadgePill
@@ -983,6 +1199,26 @@ export function ChatWorkspace() {
               </button>
             </div>
           </div>
+
+          {journalImportNotice && (
+            <div
+              className={`mx-3 sm:mx-6 mt-2.5 rounded-md border px-3 py-2 text-xs flex items-center justify-between gap-2 ${
+                journalImportNotice.type === "success"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+              }`}
+            >
+              <span>{journalImportNotice.text}</span>
+              <button
+                type="button"
+                onClick={() => setJournalImportNotice(null)}
+                className="p-0.5 hover:text-white"
+                aria-label="Dismiss import notice"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* On-Site Encrypted API Key Setup / Manager */}
           {(!aiConfigured || showKeyPanel) && (
@@ -1201,9 +1437,13 @@ export function ChatWorkspace() {
 
                             if (
                               part.type === "tool-runMinBookQuantAnalysis" ||
+                              part.type === "tool-compute_scalp_verdict" ||
+                              part.type === "tool-query_personal_journal" ||
                               (part.type === "dynamic-tool" &&
                                 "toolName" in part &&
-                                part.toolName === "runMinBookQuantAnalysis")
+                                (part.toolName === "runMinBookQuantAnalysis" ||
+                                  part.toolName === "compute_scalp_verdict" ||
+                                  part.toolName === "query_personal_journal"))
                             ) {
                               return (
                                 <div
@@ -1211,7 +1451,11 @@ export function ChatWorkspace() {
                                   className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-zinc-400"
                                 >
                                   <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                  <span>MinBook Quant Engine executed</span>
+                                  <span>
+                                    {part.type === "tool-query_personal_journal"
+                                      ? "Personal Journal Queried"
+                                      : "MinBook Quant Engine executed"}
+                                  </span>
                                 </div>
                               );
                             }

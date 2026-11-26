@@ -5,6 +5,191 @@ export const DEFAULT_FEES_PER_RT: Record<"NQ" | "MNQ", number> = {
   NQ: 4.50 // $4.50 per round-trip NQ contract
 };
 
+export interface DrawdownExitPolicyInput {
+  accountDrawdownMode: "INTRADAY_UNREALIZED" | "EOD_TRAILING" | "CASH_LIVE";
+  direction: "LONG" | "SHORT" | "NONE";
+  contracts: number;
+  entryPrice: number;
+  stopPts: number;
+  atr5mPts?: number;
+  netGammaRegime?: string;
+  hasBlockingMagnet?: boolean;
+  blockingMagnetPrice?: number | null;
+  blockingMagnetName?: string | null;
+  isStressedVol?: boolean;
+  isExtendedTarget?: boolean;
+  targetPrice?: number | null;
+}
+
+export interface DrawdownExitPolicy {
+  tpRecommendation: "TAKE_PARTIALS" | "STICK_WITH_FULL_TP" | "SINGLE_CONTRACT_TRAIL";
+  partialPct: number | null;
+  partialAtR: number | null;
+  partialPrice: number | null;
+  partialLabel: string | null;
+  trailBehindPeakPts: number | null;
+  trailStartR: number | null;
+  trailFormula: string;
+  rationale: string;
+}
+
+/**
+ * Deterministic prop-firm drawdown-aware exit policy shared across sizing & /chat verdict engines.
+ */
+export function computeDrawdownExitPolicy(input: DrawdownExitPolicyInput): DrawdownExitPolicy {
+  const {
+    accountDrawdownMode,
+    direction,
+    contracts,
+    entryPrice,
+    stopPts,
+    atr5mPts = 20,
+    netGammaRegime = "UNAVAILABLE",
+    hasBlockingMagnet = false,
+    blockingMagnetPrice = null,
+    blockingMagnetName = null,
+    isStressedVol = false,
+    isExtendedTarget = false,
+    targetPrice = null,
+  } = input;
+
+  const dirSign = direction === "SHORT" ? -1 : direction === "LONG" ? 1 : 0;
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const trailPts = Math.round(Math.max(8, Math.min(14, 0.35 * atr5mPts)) * 10) / 10;
+  const trailFormula =
+    direction === "SHORT"
+      ? `min(entry ${entryPrice.toFixed(2)}, peakPx + ${trailPts.toFixed(1)} pts)`
+      : `max(entry ${entryPrice.toFixed(2)}, peakPx - ${trailPts.toFixed(1)} pts)`;
+
+  if (dirSign === 0) {
+    return {
+      tpRecommendation: "TAKE_PARTIALS",
+      partialPct: 50,
+      partialAtR: 1.0,
+      partialPrice: null,
+      partialLabel: "Opposing Edge / VWAP",
+      trailBehindPeakPts: trailPts,
+      trailStartR: 1.0,
+      trailFormula,
+      rationale: "Range-bound / neutral stance: take partials at opposing range edge or VWAP.",
+    };
+  }
+
+  if (accountDrawdownMode === "INTRADAY_UNREALIZED") {
+    if (contracts >= 2) {
+      const r12Pts = round2(stopPts * 1.2);
+      const r12Price = round2(entryPrice + dirSign * r12Pts);
+      const magnetDist =
+        blockingMagnetPrice !== null ? Math.abs(blockingMagnetPrice - entryPrice) : null;
+      const snapToMagnet =
+        hasBlockingMagnet &&
+        blockingMagnetPrice !== null &&
+        magnetDist !== null &&
+        magnetDist > 2 &&
+        magnetDist < r12Pts;
+
+      const partialPrice = snapToMagnet ? blockingMagnetPrice! : r12Price;
+      const partialAtR =
+        snapToMagnet && stopPts > 0 ? round2(magnetDist! / stopPts) : 1.2;
+      const partialLabel = snapToMagnet
+        ? `${blockingMagnetName || "Blocking Magnet"} (+${partialAtR.toFixed(2)}R)`
+        : `+1.2R (${partialPrice.toFixed(2)})`;
+
+      return {
+        tpRecommendation: "TAKE_PARTIALS",
+        partialPct: 50,
+        partialAtR,
+        partialPrice,
+        partialLabel,
+        trailBehindPeakPts: trailPts,
+        trailStartR: partialAtR,
+        trailFormula,
+        rationale: `INTRADAY_UNREALIZED: Scale 50% at ${partialLabel} and trail remaining runner dynamically behind peak (${trailFormula}) to prevent phantom drawdown bleed.`,
+      };
+    }
+
+    // Single contract under INTRADAY_UNREALIZED
+    const triggerPts = Math.max(12, round2(stopPts * 1.0));
+    const triggerPrice = round2(entryPrice + dirSign * triggerPts);
+    return {
+      tpRecommendation: "SINGLE_CONTRACT_TRAIL",
+      partialPct: null,
+      partialAtR: null,
+      partialPrice: triggerPrice,
+      partialLabel: `+1.0R / min 12 pts (${triggerPrice.toFixed(2)})`,
+      trailBehindPeakPts: trailPts,
+      trailStartR: 1.0,
+      trailFormula,
+      rationale: `SINGLE_CONTRACT_TRAIL (INTRADAY_UNREALIZED): Activate dynamic peak trail at +1.0R (min 12 pts, ${triggerPrice.toFixed(2)}) using ${trailFormula}.`,
+    };
+  }
+
+  // EOD_TRAILING or CASH_LIVE:
+  // STICK_WITH_FULL_TP is strictly reserved for unobstructed NEGATIVE_GAMMA trends.
+  const canHoldFullTp =
+    (accountDrawdownMode === "EOD_TRAILING" || accountDrawdownMode === "CASH_LIVE") &&
+    netGammaRegime === "NEGATIVE_GAMMA" &&
+    !hasBlockingMagnet &&
+    !isStressedVol &&
+    !isExtendedTarget;
+
+  if (canHoldFullTp) {
+    return {
+      tpRecommendation: "STICK_WITH_FULL_TP",
+      partialPct: null,
+      partialAtR: null,
+      partialPrice: targetPrice,
+      partialLabel: targetPrice ? `Full TP (${targetPrice.toFixed(2)})` : "Full TP",
+      trailBehindPeakPts: null,
+      trailStartR: null,
+      trailFormula: `Move SL to BE at +1.0R, hold full size to TP`,
+      rationale: `STICK_WITH_FULL_TP (${accountDrawdownMode}): Unobstructed NEGATIVE_GAMMA trend supports full expansion target without premature scaling.`,
+    };
+  }
+
+  if (contracts === 1) {
+    const triggerPts = Math.max(12, round2(stopPts * 1.0));
+    const triggerPrice = round2(entryPrice + dirSign * triggerPts);
+    return {
+      tpRecommendation: "SINGLE_CONTRACT_TRAIL",
+      partialPct: null,
+      partialAtR: null,
+      partialPrice: blockingMagnetPrice ?? triggerPrice,
+      partialLabel: blockingMagnetName || `+1.0R Trail (${triggerPrice.toFixed(2)})`,
+      trailBehindPeakPts: trailPts,
+      trailStartR: 1.0,
+      trailFormula,
+      rationale: `SINGLE_CONTRACT_TRAIL (${accountDrawdownMode}): Not an unobstructed -Gamma trend; trail behind peak (${trailFormula}) once past +1.0R (${triggerPrice.toFixed(2)}) or exit at ${blockingMagnetName || "magnet"}.`,
+    };
+  }
+
+  const partialPts = round2(stopPts * 1.5);
+  const defaultPartialPrice = round2(entryPrice + dirSign * partialPts);
+  const partialPrice =
+    hasBlockingMagnet && blockingMagnetPrice !== null
+      ? blockingMagnetPrice
+      : defaultPartialPrice;
+  const partialAtR =
+    hasBlockingMagnet && blockingMagnetPrice !== null && stopPts > 0
+      ? round2(Math.abs(blockingMagnetPrice - entryPrice) / stopPts)
+      : 1.5;
+
+  return {
+    tpRecommendation: "TAKE_PARTIALS",
+    partialPct: 50,
+    partialAtR,
+    partialPrice,
+    partialLabel:
+      hasBlockingMagnet && blockingMagnetName
+        ? `${blockingMagnetName} (${partialPrice.toFixed(2)})`
+        : `+1.5R (${partialPrice.toFixed(2)})`,
+    trailBehindPeakPts: trailPts,
+    trailStartR: partialAtR,
+    trailFormula,
+    rationale: `TAKE_PARTIALS (${accountDrawdownMode}): Scale 50% at ${blockingMagnetName || "+1.5R"} (${partialPrice.toFixed(2)}) and trail runner via ${trailFormula}.`,
+  };
+}
+
 export interface DetailedRiskPlanInputs {
   entryPrice: number;
   stopPrice: number;
@@ -185,9 +370,33 @@ export function computeDetailedRiskPlan(inputs: DetailedRiskPlanInputs): Detaile
   if (suggestedContracts >= 2) {
     const half1 = Math.floor(suggestedContracts / 2);
     const half2 = suggestedContracts - half1;
-    contractSplitDirective = `PARTIALS ACTIVE: Scale out ${half1} ${instrument} at TP1, hold ${half2} ${instrument} runner toward TP2.`;
+    if (isIntradayUnrealized) {
+      const exitPolicy = computeDrawdownExitPolicy({
+        accountDrawdownMode: "INTRADAY_UNREALIZED",
+        direction,
+        contracts: suggestedContracts,
+        entryPrice,
+        stopPts,
+        atr5mPts: atr15m * 0.577,
+      });
+      contractSplitDirective = `INTRADAY TRAILING PARTIALS: Scale ${half1} ${instrument} (50%) at +1.2R (${exitPolicy.partialPrice?.toFixed(2)}), and dynamically trail ${half2} ${instrument} behind peak (${exitPolicy.trailFormula}). Static breakeven holds prohibited.`;
+    } else {
+      contractSplitDirective = `PARTIALS ACTIVE: Scale out ${half1} ${instrument} at TP1, hold ${half2} ${instrument} runner toward TP2.`;
+    }
   } else if (suggestedContracts === 1) {
-    contractSplitDirective = `1 ${instrument} ALL-OUT AT TP1: Single contract active. Partial profit scale-outs disabled. Exit 100% position at TP1 to eliminate drawdown decay.`;
+    if (isIntradayUnrealized) {
+      const exitPolicy = computeDrawdownExitPolicy({
+        accountDrawdownMode: "INTRADAY_UNREALIZED",
+        direction,
+        contracts: 1,
+        entryPrice,
+        stopPts,
+        atr5mPts: atr15m * 0.577,
+      });
+      contractSplitDirective = `SINGLE_CONTRACT_TRAIL (1 ${instrument}): Lock trail starting at +1.0R (min 12 pts, ${exitPolicy.partialPrice?.toFixed(2)}) via ${exitPolicy.trailFormula}.`;
+    } else {
+      contractSplitDirective = `1 ${instrument} ALL-OUT AT TP1: Single contract active. Partial profit scale-outs disabled. Exit 100% position at TP1 to eliminate drawdown decay.`;
+    }
   } else {
     // 0 Contracts: calculate exact tighter entry needed to fit >= 2 MNQ within risk budget
     const targetContracts = 2;

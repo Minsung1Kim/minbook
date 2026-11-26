@@ -506,7 +506,8 @@ export interface OpenBriefData {
 
 // ---------------- LTF Execution & Prop-Firm Risk Engine Types ----------------
 
-export type DrawdownMode = "EOD_TRAILING" | "INTRADAY_UNREALIZED";
+export type DrawdownMode = "EOD_TRAILING" | "INTRADAY_UNREALIZED" | "CASH_LIVE";
+export type AccountDrawdownMode = DrawdownMode;
 
 export interface PropProfile {
   id: string;

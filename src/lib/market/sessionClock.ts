@@ -487,3 +487,120 @@ export function getCMESessionInfo(
     isMarketOpen
   };
 }
+
+export interface UpcomingMarketDay {
+  date: string;
+  weekday: string;
+  status: "NORMAL" | "HOLIDAY" | "HALF_DAY" | "WEEKEND";
+  note: string;
+}
+
+const CME_HOLIDAY_NAMES: Record<string, string> = {
+  "01-01": "New Year's Day",
+  "01-15": "MLK Jr. Day",
+  "01-18": "MLK Jr. Day",
+  "01-19": "MLK Jr. Day",
+  "01-20": "MLK Jr. Day",
+  "02-15": "Presidents' Day",
+  "02-16": "Presidents' Day",
+  "02-17": "Presidents' Day",
+  "02-19": "Presidents' Day",
+  "03-26": "Good Friday",
+  "03-29": "Good Friday",
+  "04-03": "Good Friday",
+  "04-14": "Good Friday",
+  "04-18": "Good Friday",
+  "05-25": "Memorial Day",
+  "05-26": "Memorial Day",
+  "05-27": "Memorial Day",
+  "05-29": "Memorial Day",
+  "05-31": "Memorial Day",
+  "06-18": "Juneteenth",
+  "06-19": "Juneteenth",
+  "07-03": "Independence Day (Observed)",
+  "07-04": "Independence Day",
+  "07-05": "Independence Day (Observed)",
+  "09-01": "Labor Day",
+  "09-02": "Labor Day",
+  "09-04": "Labor Day",
+  "09-06": "Labor Day",
+  "09-07": "Labor Day",
+  "11-23": "Thanksgiving Day",
+  "11-25": "Thanksgiving Day",
+  "11-26": "Thanksgiving Day",
+  "11-27": "Thanksgiving Day",
+  "11-28": "Thanksgiving Day",
+  "12-24": "Christmas Day (Observed)",
+  "12-25": "Christmas Day",
+};
+
+/**
+ * Returns upcoming CME/US Equities trading schedule for the next `daysAhead` calendar days
+ * in America/New_York, identifying full holidays, half-days (e.g. Black Friday), and weekends.
+ */
+export function getUpcomingCalendarSchedule(
+  inputDate: Date = new Date(),
+  daysAhead: number = 5
+): UpcomingMarketDay[] {
+  const et = getETParts(inputDate);
+  const out: UpcomingMarketDay[] = [];
+
+  for (let offset = 0; offset < daysAhead; offset++) {
+    const dateStr = shiftCalendarDays(et.dateStr, offset);
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const dayOfWeek = dt.getUTCDay();
+    const weekday = dt.toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short" });
+    const mmdd = dateStr.slice(5);
+
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      out.push({
+        date: dateStr,
+        weekday,
+        status: "WEEKEND",
+        note: dayOfWeek === 6 ? "Saturday — CME closed" : "Sunday — Globex reopens 18:00 ET",
+      });
+      continue;
+    }
+
+    if (isCMEHoliday(dateStr)) {
+      const hName = CME_HOLIDAY_NAMES[mmdd] || "US/CME Market Holiday";
+      out.push({
+        date: dateStr,
+        weekday,
+        status: "HOLIDAY",
+        note: `${hName} — US equities closed; CME equity futures holiday schedule (13:00 ET halt / ultra-thin Globex, NO normal NY RTH open).`,
+      });
+      continue;
+    }
+
+    // Check US Equity / CME Half-Days (Black Friday, Christmas Eve, July 3)
+    const isDayAfterThanksgiving = m === 11 && dayOfWeek === 5 && d >= 23 && d <= 29;
+    const isChristmasEve = m === 12 && d === 24 && !isCMEHoliday(dateStr);
+    const isJuly3 = m === 7 && d === 3 && !isCMEHoliday(dateStr);
+
+    if (isDayAfterThanksgiving || isChristmasEve || isJuly3) {
+      const label = isDayAfterThanksgiving
+        ? "Day After Thanksgiving (Black Friday)"
+        : isChristmasEve
+        ? "Christmas Eve"
+        : "Pre-Independence Day";
+      out.push({
+        date: dateStr,
+        weekday,
+        status: "HALF_DAY",
+        note: `${label} Half-Day — US equities close 13:00 ET / CME equity futures close 13:15 ET. Expect thin holiday volume and choppy/low-conviction price action.`,
+      });
+      continue;
+    }
+
+    out.push({
+      date: dateStr,
+      weekday,
+      status: "NORMAL",
+      note: "Regular RTH session (09:30–16:00 ET).",
+    });
+  }
+
+  return out;
+}

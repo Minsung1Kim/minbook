@@ -261,7 +261,7 @@ export interface ExpectedMoveResult {
   coverageLabel: string; // "~57.5% Normal Coverage (0.7979 SD)"
   volSource: string; // "VOLQ" | "VXN" | "VIX" | "FALLBACK"
   volatilityUsed: number;
-  annualizationDays: 365;
+  annualizationDays: 252;
 }
 
 export interface ExpectedMoveOptions {
@@ -270,9 +270,9 @@ export interface ExpectedMoveOptions {
 }
 
 /**
- * Computes daily expected move bands using Cboe calendar-annualized volatility (sqrt(365))
+ * Computes daily expected move bands using 252-trading-day annualized volatility (sqrt(252))
  * and Expected Straddle proxy.
- * Expected Move (1-SD) = PDC * (IV / 100) / sqrt(365)
+ * Expected Move (1-SD) = PDC * (IV / 100) / sqrt(252)
  * Expected Straddle Move = ExpectedMove1SD * sqrt(2 / PI) (~0.79788x)
  * Label coverage honestly (~57.5% Normal distribution coverage, 2*Phi(0.7979)-1), never 68%.
  */
@@ -292,8 +292,7 @@ export function computeExpectedMove(
     volSource = "VIX1D_AWARE";
   }
 
-  // Divide Cboe 30-day calendar-annualized volatility by sqrt(365), never sqrt(252)
-  const expectedMove1SD = Math.round(((pdc * (effectiveIv / 100)) / Math.sqrt(365)) * 100) / 100;
+  const expectedMove1SD = Math.round(((pdc * (effectiveIv / 100)) / Math.sqrt(252)) * 100) / 100;
   const straddleRatio = Math.sqrt(2 / Math.PI); // ~0.79788456
   const expectedMoveStraddle = Math.round(expectedMove1SD * straddleRatio * 100) / 100;
 
@@ -308,7 +307,101 @@ export function computeExpectedMove(
     coverageLabel: "~57.5% Normal Coverage (0.7979 SD)",
     volSource,
     volatilityUsed: effectiveIv,
-    annualizationDays: 365
+    annualizationDays: 252
+  };
+}
+
+export const RTH_OPEN_MINUTE_ET = 9 * 60 + 30; // 570 (09:30 ET)
+export const RTH_CLOSE_MINUTE_ET = 16 * 60; // 960 (16:00 ET)
+export const RTH_SESSION_MINUTES = 390;
+
+/**
+ * Diurnal RTH intraday volatility clock v(u) over normalized session progress u in [0, 1].
+ * Captures the sharp NY Open volatility spike (09:30–10:00 ET), midday lull, and MOC/PM ramp.
+ */
+export function diurnalVolatilityClock(u: number): number {
+  const clampedU = Math.max(0, Math.min(1, u));
+  return 1 + 3 * Math.exp(-clampedU / 0.05) + 1.2 * Math.exp(-(1 - clampedU) / 0.04);
+}
+
+const TOTAL_RTH_DIURNAL_VARIANCE = (() => {
+  const steps = 780;
+  const du = 1 / steps;
+  let sum = 0;
+  for (let i = 0; i < steps; i++) {
+    const uMid = (i + 0.5) * du;
+    const v = diurnalVolatilityClock(uMid);
+    sum += v * v * du;
+  }
+  return sum;
+})();
+
+/**
+ * Computes the fraction of total RTH variance occurring between startMinuteET and endMinuteET.
+ * Defaults endMinuteET to 16:00 ET (960) for remaining-session scaling.
+ * Outside RTH hours: pre-open (>= 00:00 and < 09:30 ET) returns 1.0 (full RTH remaining);
+ * post-close (>= 16:00 ET) returns the overnight/late-session floor (0.35).
+ */
+export function computeDiurnalVarianceFraction(
+  startMinuteET: number,
+  endMinuteET: number = RTH_CLOSE_MINUTE_ET
+): number {
+  if (startMinuteET >= RTH_CLOSE_MINUTE_ET && endMinuteET >= RTH_CLOSE_MINUTE_ET) {
+    return 0.1225; // sqrt = 0.35 floor for post-close / overnight analysis
+  }
+  const startClamped = Math.max(RTH_OPEN_MINUTE_ET, Math.min(RTH_CLOSE_MINUTE_ET, startMinuteET));
+  const endClamped = Math.max(startClamped, Math.min(RTH_CLOSE_MINUTE_ET, endMinuteET));
+  if (endClamped <= startClamped) {
+    return 0.04; // minimal remaining variance right at close
+  }
+
+  const u0 = (startClamped - RTH_OPEN_MINUTE_ET) / RTH_SESSION_MINUTES;
+  const u1 = (endClamped - RTH_OPEN_MINUTE_ET) / RTH_SESSION_MINUTES;
+
+  const steps = Math.max(40, Math.round((u1 - u0) * 780));
+  const du = (u1 - u0) / steps;
+  let variance = 0;
+  for (let i = 0; i < steps; i++) {
+    const uMid = u0 + (i + 0.5) * du;
+    const v = diurnalVolatilityClock(uMid);
+    variance += v * v * du;
+  }
+
+  return Math.max(0.01, Math.min(1.0, variance / TOTAL_RTH_DIURNAL_VARIANCE));
+}
+
+export interface DiurnalExpectedMoveResult extends ExpectedMoveResult {
+  remainingExpectedMove1SD: number;
+  remainingExpectedMoveStraddle: number;
+  diurnalScaleFactor: number;
+  varianceFraction: number;
+}
+
+/**
+ * Computes trading-day Expected Move (sqrt(252)) scaled by the remaining-window
+ * diurnal volatility clock over the 390-minute RTH session.
+ */
+export function computeDiurnalExpectedMove(
+  pdc: number,
+  ivPct: number,
+  startMinuteET: number,
+  endMinuteET: number = RTH_CLOSE_MINUTE_ET,
+  options?: ExpectedMoveOptions
+): DiurnalExpectedMoveResult {
+  const base = computeExpectedMove(pdc, ivPct, options);
+  const varianceFraction = computeDiurnalVarianceFraction(startMinuteET, endMinuteET);
+  const diurnalScaleFactor = Math.round(Math.sqrt(varianceFraction) * 10000) / 10000;
+  const remainingExpectedMove1SD =
+    Math.round(base.expectedMove1SD * diurnalScaleFactor * 100) / 100;
+  const remainingExpectedMoveStraddle =
+    Math.round(base.expectedMoveStraddle * diurnalScaleFactor * 100) / 100;
+
+  return {
+    ...base,
+    remainingExpectedMove1SD,
+    remainingExpectedMoveStraddle,
+    diurnalScaleFactor,
+    varianceFraction: Math.round(varianceFraction * 10000) / 10000,
   };
 }
 

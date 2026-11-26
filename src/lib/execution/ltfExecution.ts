@@ -35,7 +35,7 @@ export function normalCdf(x: number): number {
 }
 
 /**
- * Computes Brownian motion first-passage touch probability:
+ * Computes Brownian motion first-passage touch probability (legacy single-barrier reference):
  * P(max_{0<=s<=t} W_s >= d) = 2 * (1 - Phi(d / (sigma_15m * sqrt(t / 15))))
  * Parameter: sigma_15m_post = 0.50 * ATR_Open_15m
  */
@@ -54,6 +54,114 @@ export function computeBrownianTouchProbability(
   const cdf = normalCdf(z);
   const touchProb = Math.min(1.0, Math.max(0.0, 2 * (1 - cdf)));
   return Math.round(touchProb * 1000) / 1000;
+}
+
+export interface DoubleBarrierParams {
+  tpPts: number;
+  slPts: number;
+  horizonMinutes: number;
+  atrOpen15m: number;
+  driftPtsPerMin?: number;
+}
+
+/**
+ * Computes stop-constrained absorbing double-barrier hit probability:
+ * P(hit +TP before hitting -SL within horizonMinutes).
+ * Uses a fast 1D spatial lattice Markov solver with sub-step barrier absorption
+ * over [-SL, +TP] and regime-calibrated drift (0 on CAUTION regimes).
+ */
+export function computeDoubleBarrierHitProbability(params: DoubleBarrierParams): number {
+  const { tpPts, slPts, horizonMinutes, atrOpen15m, driftPtsPerMin = 0 } = params;
+  if (tpPts <= 0) return 1.0;
+  if (slPts <= 0 || horizonMinutes <= 0) return 0.0;
+
+  const safeAtr = Math.max(10, atrOpen15m);
+  const sigma1m = (0.5 * safeAtr) / Math.sqrt(15);
+  if (sigma1m <= 0) return 0.0;
+
+  const subSteps = 4; // 15-second sub-steps for accurate barrier absorption
+  const nSteps = Math.max(1, Math.round(horizonMinutes * subSteps));
+  const dt = horizonMinutes / nSteps;
+  const sig = sigma1m * Math.sqrt(dt);
+  const mu = driftPtsPerMin * dt;
+
+  const M = 44; // interior spatial grid points between -SL and +TP
+  const span = tpPts + slPts;
+  const dx = span / (M + 1);
+
+  let p = new Float64Array(M);
+  const startIdxFloat = slPts / dx - 1;
+  const j0 = Math.max(0, Math.min(M - 1, Math.floor(startIdxFloat)));
+  const j1 = Math.max(0, Math.min(M - 1, j0 + 1));
+  const w1 = Math.max(0, Math.min(1, startIdxFloat - j0));
+  p[j0] += 1 - w1;
+  if (j1 !== j0) p[j1] += w1;
+
+  const trans: Float64Array[] = new Array(M);
+  const hitRow = new Float64Array(M);
+
+  for (let j = 0; j < M; j++) {
+    const xj = -slPts + (j + 1) * dx;
+    hitRow[j] = 1 - normalCdf((tpPts - xj - mu) / sig);
+    const row = new Float64Array(M);
+    for (let k = 0; k < M; k++) {
+      const lo = -slPts + (k + 0.5) * dx;
+      const hi = -slPts + (k + 1.5) * dx;
+      const cHi =
+        k === M - 1 ? normalCdf((tpPts - xj - mu) / sig) : normalCdf((hi - xj - mu) / sig);
+      const cLo =
+        k === 0 ? normalCdf((-slPts - xj - mu) / sig) : normalCdf((lo - xj - mu) / sig);
+      row[k] = Math.max(0, cHi - cLo);
+    }
+    trans[j] = row;
+  }
+
+  let hitTP = 0;
+  for (let s = 0; s < nSteps; s++) {
+    const next = new Float64Array(M);
+    for (let j = 0; j < M; j++) {
+      const pj = p[j];
+      if (pj < 1e-12) continue;
+      hitTP += pj * hitRow[j];
+      const row = trans[j];
+      for (let k = 0; k < M; k++) {
+        next[k] += pj * row[k];
+      }
+    }
+    p = next;
+  }
+
+  const clamped = Math.min(1.0, Math.max(0.0, hitTP));
+  return Math.round(clamped * 10000) / 10000;
+}
+
+export interface VolatilityScaledStopRange {
+  minPts: number;
+  maxPts: number;
+  recommendedPts: number;
+  atr5mDiurnalPts: number;
+}
+
+/**
+ * Spot- and diurnal-ATR-scaled stop sanity range:
+ * clip(0.35 * atr5mDiurnal, 0.0004 * spot, 0.0012 * spot)
+ */
+export function computeVolatilityScaledStopRange(
+  spot: number,
+  atr5mDiurnal: number
+): VolatilityScaledStopRange {
+  const safeSpot = spot > 100 ? spot : 25000;
+  const safeAtr5m = atr5mDiurnal > 1 ? atr5mDiurnal : 30;
+  const minPts = Math.round(0.0004 * safeSpot * 10) / 10;
+  const maxPts = Math.round(0.0012 * safeSpot * 10) / 10;
+  const rawIdeal = Math.round(0.35 * safeAtr5m * 10) / 10;
+  const recommendedPts = Math.max(minPts, Math.min(maxPts, rawIdeal));
+  return {
+    minPts,
+    maxPts,
+    recommendedPts,
+    atr5mDiurnalPts: Math.round(safeAtr5m * 10) / 10,
+  };
 }
 
 export interface EvaluateLTFExecutionParams {
@@ -254,10 +362,11 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     }
   }
 
-  let archetype: LTFTradeCard["archetype"] = isSweepMssReversal ? "SWEEP_MSS_REVERSAL" : "RETRACE_CONTINUATION";
+  const stopRange = computeVolatilityScaledStopRange(currentPrice, safeAtrOpen15m * 0.577);
+  const archetype: LTFTradeCard["archetype"] = isSweepMssReversal ? "SWEEP_MSS_REVERSAL" : "RETRACE_CONTINUATION";
   let entryZone = { low: 0, high: 0, mid: 0 };
   let stopLoss = 0;
-  let stopPts = 14.0;
+  let stopPts = stopRange.recommendedPts;
 
   if (archetype === "SWEEP_MSS_REVERSAL") {
     if (direction === "SHORT") {
@@ -267,7 +376,7 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(sweepLevel * 100) / 100
       };
       const rawDist = Math.abs(sweepExtreme + stopBuffer - entryZone.mid);
-      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopPts = Math.max(stopRange.minPts, Math.min(stopRange.maxPts, Math.round(rawDist * 10) / 10));
       stopLoss = Math.round((entryZone.mid + stopPts) * 100) / 100;
     } else {
       entryZone = {
@@ -276,7 +385,7 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(sweepLevel * 100) / 100
       };
       const rawDist = Math.abs(entryZone.mid - (sweepExtreme - stopBuffer));
-      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopPts = Math.max(stopRange.minPts, Math.min(stopRange.maxPts, Math.round(rawDist * 10) / 10));
       stopLoss = Math.round((entryZone.mid - stopPts) * 100) / 100;
     }
   } else {
@@ -294,11 +403,11 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
       };
 
-      // 1m structural micro-swing stop bounded strictly to [10.0, 18.0] pts for scalpers
+      // 1m structural micro-swing stop scaled to spot and diurnal 5m ATR
       const recentBars = post933Bars.slice(-3);
       const localHigh = recentBars.length > 0 ? Math.max(...recentBars.map((b) => b.high)) : entryZone.mid + 12;
       const rawDist = Math.abs(localHigh + stopBuffer - entryZone.mid);
-      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopPts = Math.max(stopRange.minPts, Math.min(stopRange.maxPts, Math.round(rawDist * 10) / 10));
       stopLoss = Math.round((entryZone.mid + stopPts) * 100) / 100;
     } else {
       const retrace40 = impulseHigh - 0.40 * impulseRange;
@@ -309,11 +418,11 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
         mid: Math.round(((retrace40 + retrace50) / 2) * 100) / 100
       };
 
-      // 1m structural micro-swing stop bounded strictly to [10.0, 18.0] pts for scalpers
+      // 1m structural micro-swing stop scaled to spot and diurnal 5m ATR
       const recentBars = post933Bars.slice(-3);
       const localLow = recentBars.length > 0 ? Math.min(...recentBars.map((b) => b.low)) : entryZone.mid - 12;
       const rawDist = Math.abs(entryZone.mid - (localLow - stopBuffer));
-      stopPts = Math.max(10.0, Math.min(18.0, Math.round(rawDist * 10) / 10));
+      stopPts = Math.max(stopRange.minPts, Math.min(stopRange.maxPts, Math.round(rawDist * 10) / 10));
       stopLoss = Math.round((entryZone.mid - stopPts) * 100) / 100;
     }
   }
@@ -396,21 +505,70 @@ export function evaluateLTFExecution(params: EvaluateLTFExecutionParams): LTFTra
     }
   }
 
+  // Regime-calibrated drift: 0 on CAUTION/CHOP regimes, small positive drift on aligned directional regimes
+  const isCautionRegime =
+    !layer2 ||
+    layer2.verdict === "CAUTION / CHOP RISK" ||
+    layer2.verdict === "STAND ASIDE / HIGH VOL" ||
+    layer1?.sizeMultiplier === 0;
+  const isAlignedDirection =
+    !isCautionRegime &&
+    ((direction === "LONG" && layer2?.direction === "BULLISH") ||
+      (direction === "SHORT" && layer2?.direction === "BEARISH"));
+  const sigma1m = (0.5 * safeAtrOpen15m) / Math.sqrt(15);
+  const driftPtsPerMin = isAlignedDirection ? Math.round(0.08 * sigma1m * 1000) / 1000 : 0;
+
   const tp1: ReachabilityTarget = {
     price: Math.round(tp1Price * 100) / 100,
     distancePts: Math.round(tp1Dist * 100) / 100,
-    hitProb5m: computeBrownianTouchProbability(tp1Dist, 5, safeAtrOpen15m),
-    hitProb10m: computeBrownianTouchProbability(tp1Dist, 10, safeAtrOpen15m),
-    hitProb15m: computeBrownianTouchProbability(tp1Dist, 15, safeAtrOpen15m),
+    hitProb5m: computeDoubleBarrierHitProbability({
+      tpPts: tp1Dist,
+      slPts: stopPts,
+      horizonMinutes: 5,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
+    hitProb10m: computeDoubleBarrierHitProbability({
+      tpPts: tp1Dist,
+      slPts: stopPts,
+      horizonMinutes: 10,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
+    hitProb15m: computeDoubleBarrierHitProbability({
+      tpPts: tp1Dist,
+      slPts: stopPts,
+      horizonMinutes: 15,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
     rationale: tp1Rationale
   };
 
   const tp2: ReachabilityTarget = {
     price: Math.round(tp2Price * 100) / 100,
     distancePts: Math.round(tp2Dist * 100) / 100,
-    hitProb5m: computeBrownianTouchProbability(tp2Dist, 5, safeAtrOpen15m),
-    hitProb10m: computeBrownianTouchProbability(tp2Dist, 10, safeAtrOpen15m),
-    hitProb15m: computeBrownianTouchProbability(tp2Dist, 15, safeAtrOpen15m),
+    hitProb5m: computeDoubleBarrierHitProbability({
+      tpPts: tp2Dist,
+      slPts: stopPts,
+      horizonMinutes: 5,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
+    hitProb10m: computeDoubleBarrierHitProbability({
+      tpPts: tp2Dist,
+      slPts: stopPts,
+      horizonMinutes: 10,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
+    hitProb15m: computeDoubleBarrierHitProbability({
+      tpPts: tp2Dist,
+      slPts: stopPts,
+      horizonMinutes: 15,
+      atrOpen15m: safeAtrOpen15m,
+      driftPtsPerMin,
+    }),
     rationale: tp2Rationale
   };
 

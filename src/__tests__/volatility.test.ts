@@ -68,16 +68,16 @@ describe("Volatility & Realized Range Estimators", () => {
     expect(rv5m).toBeLessThan(100);
   });
 
-  it("computes Cboe 365-day calendar annualized Implied Move and honest Straddle coverage", () => {
+  it("computes 252-trading-day annualized Implied Move and honest Straddle coverage", () => {
     const pdc = 21000;
     const iv = 20.0; // 20% annualized IV
     const move = computeExpectedMove(pdc, iv);
 
-    // 1-SD daily move = 21000 * 0.20 / sqrt(365) ≈ 21000 * 0.20 / 19.10497 ≈ 219.84 pts
-    expect(move.expectedMove1SD).toBeCloseTo(219.84, 1);
+    // 1-SD daily move = 21000 * 0.20 / sqrt(252) ≈ 21000 * 0.20 / 15.8745 ≈ 264.58 pts
+    expect(move.expectedMove1SD).toBeCloseTo(264.58, 1);
 
-    // Straddle move = 1-SD * sqrt(2/pi) ≈ 219.84 * 0.79788 ≈ 175.41 pts
-    expect(move.expectedMoveStraddle).toBeCloseTo(175.41, 1);
+    // Straddle move = 1-SD * sqrt(2/pi) ≈ 264.58 * 0.79788 ≈ 211.10 pts
+    expect(move.expectedMoveStraddle).toBeCloseTo(211.10, 1);
 
     expect(move.upper1SD).toBe(pdc + move.expectedMove1SD);
     expect(move.lower1SD).toBe(pdc - move.expectedMove1SD);
@@ -85,7 +85,7 @@ describe("Volatility & Realized Range Estimators", () => {
     expect(move.lowerStraddle).toBe(pdc - move.expectedMoveStraddle);
 
     // Coverage metadata
-    expect(move.annualizationDays).toBe(365);
+    expect(move.annualizationDays).toBe(252);
     expect(move.straddleCoveragePercent).toBe(57.5);
     expect(move.coverageLabel).toContain("~57.5% Normal Coverage (0.7979 SD)");
   });

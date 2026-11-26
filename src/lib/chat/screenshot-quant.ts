@@ -1,5 +1,21 @@
-import { ChatMarketContextSnapshot } from "@/types/chat";
+import {
+  ChatMarketContextSnapshot,
+  ContractSizingUnit,
+  DoubleBarrierOdds,
+  ExtractedChartState,
+  ScalpAccountProfile,
+  ScalpSetupArchetype,
+  SessionWindow,
+} from "@/types/chat";
+import { AccountDrawdownMode } from "@/types/market";
 import { isTier1Event } from "@/lib/market/economicCalendar";
+import { computeDiurnalExpectedMove, RTH_CLOSE_MINUTE_ET } from "@/lib/market/math";
+import {
+  computeDoubleBarrierHitProbability,
+  computeVolatilityScaledStopRange,
+} from "@/lib/execution/ltfExecution";
+import { computeDrawdownExitPolicy } from "@/lib/risk/sizing";
+import { getETParts } from "@/lib/market/sessionClock";
 
 export interface ScreenshotQuantInput {
   instrument?: "NQ" | "MNQ";
@@ -166,6 +182,46 @@ export interface ScreenshotQuantResult {
   actionStance: string;
   warnings: string[];
   quantHighlights: string[];
+}
+
+export interface ScalpVerdictResult extends ScreenshotQuantResult {
+  verdictAction: "GO" | "HALF-SIZE" | "VETO";
+  detectedSetupArchetype: ScalpSetupArchetype;
+  sessionWindow: SessionWindow;
+  accountDrawdownMode: AccountDrawdownMode;
+  feedLagSeconds: number;
+  isStaleBackendFeed: boolean;
+  suppressedStaleLtfFlow: boolean;
+  diurnalEm: {
+    annualizationDays: 252;
+    fullDay1SD: number;
+    fullDayStraddle: number;
+    remainingStraddle: number;
+    diurnalScaleFactor: number;
+    pullbackStretchPct: number | null;
+    targetStretchPct: number | null;
+  };
+  doubleBarrierOdds: DoubleBarrierOdds | null;
+  volatilityScaledStop: {
+    minPts: number;
+    maxPts: number;
+    recommendedPts: number;
+    atr5mDiurnalPts: number;
+    status: "TOO_TIGHT" | "OPTIMAL" | "WIDE" | "UNSPECIFIED";
+  };
+  mnqSizingTable: ContractSizingUnit[];
+  exitDirective: {
+    action: "TAKE_PARTIALS" | "SINGLE_CONTRACT_TRAIL" | "STICK_WITH_FULL_TP";
+    partialPct: number | null;
+    partialAtR: number | null;
+    partialPrice: number | null;
+    trailBehindPeakPts: number | null;
+    trailFormula: string;
+    antiChaseInvalidation: string;
+    summaryLine: string;
+  };
+  blockingMagnet: AnchoredLevelDistance | null;
+  nextRedNewsLabel: string;
 }
 
 function round2(n: number): number {
@@ -979,5 +1035,410 @@ export function computeScreenshotQuantMetrics(
     actionStance,
     warnings,
     quantHighlights,
+  };
+}
+
+export function resolveSessionWindowFromMinutesET(minutesET: number): SessionWindow {
+  if (minutesET >= 570 && minutesET < 600) return "NY_OPEN_0930_1000";
+  if (minutesET >= 600 && minutesET < 690) return "NY_AM_1000_1130";
+  if (minutesET >= 690 && minutesET < 810) return "NY_LUNCH_1130_1330";
+  if (minutesET >= 810 && minutesET < 960) return "NY_PM_1330_1600";
+  return "OVERNIGHT_GLOBEX";
+}
+
+function getCurrentMinutesET(): number {
+  const et = getETParts(new Date());
+  return et.hour * 60 + et.minute;
+}
+
+export function chartStateToQuantInput(chartState: ExtractedChartState): ScreenshotQuantInput {
+  const orderType: ScreenshotQuantInput["orderType"] =
+    chartState.orderState === "PENDING_LIMIT_ORDER"
+      ? "LIMIT"
+      : chartState.orderState === "MARKET_ENTRY_NOW"
+      ? "MARKET"
+      : "UNKNOWN";
+  const positionStatus: ScreenshotQuantInput["positionStatus"] =
+    chartState.orderState === "OPEN_POSITION"
+      ? "OPEN"
+      : chartState.orderState === "PENDING_LIMIT_ORDER" ||
+        chartState.orderState === "MARKET_ENTRY_NOW"
+      ? "PLANNED_FLAT"
+      : "UNKNOWN";
+
+  return {
+    instrument: chartState.instrument,
+    timeframe: chartState.timeframe,
+    screenshotCurrentPrice: chartState.liveSpot,
+    direction: chartState.direction,
+    orderType,
+    positionStatus,
+    entryPrice: chartState.entryPx ?? undefined,
+    entryZoneLow: chartState.entryZoneLow ?? undefined,
+    entryZoneHigh: chartState.entryZoneHigh ?? undefined,
+    stopLossPrice: chartState.stopPx ?? undefined,
+    targetPrice: chartState.tp1Px ?? chartState.tp2Px ?? undefined,
+    contracts: chartState.contracts,
+    accountBalance: chartState.accountBalance ?? undefined,
+    openPnlDollars: chartState.openPnlDollars ?? undefined,
+    newsCountdownMinutes: chartState.newsCountdownMinutes ?? undefined,
+    newsImpact: chartState.newsImpact,
+    newsEventName: chartState.newsEventName ?? undefined,
+    candleOpen: chartState.candleOHLC?.open,
+    candleHigh: chartState.candleOHLC?.high,
+    candleLow: chartState.candleOHLC?.low,
+    candleClose: chartState.candleOHLC?.close,
+  };
+}
+
+/**
+ * Step 2 of the deterministic 4-tool /chat pipeline:
+ * Re-anchors all levels to liveSpot, enforces >90s backend lag guard,
+ * computes diurnal sqrt(252) EM, absorbing double-barrier hit probabilities,
+ * volatility-scaled stop sanity + MNQ sizing, and prop-firm drawdown-aware exit rules.
+ */
+export function computeScalpVerdict(
+  chartState: ExtractedChartState,
+  marketSnapshot: ChatMarketContextSnapshot,
+  accountProfile: ScalpAccountProfile = { accountDrawdownMode: "INTRADAY_UNREALIZED" }
+): ScalpVerdictResult {
+  const quoteTsMs = Date.parse(marketSnapshot.quote.timestamp);
+  const ageFromTs = Number.isFinite(quoteTsMs)
+    ? Math.max(0, Math.round((Date.now() - quoteTsMs) / 1000))
+    : 0;
+  const feedLagSeconds = Math.max(marketSnapshot.quote.stalenessSeconds ?? 0, ageFromTs);
+  const isStaleBackendFeed = feedLagSeconds > 90;
+
+  // Lag Guard (>90s): suppress stale 1m openingFlow / ltfExecution overrides
+  const sanitizedSnapshot: ChatMarketContextSnapshot = isStaleBackendFeed
+    ? {
+        ...marketSnapshot,
+        footprint: {
+          available: false,
+          disclaimer:
+            "Suppressed stale 1m openingFlow/footprint (>90s backend lag); governed by live screenshot spot + delay-tolerant macro/GEX/HTF.",
+        },
+        regime: {
+          ...marketSnapshot.regime,
+          biasVerdict: marketSnapshot.regime.biasVerdict.includes("CAUTION")
+            ? marketSnapshot.regime.biasVerdict
+            : `MACRO/HTF ${marketSnapshot.regime.htfTrend} (1m Flow Suppressed — Feed Lag ${feedLagSeconds}s)`,
+        },
+      }
+    : marketSnapshot;
+
+  // Merge any chart-visible key levels (e.g. ORH_3m, ORL_3m, VWAP) into snapshot levels before anchoring
+  const mergedKeyLevels = [...sanitizedSnapshot.keyLevels];
+  for (const vis of chartState.visibleKeyLevels || []) {
+    if (
+      Number.isFinite(vis.price) &&
+      vis.price > 0 &&
+      !mergedKeyLevels.some(
+        (l) =>
+          l.shortName.toLowerCase() === vis.label.toLowerCase() ||
+          Math.abs(l.price - vis.price) < 0.75
+      )
+    ) {
+      mergedKeyLevels.push({
+        name: vis.label,
+        shortName: vis.label,
+        price: vis.price,
+        distancePoints: round2(vis.price - chartState.liveSpot),
+        role: "CHART_VISIBLE",
+        timeframe: chartState.timeframe || "1m",
+        source: "CHART_SCREENSHOT",
+        timestamp: new Date().toISOString(),
+        staleness: "FRESH",
+      });
+    }
+  }
+
+  const effectiveSnapshot: ChatMarketContextSnapshot = {
+    ...sanitizedSnapshot,
+    keyLevels: mergedKeyLevels,
+  };
+
+  const baseQuant = computeScreenshotQuantMetrics(
+    chartStateToQuantInput(chartState),
+    effectiveSnapshot
+  );
+
+  // Diurnal Expected Move (sqrt(252) + remaining RTH window)
+  const currentMinuteET = accountProfile.currentMinuteET ?? getCurrentMinutesET();
+  const sessionWindow = resolveSessionWindowFromMinutesET(currentMinuteET);
+  const pdc = marketSnapshot.quote.previousClose || chartState.liveSpot;
+  const ivPct = marketSnapshot.volatilityAndMacro.vxn || marketSnapshot.volatilityAndMacro.vix || 20;
+  const diurnalEmCalc = computeDiurnalExpectedMove(
+    pdc,
+    ivPct,
+    currentMinuteET,
+    RTH_CLOSE_MINUTE_ET
+  );
+
+  const safeRemainingStraddle = Math.max(10, diurnalEmCalc.remainingExpectedMoveStraddle);
+  const pullbackStretchPct =
+    baseQuant.pullbackNeededToFillPts !== null
+      ? round2((baseQuant.pullbackNeededToFillPts / safeRemainingStraddle) * 100)
+      : null;
+  const targetStretchPct =
+    baseQuant.targetDistancePts !== null
+      ? round2((baseQuant.targetDistancePts / safeRemainingStraddle) * 100)
+      : null;
+
+  // Re-evaluate STRETCHED_LOW_FILL_ODDS against diurnal remaining Straddle instead of flat full-day Straddle
+  let limitSetupVerdict = baseQuant.limitSetupVerdict;
+  const limitSetupReasons = [...baseQuant.limitSetupReasons];
+  if (
+    baseQuant.setupState === "PENDING_LIMIT_ORDER" &&
+    pullbackStretchPct !== null &&
+    limitSetupVerdict !== "INVALID"
+  ) {
+    if (pullbackStretchPct > 85 && limitSetupVerdict !== "STRETCHED_LOW_FILL_ODDS") {
+      limitSetupVerdict = "STRETCHED_LOW_FILL_ODDS";
+      limitSetupReasons.unshift(
+        `Entry sits ${baseQuant.pullbackNeededToFillPts?.toFixed(1)} pts (${pullbackStretchPct.toFixed(0)}% of remaining diurnal Straddle ${safeRemainingStraddle.toFixed(1)} pts) away — low fill odds.`
+      );
+    } else if (pullbackStretchPct <= 85 && limitSetupVerdict === "STRETCHED_LOW_FILL_ODDS") {
+      limitSetupVerdict =
+        baseQuant.stopLossSource === "SUGGESTED_STRUCTURAL" ||
+        baseQuant.layer1RiskMultiplier === 0.5
+          ? "VALID_WITH_ADJUSTMENTS"
+          : "VALID";
+    }
+  }
+
+  // Volatility-Scaled Stop Sanity Check
+  const atr5mDiurnal =
+    accountProfile.atr5mDiurnalPts ??
+    Math.max(
+      8,
+      round2((baseQuant.atrOpen15m / Math.sqrt(3)) * Math.max(0.45, diurnalEmCalc.diurnalScaleFactor))
+    );
+  const stopRange = computeVolatilityScaledStopRange(chartState.liveSpot, atr5mDiurnal);
+
+  let stopStatus: ScalpVerdictResult["volatilityScaledStop"]["status"] = "UNSPECIFIED";
+  if (baseQuant.stopDistancePts !== null) {
+    if (baseQuant.stopDistancePts < stopRange.minPts) stopStatus = "TOO_TIGHT";
+    else if (baseQuant.stopDistancePts > stopRange.maxPts) stopStatus = "WIDE";
+    else stopStatus = "OPTIMAL";
+  }
+
+  // Exact MNQ contract sizing per fixed risk unit ($100, $150, $200, $250, $300 + custom)
+  const riskUnits = Array.from(
+    new Set(
+      [100, 150, 200, 250, 300, accountProfile.riskBudgetDollars]
+        .filter((v): v is number => typeof v === "number" && v > 0)
+    )
+  ).sort((a, b) => a - b);
+  const effectiveStopForSizing = baseQuant.stopDistancePts ?? stopRange.recommendedPts;
+  const mnqPerContractRisk = Math.max(1, effectiveStopForSizing * 2 + 1.24);
+  const mnqSizingTable: ContractSizingUnit[] = riskUnits.map((budget) => {
+    const mnqContracts = Math.max(0, Math.floor(budget / mnqPerContractRisk));
+    return {
+      riskBudgetDollars: budget,
+      mnqContracts,
+      actualRiskDollars: round2(mnqContracts * mnqPerContractRisk),
+    };
+  });
+
+  // Stop-Constrained Double-Barrier Hit Odds
+  const tp1Dist =
+    baseQuant.targetDistancePts ??
+    (baseQuant.takeProfitTargets[0]
+      ? Math.abs(baseQuant.takeProfitTargets[0].distanceFromScreenshotPts)
+      : round2(effectiveStopForSizing * 1.2));
+  const tp2Dist =
+    chartState.tp2Px != null
+      ? round2(Math.abs(chartState.tp2Px - (baseQuant.entryPrice ?? chartState.liveSpot)))
+      : baseQuant.takeProfitTargets[1]
+      ? Math.abs(baseQuant.takeProfitTargets[1].distanceFromScreenshotPts)
+      : null;
+
+  const isCautionRegime =
+    marketSnapshot.regime.biasVerdict.includes("CAUTION") ||
+    marketSnapshot.regime.biasVerdict.includes("STAND ASIDE") ||
+    baseQuant.layer1RiskMultiplier === 0 ||
+    baseQuant.liveBiasAtScreenshot.direction === "NEUTRAL";
+  const isDirectionAligned =
+    !isCautionRegime &&
+    ((baseQuant.direction === "LONG" && marketSnapshot.regime.biasVerdict.includes("BULLISH")) ||
+      (baseQuant.direction === "SHORT" && marketSnapshot.regime.biasVerdict.includes("BEARISH")));
+
+  const sigma1mPts = round2((0.5 * Math.max(10, baseQuant.atrOpen15m)) / Math.sqrt(15));
+  const driftPtsPerMin = isDirectionAligned ? round2(0.08 * sigma1mPts) : 0;
+
+  const doubleBarrierOdds: DoubleBarrierOdds | null =
+    effectiveStopForSizing > 0 && tp1Dist > 0
+      ? {
+          tp1HitBeforeSlPct5m: round2(
+            computeDoubleBarrierHitProbability({
+              tpPts: tp1Dist,
+              slPts: effectiveStopForSizing,
+              horizonMinutes: 5,
+              atrOpen15m: baseQuant.atrOpen15m,
+              driftPtsPerMin,
+            }) * 100
+          ),
+          tp1HitBeforeSlPct10m: round2(
+            computeDoubleBarrierHitProbability({
+              tpPts: tp1Dist,
+              slPts: effectiveStopForSizing,
+              horizonMinutes: 10,
+              atrOpen15m: baseQuant.atrOpen15m,
+              driftPtsPerMin,
+            }) * 100
+          ),
+          tp1HitBeforeSlPct15m: round2(
+            computeDoubleBarrierHitProbability({
+              tpPts: tp1Dist,
+              slPts: effectiveStopForSizing,
+              horizonMinutes: 15,
+              atrOpen15m: baseQuant.atrOpen15m,
+              driftPtsPerMin,
+            }) * 100
+          ),
+          tp2HitBeforeSlPct15m:
+            tp2Dist !== null && tp2Dist > 0
+              ? round2(
+                  computeDoubleBarrierHitProbability({
+                    tpPts: tp2Dist,
+                    slPts: effectiveStopForSizing,
+                    horizonMinutes: 15,
+                    atrOpen15m: baseQuant.atrOpen15m,
+                    driftPtsPerMin,
+                  }) * 100
+                )
+              : null,
+          driftPtsPerMin,
+          sigma1mPts,
+          model: "ABSORBING_DOUBLE_BARRIER_T4",
+        }
+      : null;
+
+  // Prop-Firm Drawdown-Aware Exit Directive
+  const accountDrawdownMode: AccountDrawdownMode =
+    accountProfile.accountDrawdownMode || "INTRADAY_UNREALIZED";
+  const blockingMagnet = baseQuant.obstaclesBeforeTarget[0] ?? null;
+  const isStressedVol =
+    baseQuant.isNegativeVrp ||
+    baseQuant.vixTermRatio > 1.0 ||
+    baseQuant.vvix >= 110;
+  const isExtendedTarget =
+    (baseQuant.plannedRewardToRisk !== null && baseQuant.plannedRewardToRisk >= 2.3) ||
+    (targetStretchPct !== null && targetStretchPct >= 80);
+
+  const exitPolicy = computeDrawdownExitPolicy({
+    accountDrawdownMode,
+    direction: baseQuant.direction,
+    contracts: baseQuant.contracts,
+    entryPrice: baseQuant.entryPrice ?? chartState.liveSpot,
+    stopPts: effectiveStopForSizing,
+    atr5mPts: atr5mDiurnal,
+    netGammaRegime: baseQuant.netGammaRegime,
+    hasBlockingMagnet: blockingMagnet !== null,
+    blockingMagnetPrice: blockingMagnet?.price ?? null,
+    blockingMagnetName: blockingMagnet?.shortName ?? null,
+    isStressedVol,
+    isExtendedTarget,
+    targetPrice: baseQuant.targetPrice,
+  });
+
+  const antiChaseInvalidation =
+    baseQuant.stopLossPrice !== null
+      ? `Hard SL ${baseQuant.stopLossPrice.toFixed(2)} (${effectiveStopForSizing.toFixed(1)} pts)${
+          baseQuant.setupState === "PENDING_LIMIT_ORDER"
+            ? `; do not chase market @ ${chartState.liveSpot.toFixed(2)}`
+            : ""
+        }`
+      : `Wait for structural invalidation >= ${stopRange.recommendedPts.toFixed(1)} pts`;
+
+  let verdictAction: ScalpVerdictResult["verdictAction"] = "GO";
+  if (
+    baseQuant.newsShouldVetoTrade ||
+    baseQuant.layer1RiskMultiplier === 0 ||
+    limitSetupVerdict === "INVALID"
+  ) {
+    verdictAction = "VETO";
+  } else if (
+    baseQuant.layer1RiskMultiplier === 0.5 ||
+    limitSetupVerdict === "STRETCHED_LOW_FILL_ODDS" ||
+    stopStatus === "TOO_TIGHT"
+  ) {
+    verdictAction = "HALF-SIZE";
+  }
+
+  const nextRedNewsLabel =
+    typeof chartState.newsCountdownMinutes === "number" &&
+    baseQuant.newsSeverity === "RED_HIGH"
+      ? `${chartState.newsEventName || "Red News"} in ${chartState.newsCountdownMinutes}m`
+      : typeof chartState.newsCountdownMinutes === "number"
+      ? `None (${chartState.newsEventName || "Minor"} ${chartState.newsCountdownMinutes}m)`
+      : "None imminent";
+
+  const warnings = [...baseQuant.warnings];
+  if (isStaleBackendFeed) {
+    warnings.unshift(
+      `STALE BACKEND FEED (${feedLagSeconds}s > 90s): 1m openingFlow/footprint suppressed; anchored strictly to screenshot liveSpot ${chartState.liveSpot.toFixed(2)}.`
+    );
+  }
+  if (stopStatus === "TOO_TIGHT" && baseQuant.stopDistancePts !== null) {
+    warnings.push(
+      `STOP TOO TIGHT (${baseQuant.stopDistancePts.toFixed(1)} pts < diurnal floor ${stopRange.minPts.toFixed(1)} pts for spot ${chartState.liveSpot.toFixed(0)}).`
+    );
+  }
+
+  return {
+    ...baseQuant,
+    detectedSetupArchetype: chartState.detectedSetupArchetype,
+    limitSetupVerdict,
+    limitSetupReasons,
+    pullbackNeededPctOfStraddle: pullbackStretchPct ?? baseQuant.pullbackNeededPctOfStraddle,
+    targetPctOfDailyStraddle: targetStretchPct ?? baseQuant.targetPctOfDailyStraddle,
+    expectedMoveStraddle: diurnalEmCalc.expectedMoveStraddle,
+    expectedMove1SD: diurnalEmCalc.expectedMove1SD,
+    tradeManagement: {
+      ...baseQuant.tradeManagement,
+      tpRecommendation: exitPolicy.tpRecommendation,
+      partialTpPrice: exitPolicy.partialPrice,
+      partialTpLabel: exitPolicy.partialLabel,
+      tpRationale: exitPolicy.rationale,
+    },
+    verdictAction,
+    sessionWindow,
+    accountDrawdownMode,
+    feedLagSeconds,
+    isStaleBackendFeed,
+    suppressedStaleLtfFlow: isStaleBackendFeed,
+    diurnalEm: {
+      annualizationDays: 252,
+      fullDay1SD: diurnalEmCalc.expectedMove1SD,
+      fullDayStraddle: diurnalEmCalc.expectedMoveStraddle,
+      remainingStraddle: diurnalEmCalc.remainingExpectedMoveStraddle,
+      diurnalScaleFactor: diurnalEmCalc.diurnalScaleFactor,
+      pullbackStretchPct,
+      targetStretchPct,
+    },
+    doubleBarrierOdds,
+    volatilityScaledStop: {
+      minPts: stopRange.minPts,
+      maxPts: stopRange.maxPts,
+      recommendedPts: stopRange.recommendedPts,
+      atr5mDiurnalPts: stopRange.atr5mDiurnalPts,
+      status: stopStatus,
+    },
+    mnqSizingTable,
+    exitDirective: {
+      action: exitPolicy.tpRecommendation,
+      partialPct: exitPolicy.partialPct,
+      partialAtR: exitPolicy.partialAtR,
+      partialPrice: exitPolicy.partialPrice,
+      trailBehindPeakPts: exitPolicy.trailBehindPeakPts,
+      trailFormula: exitPolicy.trailFormula,
+      antiChaseInvalidation,
+      summaryLine: `${exitPolicy.rationale} | ${antiChaseInvalidation}`,
+    },
+    blockingMagnet,
+    nextRedNewsLabel,
+    warnings,
   };
 }

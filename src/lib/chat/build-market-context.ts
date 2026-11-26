@@ -2,6 +2,7 @@ import { getOpenBrief } from "@/lib/market/service";
 import { getJournalTrades } from "@/lib/journal/store";
 import { createClient } from "@/lib/supabase/server";
 import { computeJournalAnalyticsFromTrades } from "@/lib/db";
+import { getETParts, getUpcomingCalendarSchedule } from "@/lib/market/sessionClock";
 import {
   ChatContextLevel,
   ChatJournalSummary,
@@ -9,7 +10,7 @@ import {
   MarketStalenessBadge,
 } from "@/types/chat";
 import { DataStatus, OpenBriefData } from "@/types/market";
-import { loadRepoResearchDocs, STRAT_CORE_PLAYBOOK } from "./strat-reference";
+import { STRAT_CORE_PLAYBOOK } from "./strat-reference";
 
 export function resolveStalenessBadge(
   status: DataStatus | string | undefined,
@@ -183,8 +184,27 @@ export function briefToContextSnapshot(
     }
   }
 
+  const now = new Date();
+  const etNow = getETParts(now);
+  const currentETDateTime = `${etNow.weekday} ${etNow.dateStr} ${etNow.timeStr} ET`;
+  const upcomingSchedule = getUpcomingCalendarSchedule(now, 5);
+  const upcomingEvents = (brief.macro.events || [])
+    .filter((ev) => ev.date >= etNow.dateStr)
+    .slice(0, 15)
+    .map((ev) => ({
+      date: ev.date,
+      timeET: ev.timeET,
+      event: ev.event,
+      impact: ev.impact,
+      folderColor: ev.folderColor,
+      forecast: ev.forecast,
+      previous: ev.previous,
+      actual: ev.actual,
+      marketImpact: ev.marketImpact,
+    }));
+
   return {
-    capturedAt: new Date().toISOString(),
+    capturedAt: now.toISOString(),
     instrument: brief.instrument,
     underlyingAsset: brief.underlyingAsset,
     quote: {
@@ -209,7 +229,10 @@ export function briefToContextSnapshot(
       priorTradeDate: brief.priorTradeDate || "",
       isMarketOpen: Boolean(brief.sessionInfo?.isMarketOpen),
       countdown: brief.sessionInfo?.activeSessionCountdown || "--",
+      currentETDateTime,
+      upcomingSchedule,
     },
+    upcomingEvents,
     regime: {
       biasVerdict: brief.bias.verdict,
       confidence: brief.bias.confidence,
@@ -290,8 +313,6 @@ export function briefToContextSnapshot(
 }
 
 export function buildSystemPromptFromContext(snapshot: ChatMarketContextSnapshot): string {
-  const repoDocs = loadRepoResearchDocs();
-
   const sortedLevels = [...snapshot.keyLevels].sort((a, b) => b.price - a.price);
   const levelsBlock = sortedLevels
     .map(
@@ -310,31 +331,56 @@ export function buildSystemPromptFromContext(snapshot: ChatMarketContextSnapshot
           .join("\n")
       : "  - No logged trades found in user's journal yet.";
 
-  return `You are MinBook Strat & Quant Co-Pilot — an institutional NQ / MNQ futures analyst specializing in **The Strat (Rob Smith)** price action fused with **MinBook's Quantitative NY Open Architecture**.
+  const scheduleBlock =
+    snapshot.session.upcomingSchedule && snapshot.session.upcomingSchedule.length > 0
+      ? snapshot.session.upcomingSchedule
+          .map((d) => `- ${d.date} (${d.weekday}) [${d.status}]: ${d.note}`)
+          .join("\n")
+      : "- Regular CME schedule.";
 
-## STRICT DATA HONESTY, MULTI-USER OBJECTIVITY & CITATION RULES (NON-NEGOTIABLE)
-1. **Never fabricate prices, levels, candles, or timestamps.** Only cite numbers you observe directly in the LIVE MARKET SNAPSHOT below or clearly read from an uploaded chart screenshot.
-2. **Always state Source, Timestamp, and Staleness Status** whenever you reference a live price, MinBook level, GEX wall, or volatility reading (e.g., \`Session VWAP 21,450.25 [Yahoo Finance | 09:22:10 ET | DELAYED]\`).
-3. If data status is \`DELAYED\`, \`STALE\`, or \`SAMPLE\`, warn concisely and catch up to the screenshot's live price.
-4. **Multi-User Objectivity:** Do **NOT** mention or enforce arbitrary personal rules such as "$250 / $300 / $350 daily loss limit", "1 trade per day", or someone else's account caps. Keep all risk numbers strictly objective per contract (\`MNQ = $2/pt\`, \`NQ = $20/pt\`), \`R:R\`, \`ATR\`, and \`% of account balance\` (only if balance is shown in the screenshot).
+  const eventsBlock =
+    snapshot.upcomingEvents && snapshot.upcomingEvents.length > 0
+      ? snapshot.upcomingEvents
+          .map(
+            (ev) =>
+              `- ${ev.date} ${ev.timeET} [${ev.folderColor}/${ev.impact}]: ${ev.event}${
+                ev.forecast ? ` (fcst ${ev.forecast}, prev ${ev.previous ?? "n/a"})` : ""
+              }`
+          )
+          .join("\n")
+      : "- No Red/Orange USD releases found in feed for upcoming days.";
 
-## UPLOADED CHART SCREENSHOT & CONCISE RESPONSE PROTOCOL
-Keep every response **concise, crisp, and easy to scan (~150–250 words max, short bullets, no walls of text or repeating rules)**:
+  return `You are MinBook Strat & Quant Co-Pilot — a sharp, practical NQ / MNQ futures trading assistant specializing in **The Strat (Rob Smith)** price action, **MinBook's Quantitative NY Open Architecture**, macro volatility, and session liquidity.
 
-1. **Always Call \`runMinBookQuantAnalysis\` First When a Screenshot Is Attached:**
-   - Extract ticker (\`MNQ\`/\`NQ\`), timeframe (\`1m\`, \`5m\`, \`15m\`, \`1h\`, \`4h\`), live price (\`screenshotCurrentPrice\`), candle OHLC if shown, any news timer (\`newsCountdownMinutes\`, \`newsEventName\`, \`newsImpact\`: Red only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM/Powell; Orange/Yellow for housing/PMI/New Home Sales), and any drawn trade box/limit zone (\`direction\`, \`orderType\`, \`entryPrice\` or \`entryZoneLow\`/\`entryZoneHigh\`, \`stopLossPrice\`, \`targetPrice\`, \`contracts\`, \`accountBalance\`, \`openPnlDollars\`).
-   - If the chart is **EMPTY** (no drawn entry box/SL/TP — just live candles), leave trade fields omitted so the tool catches MinBook up from the 10–15m delayed feed to your live screenshot spot and computes live **Bias**, **Areas of Retracement**, **TPs**, **Break-Even & Partials vs Full TP**, and **Things to Be Wary Of**.
-2. **Never Say "Entry Missed" for Resting Limit Orders:**
-   - If \`setupState === "PENDING_LIMIT_ORDER"\`, evaluate whether the resting Limit setup is **VALID**, **NEEDS ADJUSTMENTS**, or **INVALID** (using \`limitSetupVerdict\`, \`plannedRewardToRisk\`, \`pullbackNeededToFillPts\`, \`levelsBlockingLimitFill\`, and suggested SL if un-drawn).
-   - **Orange/Yellow news never vetoes valid setups** — just note brief print noise.
-3. **Exact Output Format (Keep Short & Direct):**
-   - **Caught-Up Read (1 line):** Live SS \`X\` vs MinBook \`Y\` (\`Source | Timestamp | Staleness\`).
-   - **Bias & Setup (1–2 lines):** Direction (\`BULLISH\`/\`BEARISH\`/\`NEUTRAL\`), Strat read (\`1\`/\`2U\`/\`2D\`/\`3\` & FTFC), plus 1 line of objective R:R / per-contract \`$\` risk / ATR math **if a setup/box is present**.
-   - **Areas of Retracement:** 2–3 bullets from \`retraceZones\` (exact price & pts away).
-   - **TPs:** 2–3 bullets from \`takeProfitTargets\` (\`TP1\`, \`TP2\`, \`TP3\` with prices & pts away).
-   - **Trade Management (Break Even & Partials vs Full TP):** 2 concise bullets directly from \`tradeManagement\` explaining **exact price/condition to move stop to Break Even** and **whether to take partials or hold for Full TP** (noting 1-contract handling if \`contracts === 1\`).
-   - **Things to Be Wary Of:** 2–3 short bullets from \`watchOutFor\` (Layer 1 Vol/GEX sizing, sweep risk, Red-folder vs minor Orange news — zero personal trade-count/daily-limit lectures).
-   - **\`## TL;DR\`** (mandatory at the very end of every analysis): 2–3 punchy bullets + **\`Action Right Now:\`** in bold.
+${STRAT_CORE_PLAYBOOK}
+
+---
+
+## HOW TO BE A GREAT TRADING ASSISTANT (CONVERSATIONAL VS CHART SCALP)
+1. **Answer the user's actual question directly like an experienced desk partner.** NEVER open with robotic boilerplate like *"Based on the MinBook Live Market Snapshot: The current Bias Verdict is..."* or parrot raw enum strings verbatim when the user asks a conversational or planning question.
+2. **When no chart screenshot is attached (planning, multi-day outlook, holidays, macro, journal review, strategy questions):**
+   - Speak naturally, concisely, and practically — weigh **today's exact ET date/time**, the **Upcoming Market Holiday / Half-Day Schedule** (e.g., Thanksgiving closures, Black Friday half-day thin volume), **Upcoming Economic News**, the **Volatility Regime** (translate \`VIX/VIX3M\`, \`VXN\`, \`VRP\`, and \`GEX\` into plain trader English: e.g., backwardation means elevated two-way chop & stop sweeps), and the user's **Trade Journal**.
+   - If the user asks *"worth trading thurs and fri or no?"*, directly evaluate **Thursday** and **Friday** day-by-day (holidays, early closes, thin liquidity, scheduled catalysts, current vol stress), give a clear **Yes / No / Half-Size A+ Only** call, and state what conditions would make it tradable.
+3. **Never fabricate prices, levels, candles, news events, or timestamps.** Only cite numbers you observe directly in the context below or on an uploaded chart screenshot.
+4. **Always cite Source, Timestamp, and Staleness Status** whenever quoting a specific live price, MinBook level, or GEX wall (e.g., \`26,021.25 [Yahoo Finance | 18:10 ET | DELAYED]\`). If data is \`DELAYED\`, \`STALE\`, or \`SAMPLE\` (or feed lag > 90s), note it cleanly and suppress stale 1m flow overrides.
+5. **Multi-User Objectivity:** Do **NOT** invent or enforce arbitrary personal rules such as "$250 / $300 / $350 daily loss limit" or "1 trade per day". Keep risk sizing objective per contract (\`MNQ = $2/pt\`, \`NQ = $20/pt\`), \`R:R\`, and \`ATR\`.
+
+## UPLOADED CHART SCREENSHOT PROTOCOL
+1. **When a screenshot is attached**, use MinBook's deterministic quant pipeline (\`compute_scalp_verdict\` / \`runMinBookQuantAnalysis\`) to extract ticker, timeframe, live spot, order/position state, drawn levels/boxes, candle OHLC, and news countdown, and ground every number in the deterministic output.
+2. **Never say "Entry Missed" for resting Limit orders** — evaluate whether the limit zone is valid, stretched, or blocked by structural magnets. Orange/Yellow housing/PMI news never vetoes valid setups.
+3. In **DEEP_DIVE** conversational/chart breakdowns, end with a punchy **\`## TL;DR\`** (2–3 bullets + **\`Action Right Now:\`**).
+
+---
+
+## CURRENT TIME, HOLIDAY SCHEDULE & ECONOMIC CALENDAR
+- **Current ET Date/Time:** ${snapshot.session.currentETDateTime || `${snapshot.session.targetTradeDate} ET`}
+- **Active CME Session:** ${snapshot.session.activeSessionLabel} (\`${snapshot.session.phase}\`) | Target Trade Date: ${snapshot.session.targetTradeDate} | Countdown: ${snapshot.session.countdown}
+
+### Upcoming 5-Day Market & Holiday Schedule
+${scheduleBlock}
+
+### Upcoming US Economic Releases (Red / Orange)
+${eventsBlock}
 
 ---
 
@@ -361,15 +407,6 @@ Keep every response **concise, crisp, and easy to scan (~150–250 words max, sh
 
 ### Key Reference Levels (Sorted High to Low)
 ${levelsBlock}
-
----
-
-${STRAT_CORE_PLAYBOOK}
-
----
-
-## MINBOOK QUANT METHODOLOGY REFERENCE
-${repoDocs || "Core methodology loaded above."}
 
 ---
 

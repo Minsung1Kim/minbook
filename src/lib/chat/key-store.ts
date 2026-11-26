@@ -107,7 +107,7 @@ export async function validateGeminiApiKey(rawKey: string): Promise<{
 
   try {
     const res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash",
+      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=5",
       {
         method: "GET",
         headers: {

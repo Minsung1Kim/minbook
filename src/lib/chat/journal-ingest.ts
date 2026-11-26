@@ -8,7 +8,7 @@ import {
   getTrades as getLegacySqliteTrades,
 } from "@/lib/db";
 import {
-  CHAT_FALLBACK_MODEL_ID,
+  CHAT_FALLBACK_MODELS,
   CHAT_MODEL_ID,
   JournalQueryResult,
   ScalpJournalTrade,
@@ -356,16 +356,36 @@ Rules:
       ],
     });
 
-  let object: PdfSlideExtractResponse;
-  try {
-    ({ object } = await runPdfExtract(CHAT_MODEL_ID));
-  } catch (err) {
-    const msg = (err instanceof Error ? err.message : String(err || "")).toLowerCase();
-    if (msg.includes("429") || msg.includes("quota") || msg.includes("rate limit")) {
-      ({ object } = await runPdfExtract(CHAT_FALLBACK_MODEL_ID));
-    } else {
-      throw err;
+  const candidates = Array.from(new Set([CHAT_MODEL_ID, ...CHAT_FALLBACK_MODELS]));
+  let object: PdfSlideExtractResponse | null = null;
+  let lastErr: unknown;
+
+  for (const modelId of candidates) {
+    try {
+      ({ object } = await runPdfExtract(modelId));
+      break;
+    } catch (err) {
+      lastErr = err;
+      const msg = (err instanceof Error ? err.message : String(err || "")).toLowerCase();
+      if (msg.includes("api_key_invalid") || msg.includes("api key not valid")) {
+        throw err;
+      }
+      const retryable =
+        msg.includes("429") ||
+        msg.includes("quota") ||
+        msg.includes("rate limit") ||
+        msg.includes("no longer available") ||
+        msg.includes("not found") ||
+        msg.includes("deprecated") ||
+        msg.includes("unavailable") ||
+        msg.includes("404") ||
+        msg.includes("503");
+      if (!retryable) throw err;
     }
+  }
+
+  if (!object) {
+    throw lastErr instanceof Error ? lastErr : new Error("Failed to parse PDF slides");
   }
 
   return (object.trades || []).map((t, idx) =>

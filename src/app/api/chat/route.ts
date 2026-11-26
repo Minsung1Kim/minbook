@@ -26,6 +26,7 @@ import {
   extractChartState,
   formatScalperCard5Lines,
   isConversationalAssistantQuery,
+  isModelFallbackEligibleError,
   isRateLimitError,
   renderScalperCardDeterministic,
   renderScalperCardStream,
@@ -42,7 +43,7 @@ import {
   updateChatThreadTitle,
 } from "@/lib/chat/store";
 import {
-  CHAT_FALLBACK_MODEL_ID,
+  CHAT_FALLBACK_MODELS,
   CHAT_MODEL_ID,
   ChatMarketContextSnapshot,
   ChatModePreference,
@@ -149,7 +150,7 @@ async function tryForwardStream(
       if (!value) continue;
 
       if (value.type === "error") {
-        if (!emittedContent && isRateLimitError(value.errorText)) {
+        if (!emittedContent && isModelFallbackEligibleError(value.errorText)) {
           await reader.cancel().catch(() => {});
           return { emittedContent: false, rateLimited: true, errorText: value.errorText };
         }
@@ -184,7 +185,7 @@ async function tryForwardStream(
     }
     return { emittedContent, rateLimited: false };
   } catch (err) {
-    if (!emittedContent && isRateLimitError(err)) {
+    if (!emittedContent && isModelFallbackEligibleError(err)) {
       return {
         emittedContent: false,
         rateLimited: true,
@@ -319,12 +320,35 @@ export async function POST(request: NextRequest) {
     // Deterministic 4-step pipeline when chart screenshot(s) are attached
     if (userFileParts.length > 0) {
       const imageUrls = userFileParts.map((fp) => fp.url).filter(Boolean);
-      const chartState = await extractChartState({
-        apiKey,
-        imageUrls,
-        userText,
-        snapshot,
-      });
+      let chartState: ExtractedChartState;
+      try {
+        chartState = await extractChartState({
+          apiKey,
+          imageUrls,
+          userText,
+          snapshot,
+        });
+      } catch (extractErr) {
+        if (!isModelFallbackEligibleError(extractErr)) {
+          throw extractErr;
+        }
+        chartState = {
+          instrument: symbolParam,
+          liveSpot: snapshot.quote.price,
+          timeframe: "1m",
+          orderState: "ANALYSIS_ONLY",
+          direction: "NONE",
+          entryPx: null,
+          entryZoneLow: null,
+          entryZoneHigh: null,
+          stopPx: null,
+          tp1Px: null,
+          tp2Px: null,
+          contracts: 1,
+          detectedSetupArchetype: "UNKNOWN",
+          visibleKeyLevels: [],
+        };
+      }
 
       const verdict = computeScalpVerdict(chartState, snapshot, accountProfile);
       const journalContext = await queryPersonalJournal({
@@ -370,12 +394,12 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Cold Path (DEEP_DIVE) with Flash-Lite -> Flash -> deterministic fallback
+      // Cold Path (DEEP_DIVE) with Flash-Lite -> Flash fallback chain -> deterministic fallback
       const uiStream = createUIMessageStream<StratUIMessage>({
         originalMessages: sanitizedMessages,
         generateId: () => crypto.randomUUID(),
         execute: async ({ writer }) => {
-          const modelsToTry = [CHAT_MODEL_ID, CHAT_FALLBACK_MODEL_ID];
+          const modelsToTry = Array.from(new Set([CHAT_MODEL_ID, ...CHAT_FALLBACK_MODELS]));
           for (const modelId of modelsToTry) {
             const res = renderScalperCardStream({
               apiKey,
@@ -578,7 +602,7 @@ export async function POST(request: NextRequest) {
       originalMessages: sanitizedMessages,
       generateId: () => crypto.randomUUID(),
       execute: async ({ writer }) => {
-        const modelsToTry = [CHAT_MODEL_ID, CHAT_FALLBACK_MODEL_ID];
+        const modelsToTry = Array.from(new Set([CHAT_MODEL_ID, ...CHAT_FALLBACK_MODELS]));
         for (const modelId of modelsToTry) {
           const result = runTextModel(modelId);
           const uiReadable = toUIMessageStream({

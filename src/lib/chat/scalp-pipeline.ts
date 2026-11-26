@@ -6,7 +6,7 @@ import {
   type ModelMessage,
 } from "ai";
 import {
-  CHAT_FALLBACK_MODEL_ID,
+  CHAT_FALLBACK_MODELS,
   CHAT_MODEL_ID,
   ChatMarketContextSnapshot,
   ChatMode,
@@ -97,8 +97,31 @@ export function isRateLimitError(err: unknown): boolean {
 }
 
 /**
+ * Detects any model-level failure that should fall back to the next model or deterministic engine
+ * (rate limits, deprecated/unavailable model IDs, 404/503, capacity errors) — excluding invalid API keys.
+ */
+export function isModelFallbackEligibleError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err || "")).toLowerCase();
+  if (msg.includes("api_key_invalid") || msg.includes("api key not valid")) {
+    return false;
+  }
+  return (
+    isRateLimitError(msg) ||
+    msg.includes("no longer available") ||
+    msg.includes("not found") ||
+    msg.includes("deprecated") ||
+    msg.includes("unsupported") ||
+    msg.includes("not supported") ||
+    msg.includes("404") ||
+    msg.includes("503") ||
+    msg.includes("overloaded") ||
+    msg.includes("unavailable")
+  );
+}
+
+/**
  * Step 1: Strict JSON multimodal chart state extraction (`extract_chart_state(image)`).
- * Uses gemini-2.5-flash-lite first and falls back to gemini-2.5-flash on 429.
+ * Tries gemini-3.5-flash-lite first and walks CHAT_FALLBACK_MODELS on 429 / model deprecation.
  */
 export async function extractChartState(params: {
   apiKey: string;
@@ -206,15 +229,24 @@ Classify newsImpact: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM
     });
 
   const primaryModel = params.modelId || CHAT_MODEL_ID;
-  let object: ExtractedChartState;
-  try {
-    ({ object } = await runExtract(primaryModel));
-  } catch (err) {
-    if (primaryModel !== CHAT_FALLBACK_MODEL_ID && isRateLimitError(err)) {
-      ({ object } = await runExtract(CHAT_FALLBACK_MODEL_ID));
-    } else {
-      throw err;
+  const candidates = Array.from(new Set([primaryModel, ...CHAT_FALLBACK_MODELS]));
+  let object: ExtractedChartState | null = null;
+  let lastErr: unknown;
+
+  for (const modelId of candidates) {
+    try {
+      ({ object } = await runExtract(modelId));
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (!isModelFallbackEligibleError(err)) {
+        throw err;
+      }
     }
+  }
+
+  if (!object) {
+    throw lastErr instanceof Error ? lastErr : new Error("Chart extraction unavailable");
   }
 
   return {

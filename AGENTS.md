@@ -9,8 +9,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 <!-- END:nextjs-agent-rules -->
 
 ## MinBook Agent Instructions
-- Full project architecture and specifications are documented in `AGENT.md`.
-- All major decisions and verification checks must be recorded in `.ai/changelog.md`.
-- High-contrast dark terminal aesthetic for NY open traders.
-- Keep data sources honest: every price and level must display source, timestamp, and staleness badge.
-
+- Full project architecture, modules, equations, routes, and database schema are documented in `AGENT.md` (with deeper quantitative references in `docs/methodology.md`).
+- Record major architectural changes, behavior updates, and verification runs (`npx tsc --noEmit`, `npm test`, `npm run build`) in `.ai/changelog.md`.
+- **Aesthetic & UX:** High-contrast dark terminal aesthetic (`#09090b` canvas, `#111113` surface, `border-zinc-800/80` hairlines, Geist Mono `tabular-nums` on prices/metrics). Surface plain-English bias, gameplan, and target/bounce areas first; keep detailed quant math collapsed by default (`Show Quant Math`). Avoid jargon like "whipsaw".
+- **Data Honesty & Multi-User Neutrality:** Every price, quote, and level must display its source, timestamp, and staleness badge (`FRESH`, `DELAYED`, `STALE`, `SAMPLE`). Never fabricate synthetic fallback prices, synthetic audit predictions, or hardcoded personal daily caps / "1 trade per day" rules.
+- **Auth & Live Freshness Boundaries:** `src/proxy.ts` enforces Supabase SSR auth across app and private API routes (automatically falling back to local SQLite when `NEXT_PUBLIC_SUPABASE_URL` is unset). Keep `/api/market-data`, `/api/market-data/chart`, and `/api/calendar` set to `dynamic = "force-dynamic"` with `Cache-Control: no-store` so live bias and levels never go stale.

@@ -3,9 +3,15 @@ import type { AccountDrawdownMode } from "./market";
 
 export type MarketStalenessBadge = "FRESH" | "DELAYED" | "STALE" | "SAMPLE";
 
-export const CHAT_MODEL_ID = "gemini-2.5-flash-lite";
-export const CHAT_FALLBACK_MODEL_ID = "gemini-2.5-flash";
-export const CHAT_MODEL_LABEL = "Gemini 2.5 Flash-Lite";
+export const CHAT_MODEL_ID = "gemini-3.5-flash-lite";
+export const CHAT_FALLBACK_MODEL_ID = "gemini-3.6-flash";
+export const CHAT_FALLBACK_MODELS = [
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest",
+] as const;
+export const CHAT_MODEL_LABEL = "Gemini 3.5 Flash-Lite";
 
 export type ChatMode = "LIVE_SCALP" | "DEEP_DIVE";
 export type ChatModePreference = "AUTO" | ChatMode;

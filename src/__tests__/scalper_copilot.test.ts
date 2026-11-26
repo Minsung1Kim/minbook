@@ -21,6 +21,7 @@ import {
 import {
   buildDeterministicAssistantReply,
   isConversationalAssistantQuery,
+  isModelFallbackEligibleError,
   isRateLimitError,
   renderScalperCardDeterministic,
   resolveChatMode,
@@ -630,9 +631,15 @@ describe("Scalper Co-Pilot Verification Gate", () => {
       expect(prompt).toContain("Core PCE Price Index");
       expect(prompt).toContain("Answer the user's actual question directly");
 
-      // Rate-limit detector & deterministic assistant fallback
+      // Rate-limit & model-deprecation detector & deterministic assistant fallback
       expect(isRateLimitError(new Error("429 RESOURCE_EXHAUSTED quota exceeded"))).toBe(true);
       expect(isRateLimitError(new Error("SyntaxError"))).toBe(false);
+      expect(
+        isModelFallbackEligibleError(
+          new Error("This model models/gemini-2.5-flash-lite is no longer available to new users.")
+        )
+      ).toBe(true);
+      expect(isModelFallbackEligibleError(new Error("API_KEY_INVALID"))).toBe(false);
 
       const fallbackReply = buildDeterministicAssistantReply({
         userText: "worth trading thurs and fri or no?",

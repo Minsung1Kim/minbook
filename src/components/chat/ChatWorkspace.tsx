@@ -483,7 +483,7 @@ export function ChatWorkspace() {
   }, [fetchContext]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, status]);
 
   useEffect(() => {
@@ -887,7 +887,7 @@ export function ChatWorkspace() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-zinc-950 text-zinc-100">
+    <div className="h-[100dvh] overflow-hidden flex flex-col bg-zinc-950 text-zinc-100">
       <Header
         selectedInstrument={selectedInstrument}
         onSelectInstrument={setSelectedInstrument}
@@ -904,7 +904,7 @@ export function ChatWorkspace() {
         onRefresh={() => fetchContext(true)}
       />
 
-      <div className="flex-1 flex max-w-[1640px] w-full mx-auto relative overflow-hidden">
+      <div className="flex-1 min-h-0 flex max-w-[1640px] w-full mx-auto relative overflow-hidden">
         {/* Left Sidebar */}
         <aside className="hidden lg:flex lg:w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-[#0c0c0e]">
           <div className="p-3 border-b border-zinc-800/80">
@@ -973,7 +973,7 @@ export function ChatWorkspace() {
 
         {/* Main Chat Pane */}
         <main
-          className="flex-1 flex flex-col min-w-0 h-[calc(100vh-3.5rem)] relative"
+          className="flex-1 flex flex-col min-w-0 min-h-0 relative"
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragging(true);

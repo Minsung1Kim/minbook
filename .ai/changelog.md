@@ -873,3 +873,14 @@ All notable changes and architectural decisions are logged here.
   - Fixed `/api/chat/key` validation to check `/v1beta/models?pageSize=5` rather than a single hardcoded model ID.
   - Fixed `ChatWorkspace.tsx` `h-[100dvh] overflow-hidden` / `min-h-0` viewport layout so the top quote/mode bar never scrolls or clips behind the sticky header.
   - Eliminated the redundant second LLM call in screenshot `LIVE_SCALP` mode (streaming `formatScalperCard5Lines` directly after `extractChartState`) and removed the `4,500`-char `docs/methodology.md` dump from every `/chat` prompt to cut token burn.
+
+## [2026-11-27] - Futures Chart vs. Session Levels Proxy Synchronization Fix
+- **Root Cause:** When Yahoo Finance's intraday futures chart feed (`yf.chart("NQ=F")` / `yf.chart("ES=F")`) stalled over Thanksgiving (`2026-11-26 04:45Z`, `26389.75`) while `yf.quote("NQ=F")` continued updating live (`~26602–26623`, 10m CME delay), `computeSessionLevels` saw zero current-day Globex bars (`INITIALIZING`) and emitted fallback `ONH = +20`, `ONL = -20`, and `VWAP = +0.0` around the quote while `MinBookChart` rendered stale candles 230+ pts below.
+- **Time-Aligned ETF Proxy Bridge ([yahoo.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/yahoo.ts), [footprint.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/market/footprint.ts)):**
+  - Added `sanitizeProxyWickOutliers`, `findTimeAlignedProxyPrice`, and `translateProxyBarsToFutures` in `yahoo.ts`.
+  - When `NQ=F`, `MNQ=F`, or `ES=F` intraday bars (`1m`, `5m`, `15m`, `1h`, `4h`) are empty or trail the futures quote timestamp by `> 30` minutes, `YahooFinanceProvider.getIntradayBars` and `fetch1mBars` automatically bridge missing extended-hours/RTH bars from `QQQ` (`SPY` for `ES=F`) using time-aligned ratio scaling (`futuresSpot / proxy1mPriceAtFuturesTime`, eliminating 10m delay ratio skew), clamping isolated pre-market odd-lot wick glitches, preserving Globex VWAP volume weights, and anchoring the active candle's close to `futuresSpot`.
+- **Chart/Quote Divergence Indicator ([MinBookChart.tsx](file:///Users/minsung/Documents/GitHub/minbook/src/components/chart/MinBookChart.tsx)):**
+  - Added a transparent header badge (`Chart lag ±X.X vs Quote`) and a dotted `QUOTE` reference line whenever the final rendered candle diverges from `quote.price` by `>= 15` pts (e.g., during overnight gaps when equity ETFs are closed).
+- **Verification ([chart.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chart.test.ts)):**
+  - Verified live `getOpenBrief({ symbol: "NQ", forceRefresh: true })` output (`quote` vs `intradayBars[last].close` delta `0.5` pts; `globexStatus: ACTIVE`; live `ONH`/`ONL`/`VWAP`).
+  - Added unit tests for `sanitizeProxyWickOutliers`, `findTimeAlignedProxyPrice`, and `translateProxyBarsToFutures`.

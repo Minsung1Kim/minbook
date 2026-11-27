@@ -1023,6 +1023,13 @@ export default function MinBookChart({
   // ---------------------------------------------------------------------------
   // Manage Categorized Price Lines (createPriceLine / removePriceLine)
   // ---------------------------------------------------------------------------
+  const lastBarClose = activeBars.length > 0 ? activeBars[activeBars.length - 1].close : quote.price;
+  const quoteChartDiffPts =
+    !replayCutoffMs && quote.price > 0 && activeBars.length > 0
+      ? Math.round((quote.price - lastBarClose) * 100) / 100
+      : 0;
+  const hasQuoteChartMismatch = Math.abs(quoteChartDiffPts) >= 15;
+
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
     if (!candleSeries) return;
@@ -1107,7 +1114,12 @@ export default function MinBookChart({
         addLine(brief.gex.putWallNq, `PUT WALL (${brief.gex.putWallNq.toFixed(0)})`, "#f43f5e", LineStyle.Dashed, 1);
       }
     }
-  }, [layers, metrics, brief.gex]);
+
+    // Category 6: Live Quote anchor line if chart candle feed still lags > 15 pts
+    if (hasQuoteChartMismatch && quote.price > 0) {
+      addLine(quote.price, `QUOTE (${quote.price.toFixed(0)})`, "#fbbf24", LineStyle.Dotted, 1);
+    }
+  }, [layers, metrics, brief.gex, hasQuoteChartMismatch, quote.price]);
 
   // Toggle VWAP Series Visibility
   useEffect(() => {
@@ -1769,7 +1781,7 @@ export default function MinBookChart({
     userDrawingsPrimitiveRef.current?.setPreview(null, null);
   };
 
-  // Latency Pill Status
+  // Latency Pill Status & Quote/Candle Sync Guard
   const isDelayed = quote.status === "DELAYED";
   const latencyBadgeText = isDelayed ? "DELAYED 10–15m CME" : "LIVE PROXY";
 
@@ -1786,6 +1798,15 @@ export default function MinBookChart({
             <span className="px-1.5 py-0.2 rounded bg-zinc-900 text-zinc-400 text-[10px] border border-zinc-800">
               {quote.symbol}
             </span>
+            {hasQuoteChartMismatch && (
+              <span
+                className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[10px] border border-amber-500/30 font-semibold"
+                title={`Latest chart candle (${lastBarClose.toFixed(2)}) lags Quote (${quote.price.toFixed(2)}) — levels use Quote`}
+              >
+                Chart lag {quoteChartDiffPts > 0 ? "+" : ""}
+                {quoteChartDiffPts.toFixed(1)} vs Quote
+              </span>
+            )}
             {replayCutoffMs && (
               <div className="flex items-center space-x-1">
                 <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 text-[10px] border border-amber-500/30 font-semibold">

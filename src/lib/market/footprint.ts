@@ -1,5 +1,11 @@
 import { OHLCVBar, CandleFootprintData, FootprintSummary, KeyLevel, SessionMetrics } from "@/types/market";
 import YahooFinance from "yahoo-finance2";
+import {
+  getFuturesProxySymbol,
+  fetchYahooChartBars,
+  findTimeAlignedProxyPrice,
+  translateProxyBarsToFutures
+} from "./yahoo";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -8,7 +14,7 @@ interface M1Cache {
   bars: OHLCVBar[];
   cachedAt: number;
 }
-let cached1mBySymbol = new Map<string, M1Cache>();
+const cached1mBySymbol = new Map<string, M1Cache>();
 const M1_CACHE_TTL_MS = 15 * 1000;
 
 /**
@@ -107,37 +113,59 @@ export async function fetch1mBars(
 
   try {
     const period1 = new Date(Date.now() - 48 * 60 * 60 * 1000); // 2 days back
-    const chartRes = await yf.chart(symbol, { period1, interval: "1m" });
-    const quotes = chartRes.quotes || [];
+    let bars: OHLCVBar[] = await fetchYahooChartBars(symbol, period1, "1m", true);
 
-    const bars: OHLCVBar[] = quotes
-      .map((q) => {
-        if (
-          typeof q.open !== "number" ||
-          typeof q.high !== "number" ||
-          typeof q.low !== "number" ||
-          typeof q.close !== "number" ||
-          isNaN(q.close)
-        ) {
-          return null;
-        }
-        return {
-          timestamp: new Date(q.date).toISOString(),
-          open: Math.round(q.open * 100) / 100,
-          high: Math.round(q.high * 100) / 100,
-          low: Math.round(q.low * 100) / 100,
-          close: Math.round(q.close * 100) / 100,
-          volume: q.volume ?? 0
+    const proxySymbol = getFuturesProxySymbol(symbol);
+    if (proxySymbol) {
+      try {
+        const futQuoteRes = (await yf.quote(symbol)) as {
+          regularMarketPrice?: number;
+          regularMarketTime?: Date | string | number;
         };
-      })
-      .filter((b): b is OHLCVBar => b !== null);
+        const futPrice = futQuoteRes?.regularMarketPrice;
+        const futTime = futQuoteRes?.regularMarketTime ? new Date(futQuoteRes.regularMarketTime).getTime() : 0;
+        const lastBarMs = bars.length > 0 ? new Date(bars[bars.length - 1].timestamp).getTime() : 0;
+
+        if (
+          typeof futPrice === "number" &&
+          futPrice > 0 &&
+          Number.isFinite(futTime) &&
+          futTime > 0 &&
+          (bars.length === 0 || futTime - lastBarMs > 30 * 60 * 1000)
+        ) {
+          const proxyPeriod1 =
+            lastBarMs > 0
+              ? new Date(Math.max(period1.getTime(), lastBarMs - 2 * 3600 * 1000))
+              : period1;
+          const proxyBars = await fetchYahooChartBars(proxySymbol, proxyPeriod1, "1m", true);
+          const proxyAnchor = findTimeAlignedProxyPrice(proxyBars, futTime);
+          if (proxyAnchor && proxyAnchor > 0) {
+            const bridged = translateProxyBarsToFutures({
+              futuresBars: bars,
+              proxyBars,
+              futuresSpot: futPrice,
+              proxyAnchorPrice: proxyAnchor,
+              maxTimestampMs: futTime,
+              intervalSec: 60
+            });
+            if (bridged.bridgedCount > 0) {
+              bars = bridged.bars;
+            }
+          }
+        }
+      } catch (proxyErr: unknown) {
+        const msg = proxyErr instanceof Error ? proxyErr.message : String(proxyErr);
+        console.warn("1m proxy bridge skipped:", msg);
+      }
+    }
 
     if (bars.length > 0) {
       cached1mBySymbol.set(symbol, { bars, cachedAt: now });
       return bars;
     }
-  } catch (err: any) {
-    console.warn("Could not fetch 1m bars for NQ=F:", err?.message || err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Could not fetch 1m bars for ${symbol}:`, msg);
   }
 
   return [];

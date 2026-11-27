@@ -15,7 +15,12 @@ import {
   applyDrawingDragLogical,
   ChartDrawing
 } from "../components/chart/primitives";
-import { aggregate1hTo4hBars } from "../lib/market/yahoo";
+import {
+  aggregate1hTo4hBars,
+  sanitizeProxyWickOutliers,
+  findTimeAlignedProxyPrice,
+  translateProxyBarsToFutures
+} from "../lib/market/yahoo";
 import { OHLCVBar } from "../types/market";
 
 describe("MinBookChart Unit Tests", () => {
@@ -295,5 +300,61 @@ describe("MinBookChart Unit Tests", () => {
       close: 26070,
       volume: 380
     });
+  });
+
+  it("clamps isolated pre-market odd-lot wick spikes while keeping corroborated wicks", () => {
+    const proxyWithOutlier: OHLCVBar[] = [
+      { timestamp: "2026-11-27T13:15:00.000Z", open: 649.28, high: 649.3, low: 648.1, close: 648.33, volume: 0 },
+      // Isolated -1.65% pre-market bad tick low (637.67 vs body low 648.35)
+      { timestamp: "2026-11-27T13:30:00.000Z", open: 648.36, high: 649.09, low: 637.67, close: 648.35, volume: 0 },
+      { timestamp: "2026-11-27T13:45:00.000Z", open: 648.26, high: 648.95, low: 647.93, close: 648.03, volume: 0 }
+    ];
+
+    const cleaned = sanitizeProxyWickOutliers(proxyWithOutlier);
+    expect(cleaned[1].low).toBeGreaterThan(646.5);
+    expect(cleaned[1].low).toBeLessThanOrEqual(648.35);
+
+    // Corroborated drop where adjacent bar also trades down must be preserved
+    const corroborated: OHLCVBar[] = [
+      { timestamp: "2026-11-27T14:00:00.000Z", open: 648.0, high: 648.1, low: 641.5, close: 642.0, volume: 100 },
+      { timestamp: "2026-11-27T14:15:00.000Z", open: 648.36, high: 648.5, low: 640.0, close: 648.1, volume: 120 },
+      { timestamp: "2026-11-27T14:30:00.000Z", open: 648.0, high: 648.2, low: 643.0, close: 644.0, volume: 150 }
+    ];
+    const preserved = sanitizeProxyWickOutliers(corroborated);
+    expect(preserved[1].low).toBe(640.0);
+  });
+
+  it("bridges stalled futures bars with time-aligned QQQ proxy bars anchored to futures quote", () => {
+    const futuresBars: OHLCVBar[] = [
+      { timestamp: "2026-11-26T04:45:00.000Z", open: 26395, high: 26402, low: 26385, close: 26389.75, volume: 400 }
+    ];
+    const proxyBars: OHLCVBar[] = [
+      { timestamp: "2026-11-26T04:30:00.000Z", open: 641.0, high: 641.2, low: 640.5, close: 640.9, volume: 500 },
+      { timestamp: "2026-11-27T13:45:00.000Z", open: 648.26, high: 648.95, low: 647.93, close: 648.03, volume: 0 },
+      { timestamp: "2026-11-27T14:00:00.000Z", open: 647.91, high: 647.97, low: 647.08, close: 647.58, volume: 0 },
+      { timestamp: "2026-11-27T14:15:00.000Z", open: 647.56, high: 647.61, low: 645.67, close: 646.61, volume: 0 },
+      // Future proxy bar beyond 10m-delayed futures quote timestamp must be excluded so chart matches quote
+      { timestamp: "2026-11-27T14:30:00.000Z", open: 645.72, high: 645.89, low: 643.17, close: 643.57, volume: 3000000 }
+    ];
+
+    const futQuoteMs = new Date("2026-11-27T14:23:13.000Z").getTime();
+    const anchor = findTimeAlignedProxyPrice(proxyBars, futQuoteMs);
+    expect(anchor).toBe(646.61);
+
+    const bridged = translateProxyBarsToFutures({
+      futuresBars,
+      proxyBars,
+      futuresSpot: 26621.75,
+      proxyAnchorPrice: anchor!,
+      maxTimestampMs: futQuoteMs,
+      intervalSec: 900
+    });
+
+    expect(bridged.bridgedCount).toBe(3);
+    expect(bridged.bars).toHaveLength(4);
+    expect(bridged.bars[bridged.bars.length - 1].close).toBe(26621.75);
+    expect(bridged.bars[1].volume).toBeGreaterThan(0);
+    // 14:00Z bar translated strictly above the stalled 26389.75 close
+    expect(bridged.bars[2].close).toBeGreaterThan(26640);
   });
 });

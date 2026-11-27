@@ -252,28 +252,77 @@ export class YahooFinanceProvider implements MarketDataProvider {
           : 5;
       const yfInterval = interval === "4h" ? "1h" : interval;
       const period1 = new Date(Date.now() - lookbackDays * 24 * 3600 * 1000);
-      const chart = await yf.chart(yfSymbol, {
+      let rawBars: OHLCVBar[] = await fetchYahooChartBars(
+        yfSymbol,
         period1,
-        interval: yfInterval as "1m" | "5m" | "15m" | "1h",
-      });
+        yfInterval as "1m" | "5m" | "15m" | "1h"
+      );
 
-      const rawBars: OHLCVBar[] = (chart.quotes || [])
-        .filter(
-          (q): q is typeof q & { open: number; high: number; low: number; close: number } =>
-            typeof q.open === "number" &&
-            typeof q.high === "number" &&
-            typeof q.low === "number" &&
-            typeof q.close === "number" &&
-            !isNaN(q.close)
-        )
-        .map((q) => ({
-          timestamp: new Date(q.date).toISOString(),
-          open: Math.round(q.open * 100) / 100,
-          high: Math.round(q.high * 100) / 100,
-          low: Math.round(q.low * 100) / 100,
-          close: Math.round(q.close * 100) / 100,
-          volume: q.volume ?? 0
-        }));
+      // If CME futures intraday chart stalls (common on holidays/extended gaps) while the quote feed is ahead,
+      // bridge missing bars using time-aligned QQQ (for NQ/MNQ) or SPY (for ES) extended-hours bars.
+      const proxySymbol = getFuturesProxySymbol(yfSymbol);
+      if (proxySymbol) {
+        try {
+          const futQuote = await this.getQuote(yfSymbol);
+          const futQuoteMs = new Date(futQuote.timestamp).getTime();
+          const lastBarMs =
+            rawBars.length > 0 ? new Date(rawBars[rawBars.length - 1].timestamp).getTime() : 0;
+          const gapMs = futQuoteMs - lastBarMs;
+
+          if (
+            Number.isFinite(futQuote.price) &&
+            futQuote.price > 0 &&
+            Number.isFinite(futQuoteMs) &&
+            (rawBars.length === 0 || gapMs > 30 * 60 * 1000)
+          ) {
+            const proxyPeriod1 =
+              lastBarMs > 0
+                ? new Date(Math.max(period1.getTime(), lastBarMs - 2 * 3600 * 1000))
+                : period1;
+
+            const [proxyBars, proxy1mBars, proxyQuote] = await Promise.all([
+              fetchYahooChartBars(
+                proxySymbol,
+                proxyPeriod1,
+                yfInterval as "1m" | "5m" | "15m" | "1h"
+              ),
+              yfInterval !== "1m"
+                ? fetchYahooChartBars(
+                    proxySymbol,
+                    new Date(Math.min(Date.now(), futQuoteMs) - 6 * 3600 * 1000),
+                    "1m"
+                  ).catch(() => [])
+                : Promise.resolve([] as OHLCVBar[]),
+              this.getQuote(proxySymbol).catch(() => null)
+            ]);
+
+            const proxyAnchor =
+              findTimeAlignedProxyPrice(proxy1mBars.length > 0 ? proxy1mBars : proxyBars, futQuoteMs) ??
+              findTimeAlignedProxyPrice(proxyBars, futQuoteMs) ??
+              (proxyQuote && Math.abs(new Date(proxyQuote.timestamp).getTime() - futQuoteMs) < 10 * 60 * 1000
+                ? proxyQuote.price
+                : null);
+
+            if (proxyAnchor && proxyAnchor > 0 && proxyBars.length > 0) {
+              const bridged = translateProxyBarsToFutures({
+                futuresBars: rawBars,
+                proxyBars,
+                futuresSpot: futQuote.price,
+                proxyAnchorPrice: proxyAnchor,
+                maxTimestampMs: futQuoteMs,
+                intervalSec:
+                  yfInterval === "1m" ? 60 : yfInterval === "5m" ? 300 : yfInterval === "1h" ? 3600 : 900
+              });
+              if (bridged.bridgedCount > 0) {
+                rawBars = bridged.bars;
+              }
+            }
+          }
+        } catch (proxyErr: unknown) {
+          const msg = proxyErr instanceof Error ? proxyErr.message : String(proxyErr);
+          console.warn(`Futures proxy bridge skipped for ${yfSymbol}:`, msg);
+        }
+      }
 
       const bars = interval === "4h" ? aggregate1hTo4hBars(rawBars) : rawBars;
 
@@ -550,4 +599,223 @@ export class YahooFinanceProvider implements MarketDataProvider {
   async getEconomicEvents(): Promise<EconomicEvent[]> {
     return getUSEconomicEvents();
   }
+}
+
+export async function fetchYahooChartBars(
+  symbol: string,
+  period1: Date,
+  interval: "1m" | "5m" | "15m" | "1h",
+  includePrePost: boolean = true
+): Promise<OHLCVBar[]> {
+  type ChartOpts = NonNullable<Parameters<typeof yf.chart>[1]>;
+  const opts = { period1, interval, includePrePost } as ChartOpts;
+  const chart = await yf.chart(symbol, opts);
+  const quotes = (chart as { quotes?: Parameters<typeof mapYahooQuotesToBars>[0] })?.quotes || [];
+  return mapYahooQuotesToBars(quotes);
+}
+
+export function getFuturesProxySymbol(yfSymbol: string): "QQQ" | "SPY" | null {
+  if (yfSymbol === "NQ=F" || yfSymbol === "MNQ=F") return "QQQ";
+  if (yfSymbol === "ES=F") return "SPY";
+  return null;
+}
+
+export function mapYahooQuotesToBars(
+  quotes: Array<{
+    date: Date | string | number;
+    open?: number | null;
+    high?: number | null;
+    low?: number | null;
+    close?: number | null;
+    volume?: number | null;
+  }>
+): OHLCVBar[] {
+  return (quotes || [])
+    .filter(
+      (q): q is typeof q & { open: number; high: number; low: number; close: number } =>
+        typeof q.open === "number" &&
+        typeof q.high === "number" &&
+        typeof q.low === "number" &&
+        typeof q.close === "number" &&
+        !isNaN(q.close)
+    )
+    .map((q) => ({
+      timestamp: new Date(q.date).toISOString(),
+      open: Math.round(q.open * 100) / 100,
+      high: Math.round(q.high * 100) / 100,
+      low: Math.round(q.low * 100) / 100,
+      close: Math.round(q.close * 100) / 100,
+      volume: q.volume ?? 0
+    }));
+}
+
+/**
+ * Clamps isolated extended-hours odd-lot bad-tick wicks (e.g. a single pre-market print
+ * > 0.6% away from candle body that neither adjacent candle corroborates).
+ */
+export function sanitizeProxyWickOutliers(bars: OHLCVBar[]): OHLCVBar[] {
+  if (bars.length < 2) return bars.map((b) => ({ ...b }));
+
+  return bars.map((bar, idx) => {
+    const prev = idx > 0 ? bars[idx - 1] : null;
+    const next = idx < bars.length - 1 ? bars[idx + 1] : null;
+    const bodyLow = Math.min(bar.open, bar.close);
+    const bodyHigh = Math.max(bar.open, bar.close);
+    if (bodyLow <= 0 || bodyHigh <= 0) return { ...bar };
+
+    let nextLow = bar.low;
+    let nextHigh = bar.high;
+
+    const downExcursion = bodyLow - bar.low;
+    if (downExcursion / bodyLow > 0.006) {
+      const threshold = bodyLow - downExcursion * 0.45;
+      const prevClean = !prev || prev.low > threshold;
+      const nextClean = !next || next.low > threshold;
+      if (prevClean && nextClean) {
+        const anchorFloor = Math.min(
+          bodyLow,
+          prev ? prev.low : bodyLow,
+          next ? next.low : bodyLow
+        );
+        nextLow = Math.max(anchorFloor, Math.round(bodyLow * 0.9975 * 100) / 100);
+        nextLow = Math.min(bodyLow, nextLow);
+      }
+    }
+
+    const upExcursion = bar.high - bodyHigh;
+    if (upExcursion / bodyHigh > 0.006) {
+      const threshold = bodyHigh + upExcursion * 0.45;
+      const prevClean = !prev || prev.high < threshold;
+      const nextClean = !next || next.high < threshold;
+      if (prevClean && nextClean) {
+        const anchorCeil = Math.max(
+          bodyHigh,
+          prev ? prev.high : bodyHigh,
+          next ? next.high : bodyHigh
+        );
+        nextHigh = Math.min(anchorCeil, Math.round(bodyHigh * 1.0025 * 100) / 100);
+        nextHigh = Math.max(bodyHigh, nextHigh);
+      }
+    }
+
+    return {
+      ...bar,
+      low: nextLow,
+      high: nextHigh
+    };
+  });
+}
+
+export function findTimeAlignedProxyPrice(
+  proxyBars: OHLCVBar[],
+  targetMs: number,
+  maxDeltaMs: number = 30 * 60 * 1000
+): number | null {
+  if (!Number.isFinite(targetMs) || proxyBars.length === 0) return null;
+
+  let bestCausalBar: OHLCVBar | null = null;
+  let bestCausalDiff = Infinity;
+  let bestAnyBar: OHLCVBar | null = null;
+  let bestAnyDiff = Infinity;
+
+  for (const bar of proxyBars) {
+    const ms = new Date(bar.timestamp).getTime();
+    if (!Number.isFinite(ms)) continue;
+    const diff = Math.abs(targetMs - ms);
+    if (diff > maxDeltaMs) continue;
+
+    if (ms <= targetMs && diff < bestCausalDiff) {
+      bestCausalDiff = diff;
+      bestCausalBar = bar;
+    }
+    if (diff < bestAnyDiff) {
+      bestAnyDiff = diff;
+      bestAnyBar = bar;
+    }
+  }
+
+  return (bestCausalBar ?? bestAnyBar)?.close ?? null;
+}
+
+export interface TranslateProxyBarsInput {
+  futuresBars: OHLCVBar[];
+  proxyBars: OHLCVBar[];
+  futuresSpot: number;
+  proxyAnchorPrice: number;
+  maxTimestampMs?: number;
+  intervalSec?: number;
+}
+
+/**
+ * Translates ETF proxy bars (QQQ -> NQ=F/MNQ=F, SPY -> ES=F) after the latest
+ * available futures bar using time-aligned basis ratio scaling, aligning the final
+ * in-progress candle cleanly with the live/delayed futures quote price.
+ */
+export function translateProxyBarsToFutures({
+  futuresBars,
+  proxyBars,
+  futuresSpot,
+  proxyAnchorPrice,
+  maxTimestampMs,
+  intervalSec = 900
+}: TranslateProxyBarsInput): { bars: OHLCVBar[]; bridgedCount: number; ratio: number } {
+  if (!Number.isFinite(futuresSpot) || futuresSpot <= 0 || !Number.isFinite(proxyAnchorPrice) || proxyAnchorPrice <= 0) {
+    return { bars: futuresBars, bridgedCount: 0, ratio: 0 };
+  }
+
+  const ratio = futuresSpot / proxyAnchorPrice;
+  const lastFuturesBarMs =
+    futuresBars.length > 0 ? new Date(futuresBars[futuresBars.length - 1].timestamp).getTime() : 0;
+
+  const cleanedProxy = sanitizeProxyWickOutliers(proxyBars);
+  const translated: OHLCVBar[] = [];
+
+  for (const p of cleanedProxy) {
+    const pMs = new Date(p.timestamp).getTime();
+    if (!Number.isFinite(pMs)) continue;
+    if (lastFuturesBarMs > 0 && pMs <= lastFuturesBarMs) continue;
+    if (maxTimestampMs !== undefined && pMs > maxTimestampMs) continue;
+
+    const open = Math.round(p.open * ratio * 100) / 100;
+    const high = Math.round(p.high * ratio * 100) / 100;
+    const low = Math.round(p.low * ratio * 100) / 100;
+    const close = Math.round(p.close * ratio * 100) / 100;
+    const range = Math.max(0.25, high - low);
+    // Extended-hours proxy bars often report 0 volume; preserve non-zero VWAP/footprint weighting
+    const volume = p.volume > 0 ? p.volume : Math.max(10, Math.round(range * 50));
+
+    translated.push({
+      timestamp: p.timestamp,
+      open,
+      high,
+      low,
+      close,
+      volume
+    });
+  }
+
+  if (translated.length === 0) {
+    return { bars: futuresBars, bridgedCount: 0, ratio };
+  }
+
+  // Align the closing candle to the current futures quote price when maxTimestampMs falls in/near the tail bar
+  if (maxTimestampMs !== undefined) {
+    const tail = translated[translated.length - 1];
+    const tailMs = new Date(tail.timestamp).getTime();
+    if (maxTimestampMs - tailMs <= Math.max(intervalSec * 1000, 15 * 60 * 1000)) {
+      const alignedClose = Math.round(futuresSpot * 100) / 100;
+      translated[translated.length - 1] = {
+        ...tail,
+        close: alignedClose,
+        high: Math.max(tail.high, alignedClose),
+        low: Math.min(tail.low, alignedClose)
+      };
+    }
+  }
+
+  return {
+    bars: [...futuresBars, ...translated],
+    bridgedCount: translated.length,
+    ratio
+  };
 }

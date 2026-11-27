@@ -10,6 +10,7 @@ import {
 import {
   CHAT_FALLBACK_MODELS,
   CHAT_MODEL_ID,
+  getGoogleThinkingOptions,
   JournalQueryResult,
   ScalpJournalTrade,
   ScalpSetupArchetype,
@@ -284,7 +285,7 @@ export async function parseJournalPdfSlides(params: {
                   ],
                 },
                 stopPts: { type: "number" },
-                tp1Pts: { type: ["number", "null"] },
+                tp1Pts: { type: "number" },
                 realizedR: { type: "number" },
                 mfePts: { type: "number" },
                 maePts: { type: "number" },
@@ -318,14 +319,7 @@ export async function parseJournalPdfSlides(params: {
         },
         required: ["trades"],
       }),
-      providerOptions: {
-        google: {
-          thinkingConfig: {
-            thinkingBudget: 0,
-            includeThoughts: false,
-          },
-        },
-      },
+      providerOptions: getGoogleThinkingOptions(modelId),
       messages: [
         {
           role: "user",
@@ -378,6 +372,7 @@ Rules:
         msg.includes("not found") ||
         msg.includes("deprecated") ||
         msg.includes("unavailable") ||
+        msg.includes("invalid argument") ||
         msg.includes("404") ||
         msg.includes("503");
       if (!retryable) throw err;

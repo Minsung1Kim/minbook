@@ -884,3 +884,14 @@ All notable changes and architectural decisions are logged here.
 - **Verification ([chart.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/chart.test.ts)):**
   - Verified live `getOpenBrief({ symbol: "NQ", forceRefresh: true })` output (`quote` vs `intradayBars[last].close` delta `0.5` pts; `globexStatus: ACTIVE`; live `ONH`/`ONL`/`VWAP`).
   - Added unit tests for `sanitizeProxyWickOutliers`, `findTimeAlignedProxyPrice`, and `translateProxyBarsToFutures`.
+
+## [2026-11-27] - Gemini 3.5 Multimodal & Schema `INVALID_ARGUMENT` Fix (`/chat`)
+- **Root Causes ([scalp-pipeline.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/scalp-pipeline.ts), [api/chat/route.ts](file:///Users/minsung/Documents/GitHub/minbook/src/app/api/chat/route.ts), [journal-ingest.ts](file:///Users/minsung/Documents/GitHub/minbook/src/lib/chat/journal-ingest.ts), [types/chat.ts](file:///Users/minsung/Documents/GitHub/minbook/src/types/chat.ts)):**
+  - `@ai-sdk/google` enables `externalFileUrls: true` for `gemini-3.5-flash-lite` / `gemini-3.6-flash`, forwarding Supabase signed screenshot URLs directly as `fileData.fileUri` rather than embedding `inlineData` bytes, which Gemini rejected with `Request contains an invalid argument.`.
+  - Gemini 3.x uses `thinkingLevel: "minimal"` rather than `thinkingBudget: 0`, and JSON Schema nullable array types (`type: ["number", "null"]` / `type: ["string", "null"]`) fail strict OpenAPI/schema validation on Gemini.
+- **Fixes:**
+  - Added `resolveImageInputForModel` and `inlineMessageImagesForModel` so chart screenshots (including Supabase signed URLs across current and follow-up turns) are embedded cleanly as `Uint8Array` / `data:` base64 `inlineData`.
+  - Added `getGoogleThinkingOptions(modelId)` (`thinkingLevel: "minimal"` for `gemini-3*`, `thinkingBudget: 0` for `gemini-2.5*`, unset for `-latest` aliases).
+  - Replaced array nullable JSON schema types across `extractChartState`, `compute_scalp_verdict`, and `parseJournalPdfSlides` with standard optional typed fields and expanded `isModelFallbackEligibleError` to fall back cleanly on model-specific `invalid argument` errors (preserving strict failure on invalid API keys).
+- **Verification ([scalper_copilot.test.ts](file:///Users/minsung/Documents/GitHub/minbook/src/__tests__/scalper_copilot.test.ts)):**
+  - Added unit tests for `getGoogleThinkingOptions`, `resolveImageInputForModel`, and `isModelFallbackEligibleError`; verified `eslint`, `tsc --noEmit`, `npm test`, and `npm run build`.

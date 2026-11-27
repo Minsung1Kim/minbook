@@ -25,12 +25,14 @@ import {
   buildDeterministicAssistantReply,
   extractChartState,
   formatScalperCard5Lines,
+  getGoogleThinkingOptions,
   isConversationalAssistantQuery,
   isModelFallbackEligibleError,
   isRateLimitError,
   renderScalperCardDeterministic,
   renderScalperCardStream,
   resolveChatMode,
+  resolveImageInputForModel,
   STATIC_SCALP_SYSTEM_PREFIX,
 } from "@/lib/chat/scalp-pipeline";
 import {
@@ -107,6 +109,29 @@ function parseChatModePreference(raw: unknown): ChatModePreference {
     return raw;
   }
   return "AUTO";
+}
+
+async function inlineMessageImagesForModel(
+  messages: StratUIMessage[]
+): Promise<StratUIMessage[]> {
+  return Promise.all(
+    messages.map(async (msg) => {
+      const parts = await Promise.all(
+        (msg.parts || []).map(async (part) => {
+          if (part.type !== "file" || typeof part.url !== "string") return part;
+          if (part.url.startsWith("data:")) return part;
+          const resolved = await resolveImageInputForModel(part.url);
+          if (!resolved) return part;
+          return {
+            ...part,
+            url: resolved.dataUrl,
+            mediaType: resolved.mediaType,
+          };
+        })
+      );
+      return { ...msg, parts };
+    })
+  );
 }
 
 function writeStaticTextToWriter(
@@ -310,7 +335,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const modelMessages = await convertToModelMessages(sanitizedMessages);
+    const inlinedMessages = await inlineMessageImagesForModel(sanitizedMessages);
+    const modelMessages = await convertToModelMessages(inlinedMessages);
     const accountProfile: ScalpAccountProfile = {
       accountDrawdownMode,
       riskBudgetDollars: snapshot.journal.riskBudgetDollars,
@@ -472,16 +498,7 @@ export async function POST(request: NextRequest) {
         messages: modelMessages,
         stopWhen: isStepCount(4),
         maxOutputTokens: useStrictHotPathText ? 280 : 1400,
-        providerOptions: useStrictHotPathText
-          ? {
-              google: {
-                thinkingConfig: {
-                  thinkingBudget: 0,
-                  includeThoughts: false,
-                },
-              },
-            }
-          : undefined,
+        providerOptions: useStrictHotPathText ? getGoogleThinkingOptions(modelId) : undefined,
         tools: {
           compute_scalp_verdict: tool({
             description:
@@ -502,12 +519,12 @@ export async function POST(request: NextRequest) {
                   ],
                 },
                 direction: { type: "string", enum: ["LONG", "SHORT", "NONE"] },
-                entryPx: { type: ["number", "null"] },
-                entryZoneLow: { type: ["number", "null"] },
-                entryZoneHigh: { type: ["number", "null"] },
-                stopPx: { type: ["number", "null"] },
-                tp1Px: { type: ["number", "null"] },
-                tp2Px: { type: ["number", "null"] },
+                entryPx: { type: "number" },
+                entryZoneLow: { type: "number" },
+                entryZoneHigh: { type: "number" },
+                stopPx: { type: "number" },
+                tp1Px: { type: "number" },
+                tp2Px: { type: "number" },
                 contracts: { type: "number" },
                 detectedSetupArchetype: {
                   type: "string",

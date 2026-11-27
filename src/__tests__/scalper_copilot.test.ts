@@ -20,11 +20,13 @@ import {
 } from "../lib/chat/journal-ingest";
 import {
   buildDeterministicAssistantReply,
+  getGoogleThinkingOptions,
   isConversationalAssistantQuery,
   isModelFallbackEligibleError,
   isRateLimitError,
   renderScalperCardDeterministic,
   resolveChatMode,
+  resolveImageInputForModel,
 } from "../lib/chat/scalp-pipeline";
 import { getUpcomingCalendarSchedule } from "../lib/market/sessionClock";
 import { buildSystemPromptFromContext } from "../lib/chat/build-market-context";
@@ -594,7 +596,7 @@ describe("Scalper Co-Pilot Verification Gate", () => {
       expect(lines[4]).toContain("Exit Directive (INTRADAY_UNREALIZED)");
     });
 
-    it("detects Thanksgiving holiday / Black Friday half-day schedule and routes conversational questions to Assistant mode", () => {
+    it("detects Thanksgiving holiday / Black Friday half-day schedule and routes conversational questions to Assistant mode", async () => {
       const wedEveningET = new Date("2026-11-25T23:18:00Z"); // Wed Nov 25, 2026 18:18 ET
       const schedule = getUpcomingCalendarSchedule(wedEveningET, 4);
       const thu = schedule.find((d) => d.date === "2026-11-26");
@@ -648,6 +650,28 @@ describe("Scalper Co-Pilot Verification Gate", () => {
       expect(fallbackReply).toContain("Thanksgiving Day");
       expect(fallbackReply).toContain("Black Friday");
       expect(fallbackReply).toContain("Action Plan");
+
+      // Gemini 3 vs 2.5 thinking config, inline image conversion, and invalid-argument fallback
+      expect(getGoogleThinkingOptions("gemini-3.5-flash-lite")?.google.thinkingConfig).toEqual({
+        thinkingLevel: "minimal",
+        includeThoughts: false,
+      });
+      expect(getGoogleThinkingOptions("gemini-2.5-flash")?.google.thinkingConfig).toEqual({
+        thinkingBudget: 0,
+        includeThoughts: false,
+      });
+      expect(getGoogleThinkingOptions("gemini-flash-latest")).toBeUndefined();
+
+      expect(
+        isModelFallbackEligibleError(new Error("Request contains an invalid argument."))
+      ).toBe(true);
+
+      const tinyPng =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+      const resolved = await resolveImageInputForModel(tinyPng);
+      expect(resolved?.mediaType).toBe("image/png");
+      expect(resolved?.data).toBeInstanceOf(Uint8Array);
+      expect(resolved?.data.byteLength).toBeGreaterThan(0);
     });
   });
 });

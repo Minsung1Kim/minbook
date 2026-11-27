@@ -13,6 +13,35 @@ export const CHAT_FALLBACK_MODELS = [
 ] as const;
 export const CHAT_MODEL_LABEL = "Gemini 3.5 Flash-Lite";
 
+/**
+ * Returns model-family-safe providerOptions for disabling or minimizing thinking.
+ * Gemini 3.x uses `thinkingLevel: "minimal"`, whereas Gemini 2.5 uses `thinkingBudget: 0`.
+ */
+export function getGoogleThinkingOptions(modelId: string) {
+  const lower = (modelId || "").toLowerCase();
+  if (lower.includes("gemini-3")) {
+    return {
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal" as const,
+          includeThoughts: false,
+        },
+      },
+    };
+  }
+  if (lower.includes("gemini-2.5")) {
+    return {
+      google: {
+        thinkingConfig: {
+          thinkingBudget: 0,
+          includeThoughts: false,
+        },
+      },
+    };
+  }
+  return undefined;
+}
+
 export type ChatMode = "LIVE_SCALP" | "DEEP_DIVE";
 export type ChatModePreference = "AUTO" | ChatMode;
 

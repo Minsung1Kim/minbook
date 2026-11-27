@@ -12,6 +12,7 @@ import {
   ChatMode,
   ChatModePreference,
   ExtractedChartState,
+  getGoogleThinkingOptions,
   JournalQueryResult,
   ScalpAccountProfile,
 } from "@/types/chat";
@@ -22,7 +23,7 @@ import {
 } from "@/lib/chat/screenshot-quant";
 import { queryPersonalJournal } from "@/lib/chat/journal-ingest";
 
-export { computeScalpVerdict, queryPersonalJournal };
+export { computeScalpVerdict, getGoogleThinkingOptions, queryPersonalJournal };
 
 export const STATIC_SCALP_SYSTEM_PREFIX = `You are MinBook Scalping Co-Pilot — a low-latency, mathematically honest NQ/MNQ futures scalping engine grounded in the trader's personal journal, dealer GEX, and diurnal volatility.
 RULES:
@@ -98,7 +99,7 @@ export function isRateLimitError(err: unknown): boolean {
 
 /**
  * Detects any model-level failure that should fall back to the next model or deterministic engine
- * (rate limits, deprecated/unavailable model IDs, 404/503, capacity errors) — excluding invalid API keys.
+ * (rate limits, deprecated/unavailable model IDs, 404/503, model-specific invalid arguments) — excluding invalid API keys.
  */
 export function isModelFallbackEligibleError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err || "")).toLowerCase();
@@ -112,11 +113,54 @@ export function isModelFallbackEligibleError(err: unknown): boolean {
     msg.includes("deprecated") ||
     msg.includes("unsupported") ||
     msg.includes("not supported") ||
+    msg.includes("invalid argument") ||
     msg.includes("404") ||
     msg.includes("503") ||
     msg.includes("overloaded") ||
     msg.includes("unavailable")
   );
+}
+
+/**
+ * Converts a data URL or allowed HTTPS signed image URL into raw Uint8Array + mediaType
+ * so @ai-sdk/google always embeds inlineData rather than forwarding external URLs as fileData.fileUri.
+ */
+export async function resolveImageInputForModel(
+  url: string
+): Promise<{ data: Uint8Array; mediaType: string; dataUrl: string } | null> {
+  if (!url || typeof url !== "string") return null;
+
+  const dataMatch = url.match(/^data:(image\/[a-z0-9+.-]+);base64,([A-Za-z0-9+/=]+)$/i);
+  if (dataMatch) {
+    const mediaType = dataMatch[1].toLowerCase();
+    return {
+      data: new Uint8Array(Buffer.from(dataMatch[2], "base64")),
+      mediaType,
+      dataUrl: url,
+    };
+  }
+
+  if (url.startsWith("https://") || url.startsWith("http://")) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const arr = await res.arrayBuffer();
+      if (arr.byteLength === 0) return null;
+      const headerType = res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+      const mediaType =
+        headerType && headerType.startsWith("image/") ? headerType : "image/png";
+      const buf = Buffer.from(arr);
+      return {
+        data: new Uint8Array(buf),
+        mediaType,
+        dataUrl: `data:${mediaType};base64,${buf.toString("base64")}`,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -133,11 +177,11 @@ export async function extractChartState(params: {
   const google = createGoogle({ apiKey: params.apiKey });
 
   const contentParts: Array<
-    { type: "text"; text: string } | { type: "image"; image: string }
+    { type: "text"; text: string } | { type: "image"; image: Uint8Array | string; mediaType?: string }
   > = [
     {
       type: "text",
-      text: `Extract the exact chart & order state from the uploaded trading screenshot(s) as strict JSON.
+      text: `Extract the exact chart & order state from the uploaded trading screenshot(s) as strict JSON. Omit optional numeric/string fields or return 0/null only if truly unreadable.
 User note: "${params.userText || "Analyze setup"}"
 Fallback instrument if unclear: ${params.snapshot.instrument}. Fallback price only if unreadable: ${params.snapshot.quote.price}.
 Classify detectedSetupArchetype into: SWEEP_MSS_REVERSAL, RETRACE_CONTINUATION, VWAP_ONMID_PULLBACK, OPEN_RANGE_BREAK, or UNKNOWN.
@@ -147,7 +191,16 @@ Classify newsImpact: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM
   ];
 
   for (const url of params.imageUrls) {
-    contentParts.push({ type: "image", image: url });
+    const resolved = await resolveImageInputForModel(url);
+    if (resolved) {
+      contentParts.push({
+        type: "image",
+        image: resolved.data,
+        mediaType: resolved.mediaType,
+      });
+    } else {
+      contentParts.push({ type: "image", image: url });
+    }
   }
 
   const runExtract = async (modelId: string) =>
@@ -169,12 +222,12 @@ Classify newsImpact: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM
             ],
           },
           direction: { type: "string", enum: ["LONG", "SHORT", "NONE"] },
-          entryPx: { type: ["number", "null"] },
-          entryZoneLow: { type: ["number", "null"] },
-          entryZoneHigh: { type: ["number", "null"] },
-          stopPx: { type: ["number", "null"] },
-          tp1Px: { type: ["number", "null"] },
-          tp2Px: { type: ["number", "null"] },
+          entryPx: { type: "number" },
+          entryZoneLow: { type: "number" },
+          entryZoneHigh: { type: "number" },
+          stopPx: { type: "number" },
+          tp1Px: { type: "number" },
+          tp2Px: { type: "number" },
           contracts: { type: "number" },
           detectedSetupArchetype: {
             type: "string",
@@ -197,14 +250,14 @@ Classify newsImpact: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM
               required: ["label", "price"],
             },
           },
-          newsCountdownMinutes: { type: ["number", "null"] },
+          newsCountdownMinutes: { type: "number" },
           newsImpact: {
             type: "string",
             enum: ["RED_HIGH", "ORANGE_MEDIUM", "YELLOW_LOW", "UNKNOWN"],
           },
-          newsEventName: { type: ["string", "null"] },
-          accountBalance: { type: ["number", "null"] },
-          openPnlDollars: { type: ["number", "null"] },
+          newsEventName: { type: "string" },
+          accountBalance: { type: "number" },
+          openPnlDollars: { type: "number" },
         },
         required: [
           "instrument",
@@ -217,14 +270,7 @@ Classify newsImpact: RED_HIGH only for CPI/NFP/FOMC/PCE/PPI/GDP/Retail Sales/ISM
           "visibleKeyLevels",
         ],
       }),
-      providerOptions: {
-        google: {
-          thinkingConfig: {
-            thinkingBudget: 0,
-            includeThoughts: false,
-          },
-        },
-      },
+      providerOptions: getGoogleThinkingOptions(modelId),
       messages: [{ role: "user", content: contentParts }],
     });
 
@@ -395,14 +441,7 @@ export function renderScalperCardStream(params: {
       system: STATIC_SCALP_SYSTEM_PREFIX,
       maxOutputTokens: 280,
       temperature: 0,
-      providerOptions: {
-        google: {
-          thinkingConfig: {
-            thinkingBudget: 0,
-            includeThoughts: false,
-          },
-        },
-      },
+      providerOptions: getGoogleThinkingOptions(modelToUse),
       messages: [
         {
           role: "user",
